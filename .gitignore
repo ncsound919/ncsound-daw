@@ -3,6 +3,7 @@ out/
 .vs/
 .vscode/
 node_modules/
+third_party/JUCE/
 *.user
 *.suo
 *.pdb
