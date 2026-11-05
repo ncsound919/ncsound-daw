@@ -1,0 +1,11 @@
+build/
+out/
+.vs/
+.vscode/
+node_modules/
+*.user
+*.suo
+*.pdb
+*.ilk
+CMakeUserPresets.json
+.claude/
