@@ -1,0 +1,380 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vstdaw.local/schema/v1",
+  "title": "VST DAW schema v1",
+  "description": "Three document types, discriminated by docType: manifest (a plugin/module), session (a song), config (host rules).",
+  "oneOf": [
+    { "$ref": "#/$defs/manifest" },
+    { "$ref": "#/$defs/session" },
+    { "$ref": "#/$defs/config" }
+  ],
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{1,62}$" },
+    "section": { "enum": ["synth", "sampler", "rompler", "bass", "fx", "utility"] },
+    "role": { "enum": ["instrument", "effect", "utility"] },
+    "platform": { "enum": ["windows", "macos", "linux", "ios", "android"] },
+    "format": { "enum": ["native", "vst3", "clap", "au", "auv3"] },
+    "semver": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.-]+)?$" },
+
+    "param": {
+      "description": "Unified parameter model. Native modules and third-party plugins both map into this so mixer/automation/macros use one code path.",
+      "type": "object",
+      "required": ["id", "name", "type", "default"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string" },
+        "type": { "enum": ["float", "int", "bool", "enum"] },
+        "min": { "type": "number" },
+        "max": { "type": "number" },
+        "default": { "type": ["number", "boolean", "string"] },
+        "choices": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "unit": { "type": "string" },
+        "skew": { "type": "number", "exclusiveMinimum": 0, "default": 1 },
+        "automatable": { "type": "boolean", "default": true },
+        "macroEligible": { "type": "boolean", "default": true },
+        "hostParamIndex": { "type": "integer", "minimum": 0, "description": "Third-party only: index in the plugin's own parameter list." }
+      },
+      "allOf": [
+        { "if": { "properties": { "type": { "enum": ["float", "int"] } } }, "then": { "required": ["min", "max"] } },
+        { "if": { "properties": { "type": { "const": "enum" } } }, "then": { "required": ["choices"] } }
+      ]
+    },
+
+    "port": {
+      "type": "object",
+      "required": ["id", "kind", "direction"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "kind": { "enum": ["audio", "midi", "sidechain", "control"] },
+        "direction": { "enum": ["in", "out"] },
+        "channels": { "type": "integer", "minimum": 1, "maximum": 64 }
+      },
+      "allOf": [
+        { "if": { "properties": { "kind": { "enum": ["audio", "sidechain"] } } }, "then": { "required": ["channels"] } }
+      ]
+    },
+
+    "manifest": {
+      "description": "Describes one first-party native module (or a cached scan result for a third-party plugin).",
+      "type": "object",
+      "required": ["docType", "schemaVersion", "id", "name", "version", "section", "role", "formats", "platforms", "ports", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "docType": { "const": "manifest" },
+        "schemaVersion": { "const": 1 },
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string" },
+        "vendor": { "type": "string" },
+        "version": { "$ref": "#/$defs/semver" },
+        "origin": { "enum": ["first-party", "third-party"], "default": "first-party" },
+        "section": { "$ref": "#/$defs/section" },
+        "role": { "$ref": "#/$defs/role" },
+        "tags": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "formats": { "type": "array", "items": { "$ref": "#/$defs/format" }, "minItems": 1, "uniqueItems": true },
+        "platforms": { "type": "array", "items": { "$ref": "#/$defs/platform" }, "minItems": 1, "uniqueItems": true },
+        "latencySamples": { "type": "integer", "minimum": 0, "default": 0 },
+        "cpuCostEstimate": { "type": "number", "minimum": 0, "description": "Measured fraction of one core at 48 kHz / 256 buffer; filled by the scanner." },
+        "ports": { "type": "array", "items": { "$ref": "#/$defs/port" }, "minItems": 1 },
+        "params": { "type": "array", "items": { "$ref": "#/$defs/param" } },
+        "capabilities": {
+          "type": "array",
+          "items": { "enum": ["sharedSamplePool", "patternAccess", "tempoSync", "sidechainIn", "midiOut", "stateBlob"] },
+          "uniqueItems": true
+        },
+        "ui": {
+          "type": "object",
+          "required": ["kind"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "enum": ["react", "native", "none"] },
+            "entry": { "type": "string", "description": "Bundle path, e.g. ui/index.html (kind=react)." },
+            "bridge": { "enum": ["webview"], "description": "How the React UI talks to the JUCE processor." },
+            "minSize": { "$ref": "#/$defs/size" },
+            "compactEntry": { "type": "string", "description": "Optional touch/compact layout bundle for mobile." }
+          },
+          "if": { "properties": { "kind": { "const": "react" } } },
+          "then": { "required": ["entry", "bridge"] }
+        }
+      }
+    },
+
+    "size": {
+      "type": "object",
+      "required": ["w", "h"],
+      "additionalProperties": false,
+      "properties": { "w": { "type": "integer", "minimum": 1 }, "h": { "type": "integer", "minimum": 1 } }
+    },
+
+    "portRef": {
+      "type": "object",
+      "required": ["node", "port"],
+      "additionalProperties": false,
+      "properties": { "node": { "$ref": "#/$defs/id" }, "port": { "$ref": "#/$defs/id" } }
+    },
+
+    "node": {
+      "type": "object",
+      "required": ["id", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "type": { "enum": ["module", "plugin", "bus", "send", "master", "input"] },
+        "ref": { "$ref": "#/$defs/id", "description": "Manifest id for module/plugin nodes." },
+        "section": { "$ref": "#/$defs/section" },
+        "hosting": { "enum": ["inproc", "sandbox"], "description": "Resolved at load time from config platformPolicy." },
+        "stateRef": { "type": "string", "description": "Key of the saved plugin state blob." },
+        "paramOverrides": { "type": "object", "additionalProperties": { "type": ["number", "boolean", "string"] } }
+      },
+      "if": { "properties": { "type": { "enum": ["module", "plugin"] } } },
+      "then": { "required": ["ref"] }
+    },
+
+    "edge": {
+      "type": "object",
+      "required": ["id", "from", "to", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "from": { "$ref": "#/$defs/portRef" },
+        "to": { "$ref": "#/$defs/portRef" },
+        "kind": { "enum": ["audio", "midi", "sidechain", "control"] },
+        "gainDb": { "type": "number", "minimum": -120, "maximum": 24, "default": 0 },
+        "enabled": { "type": "boolean", "default": true },
+        "origin": { "enum": ["user", "rule"], "default": "user", "description": "rule = auto-created by a config routing rule; safe to regenerate." },
+        "ruleId": { "$ref": "#/$defs/id" }
+      }
+    },
+
+    "graph": {
+      "type": "object",
+      "required": ["nodes", "edges"],
+      "additionalProperties": false,
+      "properties": {
+        "nodes": { "type": "array", "items": { "$ref": "#/$defs/node" } },
+        "edges": { "type": "array", "items": { "$ref": "#/$defs/edge" } }
+      }
+    },
+
+    "note": {
+      "type": "object",
+      "required": ["t", "len", "pitch", "vel"],
+      "additionalProperties": false,
+      "properties": {
+        "t": { "type": "number", "minimum": 0, "description": "Start in beats from pattern start." },
+        "len": { "type": "number", "exclusiveMinimum": 0 },
+        "pitch": { "type": "integer", "minimum": 0, "maximum": 127 },
+        "vel": { "type": "integer", "minimum": 1, "maximum": 127 }
+      }
+    },
+
+    "automationLane": {
+      "type": "object",
+      "required": ["node", "param", "points"],
+      "additionalProperties": false,
+      "properties": {
+        "node": { "$ref": "#/$defs/id" },
+        "param": { "$ref": "#/$defs/id" },
+        "points": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["t", "v"],
+            "additionalProperties": false,
+            "properties": {
+              "t": { "type": "number", "minimum": 0 },
+              "v": { "type": "number" },
+              "curve": { "enum": ["step", "linear", "smooth"], "default": "linear" }
+            }
+          }
+        }
+      }
+    },
+
+    "pattern": {
+      "type": "object",
+      "required": ["id", "name", "lengthBeats", "channels"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string" },
+        "lengthBeats": { "type": "number", "exclusiveMinimum": 0 },
+        "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+        "channels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "target", "notes"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "$ref": "#/$defs/id" },
+              "target": { "$ref": "#/$defs/id", "description": "Graph node id that receives this channel's MIDI." },
+              "notes": { "type": "array", "items": { "$ref": "#/$defs/note" } },
+              "automation": { "type": "array", "items": { "$ref": "#/$defs/automationLane" } }
+            }
+          }
+        }
+      }
+    },
+
+    "clip": {
+      "type": "object",
+      "required": ["id", "kind", "ref", "track", "start", "length"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "kind": { "enum": ["pattern", "audio"] },
+        "ref": { "type": "string", "description": "Pattern id, or audio asset id." },
+        "track": { "type": "integer", "minimum": 0 },
+        "start": { "type": "number", "minimum": 0 },
+        "length": { "type": "number", "exclusiveMinimum": 0 },
+        "linked": { "type": "boolean", "default": true, "description": "true = edits to the source pattern propagate." }
+      }
+    },
+
+    "mixerChannel": {
+      "type": "object",
+      "required": ["node"],
+      "additionalProperties": false,
+      "properties": {
+        "node": { "$ref": "#/$defs/id" },
+        "gainDb": { "type": "number", "minimum": -120, "maximum": 24, "default": 0 },
+        "pan": { "type": "number", "minimum": -1, "maximum": 1, "default": 0 },
+        "mute": { "type": "boolean", "default": false },
+        "solo": { "type": "boolean", "default": false }
+      }
+    },
+
+    "session": {
+      "type": "object",
+      "required": ["docType", "schemaVersion", "name", "tempo", "timeSignature", "sampleRate", "graph", "patterns", "playlist", "mixer"],
+      "additionalProperties": false,
+      "properties": {
+        "docType": { "const": "session" },
+        "schemaVersion": { "const": 1 },
+        "name": { "type": "string" },
+        "tempo": { "type": "number", "minimum": 20, "maximum": 999 },
+        "timeSignature": {
+          "type": "object",
+          "required": ["num", "den"],
+          "additionalProperties": false,
+          "properties": { "num": { "type": "integer", "minimum": 1 }, "den": { "enum": [1, 2, 4, 8, 16] } }
+        },
+        "sampleRate": { "enum": [44100, 48000, 88200, 96000] },
+        "plugins": {
+          "type": "array",
+          "description": "Every plugin the session needs, with fallbacks, so a session opens on a device that lacks one (e.g. mobile).",
+          "items": {
+            "type": "object",
+            "required": ["ref"],
+            "additionalProperties": false,
+            "properties": {
+              "ref": { "$ref": "#/$defs/id" },
+              "format": { "$ref": "#/$defs/format" },
+              "version": { "$ref": "#/$defs/semver" },
+              "fallbackRef": { "$ref": "#/$defs/id" }
+            }
+          }
+        },
+        "graph": { "$ref": "#/$defs/graph" },
+        "patterns": { "type": "array", "items": { "$ref": "#/$defs/pattern" } },
+        "playlist": { "type": "array", "items": { "$ref": "#/$defs/clip" } },
+        "mixer": { "type": "array", "items": { "$ref": "#/$defs/mixerChannel" } }
+      }
+    },
+
+    "config": {
+      "description": "Declarative host behavior: section rules, auto-routing rules, per-platform hosting policy, scanner settings.",
+      "type": "object",
+      "required": ["docType", "schemaVersion", "sections", "routingRules", "platformPolicy", "scanner"],
+      "additionalProperties": false,
+      "properties": {
+        "docType": { "const": "config" },
+        "schemaVersion": { "const": 1 },
+        "sections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "label", "accepts"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "$ref": "#/$defs/section" },
+              "label": { "type": "string" },
+              "accepts": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "roles": { "type": "array", "items": { "$ref": "#/$defs/role" } },
+                  "tags": { "type": "array", "items": { "type": "string" } }
+                }
+              },
+              "defaultBus": { "$ref": "#/$defs/id" },
+              "firstPartyFirst": { "type": "boolean", "default": true }
+            }
+          }
+        },
+        "routingRules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "when", "then"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "$ref": "#/$defs/id" },
+              "when": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "section": { "$ref": "#/$defs/section" },
+                  "role": { "$ref": "#/$defs/role" },
+                  "tag": { "type": "string" },
+                  "origin": { "enum": ["first-party", "third-party"] }
+                }
+              },
+              "then": {
+                "type": "object",
+                "required": ["connectTo", "kind"],
+                "additionalProperties": false,
+                "properties": {
+                  "connectTo": { "$ref": "#/$defs/id", "description": "Target node id or section default bus." },
+                  "kind": { "enum": ["audio", "midi", "sidechain", "control"] },
+                  "sourcePort": { "$ref": "#/$defs/id" },
+                  "targetPort": { "$ref": "#/$defs/id" },
+                  "gainDb": { "type": "number", "default": 0 }
+                }
+              }
+            }
+          }
+        },
+        "platformPolicy": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/platform" },
+          "additionalProperties": {
+            "type": "object",
+            "required": ["thirdPartyHosting", "nativeModules"],
+            "additionalProperties": false,
+            "properties": {
+              "thirdPartyHosting": { "enum": ["sandbox", "inproc", "disabled"] },
+              "nativeModules": { "type": "boolean" },
+              "uiLayout": { "enum": ["desktop", "compact"], "default": "desktop" },
+              "formats": { "type": "array", "items": { "$ref": "#/$defs/format" } }
+            }
+          }
+        },
+        "scanner": {
+          "type": "object",
+          "required": ["sandboxTimeoutMs", "blacklistOnCrash"],
+          "additionalProperties": false,
+          "properties": {
+            "sandboxTimeoutMs": { "type": "integer", "minimum": 100 },
+            "blacklistOnCrash": { "type": "boolean" },
+            "measureCpu": { "type": "boolean", "default": true },
+            "measureLatency": { "type": "boolean", "default": true },
+            "searchPaths": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    }
+  }
+}

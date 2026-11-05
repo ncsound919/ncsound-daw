@@ -1,0 +1,58 @@
+{
+  "manifest": {
+    "docType": "manifest", "schemaVersion": 1, "id": "tc-synth", "name": "Tri Synth", "vendor": "Overlay",
+    "version": "0.1.0", "origin": "first-party", "section": "synth", "role": "instrument",
+    "tags": ["poly", "analog"], "formats": ["native", "vst3", "clap"], "platforms": ["windows", "macos", "android"],
+    "latencySamples": 0,
+    "ports": [
+      { "id": "midi-in", "kind": "midi", "direction": "in" },
+      { "id": "out", "kind": "audio", "direction": "out", "channels": 2 }
+    ],
+    "params": [
+      { "id": "cutoff", "name": "Cutoff", "type": "float", "min": 20, "max": 20000, "default": 8000, "unit": "Hz", "skew": 0.3 },
+      { "id": "wave", "name": "Wave", "type": "enum", "choices": ["saw", "square", "tri"], "default": "saw" }
+    ],
+    "capabilities": ["tempoSync", "patternAccess", "stateBlob"],
+    "ui": { "kind": "react", "entry": "ui/index.html", "bridge": "webview", "compactEntry": "ui/compact.html" }
+  },
+  "session": {
+    "docType": "session", "schemaVersion": 1, "name": "Demo", "tempo": 140,
+    "timeSignature": { "num": 4, "den": 4 }, "sampleRate": 48000,
+    "plugins": [{ "ref": "tc-synth", "format": "native", "version": "0.1.0" }],
+    "graph": {
+      "nodes": [
+        { "id": "synth-1", "type": "module", "ref": "tc-synth", "section": "synth", "hosting": "inproc" },
+        { "id": "bus-synth", "type": "bus", "section": "synth" },
+        { "id": "master", "type": "master" }
+      ],
+      "edges": [
+        { "id": "e1", "from": { "node": "synth-1", "port": "out" }, "to": { "node": "bus-synth", "port": "in" }, "kind": "audio", "origin": "rule", "ruleId": "synth-to-bus" },
+        { "id": "e2", "from": { "node": "bus-synth", "port": "out" }, "to": { "node": "master", "port": "in" }, "kind": "audio" }
+      ]
+    },
+    "patterns": [{
+      "id": "pat-1", "name": "Lead", "lengthBeats": 4, "color": "#ff8800",
+      "channels": [{ "id": "ch-1", "target": "synth-1",
+        "notes": [{ "t": 0, "len": 1, "pitch": 60, "vel": 100 }],
+        "automation": [{ "node": "synth-1", "param": "cutoff", "points": [{ "t": 0, "v": 2000 }, { "t": 4, "v": 12000, "curve": "smooth" }] }] }]
+    }],
+    "playlist": [{ "id": "clip-1", "kind": "pattern", "ref": "pat-1", "track": 0, "start": 0, "length": 8 }],
+    "mixer": [{ "node": "bus-synth", "gainDb": -3, "pan": 0 }]
+  },
+  "config": {
+    "docType": "config", "schemaVersion": 1,
+    "sections": [
+      { "id": "synth", "label": "Synth", "accepts": { "roles": ["instrument"], "tags": ["synth"] }, "defaultBus": "bus-synth" },
+      { "id": "fx", "label": "FX", "accepts": { "roles": ["effect"] } }
+    ],
+    "routingRules": [
+      { "id": "synth-to-bus", "when": { "section": "synth", "role": "instrument" }, "then": { "connectTo": "bus-synth", "kind": "audio" } },
+      { "id": "bass-sidechain", "when": { "section": "bass" }, "then": { "connectTo": "kick-track", "kind": "sidechain", "gainDb": 0 } }
+    ],
+    "platformPolicy": {
+      "windows": { "thirdPartyHosting": "sandbox", "nativeModules": true, "formats": ["vst3", "clap", "native"] },
+      "android": { "thirdPartyHosting": "disabled", "nativeModules": true, "uiLayout": "compact", "formats": ["native"] }
+    },
+    "scanner": { "sandboxTimeoutMs": 5000, "blacklistOnCrash": true }
+  }
+}
