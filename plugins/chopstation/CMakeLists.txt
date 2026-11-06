@@ -12,6 +12,9 @@ juce_add_plugin(NCChopStation
     COPY_PLUGIN_AFTER_BUILD FALSE
     PRODUCT_NAME "Chop Station")
 
+juce_add_binary_data(NCChopFonts SOURCES
+    ../../assets/fonts/DMSans.ttf)
+
 target_sources(NCChopStation PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp)
@@ -22,6 +25,7 @@ target_compile_definitions(NCChopStation PRIVATE
     JUCE_VST3_CAN_REPLACE_VST2=0)
 
 target_link_libraries(NCChopStation PRIVATE
+    NCChopFonts
     nc_engine
     juce::juce_audio_utils
     juce::juce_dsp
