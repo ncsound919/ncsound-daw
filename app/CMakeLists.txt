@@ -17,6 +17,7 @@ target_sources(NCSoundHub PRIVATE
     Source/AudioEngine.cpp
     Source/AudioEngine.h
     Source/ChannelStrip.h
+    Source/Theme.h
     Source/PluginRegistry.cpp
     Source/PluginRegistry.h)
 

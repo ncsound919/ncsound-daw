@@ -1,5 +1,4 @@
 #include "MainComponent.h"
-#include "BinaryData.h"
 
 #include <cmath>
 
@@ -7,61 +6,37 @@ namespace nc
 {
 namespace
 {
-juce::Font labelFont (float height, bool bold = false)
-{
-    static const auto display = juce::Typeface::createSystemTypefaceFor (BinaryData::BremenBlack_ttf, BinaryData::BremenBlack_ttfSize);
-    static const auto small = juce::Typeface::createSystemTypefaceFor (BinaryData::BankGothic_ttf, BinaryData::BankGothic_ttfSize);
-    static const auto ui = juce::Typeface::createSystemTypefaceFor (BinaryData::Inter_ttf, BinaryData::Inter_ttfSize);
-    const auto face = bold ? (height <= 12.0f ? small : display) : ui;
-    return juce::Font (juce::FontOptions (face).withHeight (height).withStyle (bold ? "Bold" : "Regular"));
-}
+const juce::StringArray kTrackNames { "DRUMS", "BASS", "KEYS", "VOX", "GTR", "PERC", "AUX 1", "AUX 2" };
+const char* const kTools[] { "ZOOM", "TRIM", "SELECT", "GRAB", "PENCIL", "ERASE" };
+const char* const kModes[] { "SHUFFLE", "SLIP", "SPOT", "GRID" };
 
-juce::Colour colourForStatus (PluginStatus status)
+juce::Colour laneColour (int index)
 {
-    switch (status)
-    {
-        case PluginStatus::native:   return brand::accent;
-        case PluginStatus::external: return juce::Colour (0xff6f8f6f);
-        case PluginStatus::port:     return juce::Colour (0xffc9a227);
-        case PluginStatus::archived: return juce::Colour (0xff5a5a5a);
-    }
-
-    return brand::paper;
-}
-
-juce::StringArray trackNames()
-{
-    return { "DRUMS", "BASS", "KEYS", "VOX", "GTR", "PERC", "AUX 1", "AUX 2" };
+    return index % 2 == 0 ? juce::Colour (0xff0a0d14) : juce::Colour (0xff0c1018);
 }
 } // namespace
 
 MainComponent::MainComponent (juce::File registryFile)
     : registry (loadRegistry (registryFile))
 {
-    browser.setRowHeight (32);
-    browser.setOutlineThickness (0);
-    browser.setColour (juce::ListBox::backgroundColourId, juce::Colours::transparentBlack);
-    browser.setColour (juce::ListBox::outlineColourId, juce::Colours::transparentBlack);
-    addAndMakeVisible (browser);
-
-    auto styleButton = [this] (juce::TextButton& button, juce::Colour background)
+    auto styleButton = [this] (juce::TextButton& button, juce::Colour on = theme::accent)
     {
-        button.setColour (juce::TextButton::buttonColourId, background);
-        button.setColour (juce::TextButton::buttonOnColourId, brand::accent);
-        button.setColour (juce::TextButton::textColourOffId, brand::paper);
-        button.setColour (juce::TextButton::textColourOnId, brand::paper);
+        button.setColour (juce::TextButton::buttonColourId, theme::panel);
+        button.setColour (juce::TextButton::buttonOnColourId, on);
+        button.setColour (juce::TextButton::textColourOffId, theme::textDim);
+        button.setColour (juce::TextButton::textColourOnId, theme::bg);
         addAndMakeVisible (button);
     };
 
-    styleButton (arrangeButton, brand::surface);
-    styleButton (mixerButton, brand::surface);
-    styleButton (playButton, brand::accent);
-    styleButton (stopButton, brand::surface);
-    styleButton (metronomeButton, brand::surface);
-
-    arrangeButton.setToggleState (true, juce::dontSendNotification);
-    arrangeButton.onClick = [this] { setView (View::arrange); };
-    mixerButton.onClick = [this] { setView (View::mixer); };
+    styleButton (rtz);
+    styleButton (rew);
+    styleButton (stopButton);
+    styleButton (playButton);
+    styleButton (recordButton, theme::red);
+    styleButton (metronomeButton, theme::sky);
+    styleButton (pluginsButton);
+    styleButton (editButton);
+    styleButton (mixButton);
 
     playButton.onClick = [this]
     {
@@ -77,24 +52,51 @@ MainComponent::MainComponent (juce::File registryFile)
         repaint();
     };
 
+    rtz.onClick = [this] { engine.resetPosition(); repaint(); };
+    rew.onClick = [this] { engine.resetPosition(); repaint(); };
+
+    recordButton.setClickingTogglesState (true);
     metronomeButton.setClickingTogglesState (true);
     metronomeButton.setToggleState (engine.isMetronomeOn(), juce::dontSendNotification);
     metronomeButton.onClick = [this] { engine.setMetronome (metronomeButton.getToggleState()); };
+
+    pluginsButton.setClickingTogglesState (true);
+    pluginsButton.onClick = [this] { setPanelOpen (pluginsButton.getToggleState()); };
+
+    editButton.setToggleState (true, juce::dontSendNotification);
+    editButton.onClick = [this] { setView (View::edit); };
+    mixButton.onClick = [this] { setView (View::mix); };
 
     bpm.setSliderStyle (juce::Slider::LinearBar);
     bpm.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     bpm.setRange (40.0, 240.0, 1.0);
     bpm.setValue (engine.getBpm(), juce::dontSendNotification);
-    bpm.setColour (juce::Slider::trackColourId, brand::accent);
-    bpm.setColour (juce::Slider::backgroundColourId, brand::surface);
+    bpm.setColour (juce::Slider::trackColourId, theme::accent);
+    bpm.setColour (juce::Slider::backgroundColourId, theme::bg);
     bpm.onValueChange = [this] { engine.setBpm (bpm.getValue()); };
     addAndMakeVisible (bpm);
 
-    const auto names = trackNames();
+    masterFader.setSliderStyle (juce::Slider::LinearVertical);
+    masterFader.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+    masterFader.setRange (-60.0, 6.0, 0.1);
+    masterFader.setValue (-6.0, juce::dontSendNotification);
+    masterFader.setColour (juce::Slider::trackColourId, theme::accent);
+    masterFader.setColour (juce::Slider::backgroundColourId, theme::bg);
+    masterFader.onValueChange = [this]
+    {
+        engine.setMasterGain (static_cast<float> (juce::Decibels::decibelsToGain (masterFader.getValue())));
+    };
+    addChildComponent (masterFader);
+
+    browser.setRowHeight (26);
+    browser.setOutlineThickness (0);
+    browser.setColour (juce::ListBox::backgroundColourId, juce::Colours::transparentBlack);
+    browser.setColour (juce::ListBox::outlineColourId, juce::Colours::transparentBlack);
+    addChildComponent (browser);
 
     for (int index = 0; index < AudioEngine::trackCount; ++index)
     {
-        strips.push_back (std::make_unique<ChannelStrip> (engine, index, names[index]));
+        strips.push_back (std::make_unique<ChannelStrip> (engine, index, kTrackNames[index]));
         addChildComponent (*strips.back());
     }
 
@@ -105,13 +107,24 @@ MainComponent::MainComponent (juce::File registryFile)
 void MainComponent::setView (View newView)
 {
     view = newView;
-
-    arrangeButton.setToggleState (view == View::arrange, juce::dontSendNotification);
-    mixerButton.setToggleState (view == View::mixer, juce::dontSendNotification);
+    editButton.setToggleState (view == View::edit, juce::dontSendNotification);
+    mixButton.setToggleState (view == View::mix, juce::dontSendNotification);
 
     for (auto& strip : strips)
-        strip->setVisible (view == View::mixer);
+        strip->setVisible (view == View::mix);
 
+    masterFader.setVisible (view == View::mix);
+    browser.setVisible (view == View::edit && panelOpen);
+
+    resized();
+    repaint();
+}
+
+void MainComponent::setPanelOpen (bool shouldOpen)
+{
+    panelOpen = shouldOpen;
+    pluginsButton.setToggleState (panelOpen, juce::dontSendNotification);
+    browser.setVisible (view == View::edit && panelOpen);
     resized();
     repaint();
 }
@@ -121,6 +134,29 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     if (key == juce::KeyPress::spaceKey)
     {
         playButton.onClick();
+        return true;
+    }
+
+    const auto character = key.getTextCharacter();
+
+    if (character == 'r' || character == 'R')
+    {
+        armed[selectedTrack] = ! armed[selectedTrack];
+        repaint();
+        return true;
+    }
+
+    if (character == 'm' || character == 'M')
+    {
+        engine.setTrackMuted (selectedTrack, ! engine.trackMuted (selectedTrack));
+        repaint();
+        return true;
+    }
+
+    if (character == 's' || character == 'S')
+    {
+        engine.setTrackSolo (selectedTrack, ! engine.trackSolo (selectedTrack));
+        repaint();
         return true;
     }
 
@@ -138,271 +174,476 @@ void MainComponent::paintListBoxItem (int row, juce::Graphics& g, int width, int
         return;
 
     const auto& plugin = registry.plugins[static_cast<size_t> (row)];
-    auto area = juce::Rectangle<int> (0, 0, width, height).reduced (4, 2);
+    auto area = juce::Rectangle<int> (0, 0, width, height);
 
     if (rowIsSelected)
     {
-        g.setColour (brand::surface);
-        g.fillRoundedRectangle (area.toFloat(), 3.0f);
+        g.setColour (theme::accent.withAlpha (0.16f));
+        g.fillRect (area);
     }
 
-    g.setColour (colourForStatus (plugin.status));
-    g.fillEllipse (static_cast<float> (area.getX() + 8), static_cast<float> (area.getCentreY() - 3), 6.0f, 6.0f);
+    g.setColour (rowIsSelected ? theme::accentHi : theme::textMuted);
+    g.setFont (theme::ui (9.0f));
+    g.drawText (plugin.isInstrument() ? "INS" : "FX", area.removeFromLeft (28), juce::Justification::centred, false);
 
-    g.setColour (rowIsSelected ? brand::paper : brand::paper.withAlpha (0.82f));
-    g.setFont (labelFont (13.0f, rowIsSelected));
-    g.drawText (plugin.name, area.withTrimmedLeft (24).withTrimmedRight (78), juce::Justification::centredLeft, true);
+    g.setColour (rowIsSelected ? theme::text : theme::textDim);
+    g.setFont (theme::ui (10.5f));
+    g.drawText (plugin.name, area.withTrimmedRight (54), juce::Justification::centredLeft, true);
 
-    g.setColour (brand::paper.withAlpha (0.38f));
-    g.setFont (labelFont (11.0f));
-    g.drawText (statusName (plugin.status), area.removeFromRight (74), juce::Justification::centredRight, false);
+    g.setColour (theme::textMuted);
+    g.setFont (theme::label (7.5f));
+    g.drawText (statusName (plugin.status).toUpperCase(), area.removeFromRight (52), juce::Justification::centredRight, false);
 }
 
 void MainComponent::selectedRowsChanged (int lastRowSelected)
 {
     selectedRow = lastRowSelected;
-    repaint (inspectorArea);
+    repaint (panelArea);
 }
 
 void MainComponent::timerCallback()
 {
-    if (engine.isPlaying())
-        repaint (transportArea);
-
     for (auto& strip : strips)
         strip->refresh();
 
-    if (view == View::arrange && engine.isPlaying())
-        repaint (mainArea);
+    if (engine.isPlaying())
+    {
+        repaint (transportArea);
+        repaint (laneArea);
+    }
 }
 
 juce::String MainComponent::positionText() const
 {
     const auto seconds = engine.positionSeconds();
     const auto tempo = juce::jmax (1.0, engine.getBpm());
-    const auto totalBeats = seconds * tempo / 60.0;
-    const auto bar = static_cast<int> (totalBeats / 4.0) + 1;
-    const auto beat = static_cast<int> (std::fmod (totalBeats, 4.0)) + 1;
-    const auto ticks = static_cast<int> ((totalBeats - std::floor (totalBeats)) * 960.0);
+    const auto beats = seconds * tempo / 60.0;
+    const auto bar = static_cast<int> (beats / 4.0) + 1;
+    const auto beat = static_cast<int> (std::fmod (beats, 4.0)) + 1;
+    const auto ticks = static_cast<int> ((beats - std::floor (beats)) * 960.0);
+
+    return juce::String (bar) + "|" + juce::String (beat) + "|" + juce::String (ticks).paddedLeft ('0', 3);
+}
+
+juce::String MainComponent::clockText() const
+{
+    const auto seconds = engine.positionSeconds();
     const auto whole = static_cast<int> (seconds);
     const auto millis = static_cast<int> ((seconds - whole) * 1000.0);
 
-    return juce::String (bar) + ":" + juce::String (beat) + ":" + juce::String (ticks).paddedLeft ('0', 3)
-         + "    " + juce::String (whole / 60).paddedLeft ('0', 2) + ":" + juce::String (whole % 60).paddedLeft ('0', 2)
-         + "." + juce::String (millis).paddedLeft ('0', 3);
+    return juce::String (whole / 60).paddedLeft ('0', 2) + ":"
+         + juce::String (whole % 60).paddedLeft ('0', 2) + "."
+         + juce::String (millis).paddedLeft ('0', 3);
+}
+
+int MainComponent::trackAt (juce::Point<int> position) const
+{
+    if (laneArea.isEmpty() || position.y < laneArea.getY() + 22)
+        return -1;
+
+    const auto rowHeight = static_cast<float> (laneArea.getHeight() - 22) / static_cast<float> (AudioEngine::trackCount);
+    const auto row = static_cast<int> (static_cast<float> (position.y - laneArea.getY() - 22) / rowHeight);
+
+    return juce::isPositiveAndBelow (row, AudioEngine::trackCount) ? row : -1;
 }
 
 void MainComponent::paint (juce::Graphics& g)
 {
-    g.fillAll (brand::well);
-    paintHeader (g);
-    paintBrowser (g);
+    g.fillAll (theme::bg);
+    paintMenu (g);
+    paintTransport (g);
+    paintTools (g);
 
-    if (view == View::arrange)
+    if (view == View::edit)
     {
-        paintArrangement (g);
-        paintInspector (g);
+        paintEdit (g);
+
+        if (panelOpen)
+            paintPanel (g);
     }
     else
     {
-        g.setColour (brand::well);
-        g.fillRect (mainArea);
-
-        g.setColour (brand::paper.withAlpha (0.45f));
-        g.setFont (labelFont (10.0f, true));
-        g.drawText ("MIXER", mainArea.reduced (16, 12).removeFromTop (18), juce::Justification::centredLeft, false);
+        paintMix (g);
     }
 
-    paintTransport (g);
+    paintStatus (g);
 }
 
-void MainComponent::paintHeader (juce::Graphics& g)
+void MainComponent::paintMenu (juce::Graphics& g)
 {
-    g.setColour (brand::ink);
-    g.fillRect (headerArea);
+    g.setColour (theme::panel);
+    g.fillRect (menuArea);
+    theme::hairline (g, 0.0f, static_cast<float> (menuArea.getBottom()), static_cast<float> (getWidth()), static_cast<float> (menuArea.getBottom()));
 
-    auto area = headerArea.reduced (20, 0);
-    auto brandArea = area.removeFromLeft (320);
+    g.setColour (theme::text);
+    g.setFont (theme::display (11.0f));
+    g.drawText ("NCSOUND", menuArea.reduced (10, 0), juce::Justification::centredLeft, false);
 
-    g.setColour (brand::paper);
-    g.setFont (labelFont (21.0f, true));
-    g.drawText ("NCSOUND", brandArea.removeFromTop (34), juce::Justification::bottomLeft, false);
+    g.setColour (theme::textMuted);
+    g.setFont (theme::label (8.0f));
+    g.drawText ("FILE     EDIT     VIEW     TRACK     CLIP     OPTIONS     SETUP     WINDOW",
+                menuArea.withTrimmedLeft (120), juce::Justification::centredLeft, false);
 
-    g.setColour (brand::accent);
-    g.setFont (labelFont (10.0f, true));
-    g.drawText ("MUSIC HUB  ·  A DIVISION OF OVERLAY365", brandArea, juce::Justification::topLeft, false);
-
-    g.setColour (brand::paper.withAlpha (0.5f));
-    g.setFont (labelFont (11.0f));
-    g.drawText (juce::String (registry.plugins.size()) + " PLUGINS   ·   "
-                    + juce::String (registry.countInstruments()) + " INSTRUMENTS   ·   "
-                    + juce::String (registry.countEffects()) + " EFFECTS   ·   "
-                    + engine.deviceDescription(),
-                area.withTrimmedRight (200), juce::Justification::centredRight, false);
-}
-
-void MainComponent::paintBrowser (juce::Graphics& g)
-{
-    g.setColour (brand::ink);
-    g.fillRect (browserArea);
-
-    g.setColour (brand::accent);
-    g.setFont (labelFont (10.0f, true));
-    g.drawText ("STOCK SUITE", browserArea.reduced (16, 12).removeFromTop (20), juce::Justification::centredLeft, false);
-}
-
-void MainComponent::paintArrangement (juce::Graphics& g)
-{
-    auto area = mainArea.reduced (16, 12);
-    auto ruler = area.removeFromTop (24);
-
-    g.setColour (brand::paper.withAlpha (0.45f));
-    g.setFont (labelFont (10.0f, true));
-    g.drawText ("ARRANGEMENT  ·  16 BARS", ruler.removeFromLeft (200), juce::Justification::centredLeft, false);
-
-    const auto pixelsPerBar = static_cast<float> (ruler.getWidth()) / 8.0f;
-
-    for (int bar = 1; bar <= 8; ++bar)
-    {
-        const auto x = static_cast<float> (ruler.getX()) + static_cast<float> (bar - 1) * pixelsPerBar;
-
-        g.setColour (brand::paper.withAlpha (0.28f));
-        g.setFont (labelFont (9.0f));
-        g.drawText (juce::String (bar), juce::Rectangle<int> (static_cast<int> (x) + 4, ruler.getY(), 24, ruler.getHeight()),
-                    juce::Justification::centredLeft, false);
-
-        g.setColour (brand::paper.withAlpha (0.07f));
-        g.drawVerticalLine (static_cast<int> (x), static_cast<float> (area.getY()), static_cast<float> (area.getBottom()));
-    }
-
-    const auto names = trackNames();
-    const auto laneHeight = area.getHeight() / AudioEngine::trackCount;
-    const auto loopSeconds = 64.0 * 60.0 / juce::jmax (1.0, engine.getBpm());
-
-    for (int track = 0; track < AudioEngine::trackCount; ++track)
-    {
-        auto lane = area.withY (area.getY() + track * laneHeight).withHeight (laneHeight).reduced (0, 2);
-
-        g.setColour (track % 2 == 0 ? brand::ink : brand::surface.withAlpha (0.55f));
-        g.fillRoundedRectangle (lane.toFloat(), 3.0f);
-
-        g.setColour (brand::paper.withAlpha (0.35f));
-        g.setFont (labelFont (10.0f, true));
-        g.drawText (names[track], lane.withTrimmedLeft (10), juce::Justification::centredLeft, false);
-
-        g.setColour (engine.trackMuted (track) ? brand::accent.withAlpha (0.5f) : brand::paper.withAlpha (0.16f));
-        g.setFont (labelFont (11.0f));
-        g.drawText (engine.trackMuted (track) ? "MUTED" : "no clip", lane.withTrimmedRight (12), juce::Justification::centredRight, false);
-    }
-
-    if (engine.isPlaying())
-    {
-        const auto fraction = std::fmod (engine.positionSeconds(), loopSeconds) / loopSeconds;
-        const auto x = static_cast<float> (area.getX()) + static_cast<float> (fraction) * static_cast<float> (area.getWidth());
-
-        g.setColour (brand::accent);
-        g.drawVerticalLine (static_cast<int> (x), static_cast<float> (area.getY()), static_cast<float> (area.getBottom()));
-    }
-}
-
-void MainComponent::paintInspector (juce::Graphics& g)
-{
-    g.setColour (brand::ink);
-    g.fillRect (inspectorArea);
-
-    auto area = inspectorArea.reduced (16, 12);
-
-    g.setColour (brand::accent);
-    g.setFont (labelFont (10.0f, true));
-    g.drawText ("INSPECTOR", area.removeFromTop (20), juce::Justification::centredLeft, false);
-
-    if (selectedRow < 0 || selectedRow >= getNumRows())
-    {
-        g.setColour (brand::paper.withAlpha (0.4f));
-        g.setFont (labelFont (12.0f));
-        g.drawFittedText ("Select a plugin to see where it is built and what it still needs.",
-                          area.removeFromTop (80), juce::Justification::topLeft, 4);
-        return;
-    }
-
-    const auto& plugin = registry.plugins[static_cast<size_t> (selectedRow)];
-
-    g.setColour (brand::paper);
-    g.setFont (labelFont (16.0f, true));
-    g.drawFittedText (plugin.name, area.removeFromTop (48), juce::Justification::topLeft, 2);
-
-    g.setColour (colourForStatus (plugin.status));
-    g.setFont (labelFont (10.0f, true));
-    g.drawText (statusName (plugin.status).toUpperCase() + "   ·   " + plugin.kind.toUpperCase(),
-                area.removeFromTop (18), juce::Justification::centredLeft, false);
+    g.setColour (theme::textMuted);
+    g.setFont (theme::label (7.5f));
+    g.drawText ("OVERLAY365  ·  MUSIC HUB", menuArea.reduced (10, 0), juce::Justification::centredRight, false);
 }
 
 void MainComponent::paintTransport (juce::Graphics& g)
 {
-    g.setColour (brand::ink);
+    g.setColour (theme::panel);
     g.fillRect (transportArea);
+    theme::hairline (g, 0.0f, static_cast<float> (transportArea.getBottom()), static_cast<float> (getWidth()), static_cast<float> (transportArea.getBottom()));
 
-    auto area = transportArea.reduced (16, 0);
-    area.removeFromLeft (280).removeFromLeft (330);
+    const auto x = static_cast<float> (transportArea.getX() + 232);
+    g.setColour (theme::textMuted);
+    g.setFont (theme::label (7.0f));
+    g.drawText ("BARS | BEATS", juce::Rectangle<int> (static_cast<int> (x), transportArea.getY() + 3, 170, 9), juce::Justification::centredLeft, false);
 
-    g.setColour (brand::paper);
-    static const auto digital = juce::Typeface::createSystemTypefaceFor (BinaryData::DigitalReadout_ttf, BinaryData::DigitalReadout_ttfSize);
-    g.setFont (juce::Font (juce::FontOptions (digital).withHeight (16.0f)));
-    g.drawText (positionText(), area, juce::Justification::centredRight, false);
+    g.setColour (theme::text);
+    g.setFont (theme::clock (17.0f));
+    g.drawText (positionText(), juce::Rectangle<int> (static_cast<int> (x), transportArea.getY() + 11, 170, 21), juce::Justification::centredLeft, false);
 
-    auto meter = transportArea.reduced (16, 16).removeFromRight (220).removeFromLeft (10);
-    meter.setY (transportArea.getCentreY() - 8);
-    meter.setHeight (16);
+    g.setColour (theme::sky);
+    g.setFont (theme::clock (9.0f));
+    g.drawText (clockText(), juce::Rectangle<int> (static_cast<int> (x), transportArea.getY() + 34, 170, 12), juce::Justification::centredLeft, false);
 
-    g.setColour (brand::surface);
+    g.setColour (theme::textMuted);
+    g.setFont (theme::label (7.0f));
+    g.drawText ("MIN : SEC", juce::Rectangle<int> (static_cast<int> (x) + 90, transportArea.getY() + 34, 80, 12), juce::Justification::centredLeft, false);
+
+    auto meter = juce::Rectangle<int> (transportArea.getX() + 410, transportArea.getY() + 20, 86, 16);
+    g.setColour (theme::textMuted);
+    g.setFont (theme::label (7.0f));
+    g.drawText ("MASTER", meter.withY (transportArea.getY() + 8).withHeight (10), juce::Justification::centredLeft, false);
+    g.setColour (theme::bg);
     g.fillRect (meter);
 
     const auto level = juce::jlimit (0.0f, 1.0f, juce::Decibels::gainToDecibels (engine.masterPeak(), -60.0f) / 60.0f + 1.0f);
-    auto lit = meter.removeFromBottom (static_cast<int> (level * 16.0f));
+    g.setColour (level > 0.95f ? theme::red : theme::accent);
+    g.fillRect (meter.removeFromLeft (static_cast<int> (level * 86.0f)));
+}
 
-    g.setColour (level > 0.95f ? brand::accent : juce::Colour (0xff6f8f6f));
+void MainComponent::paintTools (juce::Graphics& g)
+{
+    g.setColour (theme::bg);
+    g.fillRect (toolArea);
+    theme::hairline (g, 0.0f, static_cast<float> (toolArea.getBottom()), static_cast<float> (getWidth()), static_cast<float> (toolArea.getBottom()));
+
+    for (int index = 0; index < 6; ++index)
+    {
+        auto cell = juce::Rectangle<int> (toolArea.getX() + 10 + index * 66, toolArea.getY(), 62, toolArea.getHeight());
+        const auto active = static_cast<int> (tool) == index;
+
+        g.setColour (active ? theme::accentHi : theme::textMuted);
+        g.setFont (theme::label (8.0f));
+        g.drawText (kTools[index], cell, juce::Justification::centred, false);
+
+        if (active)
+        {
+            g.setColour (theme::accent);
+            g.fillRect (cell.removeFromBottom (2));
+        }
+    }
+
+    for (int index = 0; index < 4; ++index)
+    {
+        auto cell = juce::Rectangle<int> (modeArea.getX() + index * 56, modeArea.getY(), 54, modeArea.getHeight());
+        const auto active = static_cast<int> (mode) == index;
+
+        g.setColour (active ? theme::accentHi : theme::textMuted);
+        g.setFont (theme::label (7.5f));
+        g.drawText (kModes[index], cell, juce::Justification::centred, false);
+
+        if (active)
+        {
+            g.setColour (theme::sky);
+            g.fillRect (cell.removeFromBottom (2));
+        }
+    }
+}
+
+void MainComponent::paintEdit (juce::Graphics& g)
+{
+    g.setColour (theme::panel);
+    g.fillRect (headerArea);
+    g.setColour (theme::border);
+    g.drawVerticalLine (headerArea.getRight() - 1, static_cast<float> (headerArea.getY()), static_cast<float> (headerArea.getBottom()));
+
+    auto ruler = juce::Rectangle<int> (laneArea.getX(), laneArea.getY(), laneArea.getWidth(), 22);
+    g.setColour (theme::bg);
+    g.fillRect (laneArea);
+    g.setColour (theme::panel);
+    g.fillRect (ruler);
+
+    const auto bars = 16;
+    const auto barWidth = static_cast<float> (laneArea.getWidth()) / static_cast<float> (bars);
+
+    for (int bar = 0; bar < bars; ++bar)
+    {
+        const auto x = static_cast<float> (laneArea.getX()) + static_cast<float> (bar) * barWidth;
+
+        g.setColour (theme::textMuted);
+        g.setFont (theme::label (7.0f));
+        g.drawText (juce::String (bar + 1), juce::Rectangle<int> (static_cast<int> (x) + 4, ruler.getY() + 4, 24, 14),
+                    juce::Justification::centredLeft, false);
+
+        g.setColour (bar % 4 == 0 ? theme::border : theme::border.withAlpha (0.5f));
+        g.drawVerticalLine (static_cast<int> (x), static_cast<float> (ruler.getY()), static_cast<float> (laneArea.getBottom()));
+    }
+
+    const auto rowHeight = static_cast<float> (laneArea.getHeight() - 22) / static_cast<float> (AudioEngine::trackCount);
+
+    for (int track = 0; track < AudioEngine::trackCount; ++track)
+    {
+        auto lane = juce::Rectangle<int> (laneArea.getX(), laneArea.getY() + 22 + static_cast<int> (track * rowHeight),
+                                         laneArea.getWidth(), static_cast<int> (rowHeight));
+        auto header = juce::Rectangle<int> (headerArea.getX(), lane.getY(), headerArea.getWidth() - 1, lane.getHeight());
+
+        g.setColour (track == selectedTrack ? theme::raised : laneColour (track));
+        g.fillRect (lane);
+        g.setColour (track == selectedTrack ? juce::Colour (0x14ffffff) : theme::panel);
+        g.fillRect (header);
+        theme::hairline (g, 0.0f, static_cast<float> (lane.getBottom()), static_cast<float> (getWidth()), static_cast<float> (lane.getBottom()));
+
+        g.setColour (theme::textMuted);
+        g.setFont (theme::label (7.0f));
+        g.drawText (juce::String (track + 1).paddedLeft ('0', 2), header.reduced (8, 0).removeFromTop (16),
+                    juce::Justification::centredRight, false);
+
+        g.setColour (theme::text);
+        g.setFont (theme::ui (10.5f));
+        g.drawText (kTrackNames[track], header.reduced (8, 0).withTrimmedTop (4).withTrimmedRight (26).removeFromTop (16),
+                    juce::Justification::centredLeft, true);
+
+        const auto buttonY = header.getY() + 22;
+
+        g.setColour (armed[track] ? theme::red : theme::textMuted);
+        if (armed[track])
+            g.fillEllipse (static_cast<float> (header.getX() + 9), static_cast<float> (buttonY + 1), 8.0f, 8.0f);
+        else
+            g.drawEllipse (static_cast<float> (header.getX() + 9), static_cast<float> (buttonY + 1), 8.0f, 8.0f, 1.0f);
+
+        auto drawBox = [&] (int offset, const char* text, bool on, juce::Colour colour)
+        {
+            auto box = juce::Rectangle<int> (header.getX() + offset, buttonY, 18, 12);
+            g.setColour (on ? colour : theme::bg);
+            g.fillRect (box);
+            g.setColour (theme::border);
+            g.drawRect (box, 1);
+            g.setColour (on ? theme::bg : theme::textMuted);
+            g.setFont (theme::label (6.5f));
+            g.drawText (text, box, juce::Justification::centred, false);
+        };
+
+        drawBox (24, "S", engine.trackSolo (track), theme::sky);
+        drawBox (46, "M", engine.trackMuted (track), theme::gold);
+
+        const auto gain = juce::jlimit (0.0f, 1.0f, engine.trackGain (track) / 1.2f);
+        auto faderLine = juce::Rectangle<int> (header.getX() + 8, header.getBottom() - 12, header.getWidth() - 18, 4);
+        g.setColour (theme::border);
+        g.drawHorizontalLine (faderLine.getCentreY(), static_cast<float> (faderLine.getX()), static_cast<float> (faderLine.getRight()));
+        g.setColour (theme::accent);
+        g.fillRect (juce::Rectangle<int> (faderLine.getX() + static_cast<int> (gain * static_cast<float> (faderLine.getWidth())) - 1,
+                                         faderLine.getY(), 3, faderLine.getHeight()));
+    }
+
+    const auto loopSeconds = 64.0 * 60.0 / juce::jmax (1.0, engine.getBpm());
+    const auto fraction = std::fmod (engine.positionSeconds(), loopSeconds) / loopSeconds;
+    const auto playX = static_cast<float> (laneArea.getX()) + static_cast<float> (fraction) * static_cast<float> (laneArea.getWidth());
+
+    g.setColour (theme::sky);
+    g.drawVerticalLine (static_cast<int> (playX), static_cast<float> (laneArea.getY()), static_cast<float> (laneArea.getBottom()));
+    juce::Path marker;
+    marker.addTriangle (playX - 4.0f, static_cast<float> (laneArea.getY()), playX + 4.0f, static_cast<float> (laneArea.getY()),
+                        playX, static_cast<float> (laneArea.getY() + 7));
+    g.fillPath (marker);
+}
+
+void MainComponent::paintMix (juce::Graphics& g)
+{
+    g.setColour (theme::bg);
+    g.fillRect (mixArea);
+
+    g.setColour (theme::panel);
+    g.fillRect (masterArea);
+    g.setColour (theme::border);
+    g.drawRect (masterArea, 1);
+
+    auto inner = masterArea.reduced (6);
+    g.setColour (theme::textMuted);
+    g.setFont (theme::label (8.0f));
+    g.drawText ("MASTER", inner.removeFromTop (18), juce::Justification::centred, false);
+
+    auto meterArea = inner.removeFromRight (8).withTrimmedTop (30).withTrimmedBottom (28);
+    g.setColour (theme::bg);
+    g.fillRect (meterArea);
+    const auto level = juce::jlimit (0.0f, 1.0f, juce::Decibels::gainToDecibels (engine.masterPeak(), -60.0f) / 60.0f + 1.0f);
+    auto lit = meterArea.withTrimmedTop (static_cast<int> ((1.0f - level) * static_cast<float> (meterArea.getHeight())));
+    g.setColour (level > 0.95f ? theme::red : theme::accent);
     g.fillRect (lit);
+}
+
+void MainComponent::paintPanel (juce::Graphics& g)
+{
+    g.setColour (theme::panel);
+    g.fillRect (panelArea);
+    g.setColour (theme::border);
+    g.drawVerticalLine (panelArea.getX(), static_cast<float> (panelArea.getY()), static_cast<float> (panelArea.getBottom()));
+
+    auto header = panelArea.reduced (8, 0).removeFromTop (26);
+    g.setColour (theme::accentHi);
+    g.setFont (theme::label (8.0f));
+    g.drawText ("PLUG-INS", header.removeFromLeft (90), juce::Justification::centredLeft, false);
+
+    g.setColour (theme::textMuted);
+    g.setFont (theme::label (7.5f));
+    g.drawText (juce::String (registry.plugins.size()) + " STOCK", header, juce::Justification::centredRight, false);
+
+    theme::hairline (g, static_cast<float> (panelArea.getX()), static_cast<float> (panelArea.getY() + 26),
+                     static_cast<float> (panelArea.getRight()), static_cast<float> (panelArea.getY() + 26));
+}
+
+void MainComponent::paintStatus (juce::Graphics& g)
+{
+    g.setColour (theme::panel);
+    g.fillRect (statusArea);
+    theme::hairline (g, 0.0f, static_cast<float> (statusArea.getY()), static_cast<float> (getWidth()), static_cast<float> (statusArea.getY()));
+
+    g.setColour (theme::textMuted);
+    g.setFont (theme::label (7.5f));
+    g.drawText (view == View::edit ? "EDIT WINDOW  ·  16 BARS  ·  4/4" : "MIX WINDOW  ·  8 CHANNELS",
+                statusArea.reduced (10, 0), juce::Justification::centredLeft, false);
+
+    g.drawText ("NCSOUND MUSIC HUB  ·  " + engine.deviceDescription(),
+                statusArea.reduced (10, 0), juce::Justification::centredRight, false);
+}
+
+void MainComponent::mouseDown (const juce::MouseEvent& event)
+{
+    const auto position = event.getPosition();
+
+    if (toolArea.contains (position))
+    {
+        const auto index = (position.x - toolArea.getX() - 10) / 66;
+
+        if (juce::isPositiveAndBelow (index, 6))
+        {
+            tool = static_cast<Tool> (index);
+            repaint (toolArea);
+        }
+
+        return;
+    }
+
+    if (modeArea.contains (position))
+    {
+        const auto index = (position.x - modeArea.getX()) / 56;
+
+        if (juce::isPositiveAndBelow (index, 4))
+        {
+            mode = static_cast<Mode> (index);
+            repaint (toolArea);
+        }
+
+        return;
+    }
+
+    if (view == View::edit && headerArea.contains (position))
+    {
+        const auto track = trackAt (position);
+
+        if (track < 0)
+            return;
+
+        selectedTrack = track;
+        const auto rowHeight = static_cast<float> (laneArea.getHeight() - 22) / static_cast<float> (AudioEngine::trackCount);
+        const auto rowY = laneArea.getY() + 22 + static_cast<int> (track * rowHeight);
+        const auto buttonY = rowY + 22;
+
+        if (juce::Rectangle<int> (headerArea.getX() + 8, buttonY, 12, 12).contains (position))
+            armed[track] = ! armed[track];
+        else if (juce::Rectangle<int> (headerArea.getX() + 24, buttonY, 18, 12).contains (position))
+            engine.setTrackSolo (track, ! engine.trackSolo (track));
+        else if (juce::Rectangle<int> (headerArea.getX() + 46, buttonY, 18, 12).contains (position))
+            engine.setTrackMuted (track, ! engine.trackMuted (track));
+
+        repaint();
+        return;
+    }
+
+    if (view == View::edit && laneArea.contains (position))
+    {
+        const auto track = trackAt (position);
+
+        if (track >= 0)
+        {
+            selectedTrack = track;
+            repaint();
+        }
+    }
 }
 
 void MainComponent::resized()
 {
     auto area = getLocalBounds();
-    headerArea = area.removeFromTop (56);
-    transportArea = area.removeFromBottom (64);
-    browserArea = area.removeFromLeft (280);
+    menuArea = area.removeFromTop (22);
+    transportArea = area.removeFromTop (54);
+    toolArea = area.removeFromTop (28);
+    statusArea = area.removeFromBottom (20);
 
-    if (view == View::arrange)
-        inspectorArea = area.removeFromRight (240);
-    else
-        inspectorArea = {};
+    modeArea = juce::Rectangle<int> (toolArea.getRight() - 240, toolArea.getY(), 232, toolArea.getHeight());
 
-    mainArea = area;
-
-    auto header = headerArea.reduced (16, 0);
-    auto viewButtons = header.removeFromRight (200);
-    mixerButton.setBounds (viewButtons.removeFromRight (86).reduced (0, 12));
-    viewButtons.removeFromRight (6);
-    arrangeButton.setBounds (viewButtons.removeFromRight (96).reduced (0, 12));
-
-    browser.setBounds (browserArea.reduced (16, 36));
-
-    auto transport = transportArea.reduced (16, 12);
-    playButton.setBounds (transport.removeFromLeft (74).reduced (0, 2));
-    transport.removeFromLeft (6);
-    stopButton.setBounds (transport.removeFromLeft (64).reduced (0, 2));
-    transport.removeFromLeft (6);
-    metronomeButton.setBounds (transport.removeFromLeft (68).reduced (0, 2));
-    transport.removeFromLeft (12);
-    bpm.setBounds (transport.removeFromLeft (110).reduced (0, 8));
-
-    if (view == View::mixer)
+    if (view == View::edit)
     {
-        auto stripArea = mainArea.reduced (16, 32);
-        stripArea.removeFromTop (10);
-        const auto width = juce::jmin (120, stripArea.getWidth() / AudioEngine::trackCount);
+        headerArea = area.removeFromLeft (200);
+        panelArea = panelOpen ? area.removeFromRight (260) : juce::Rectangle<int>();
+        laneArea = area;
+        mixArea = {};
+        masterArea = {};
+    }
+    else
+    {
+        mixArea = area;
+        headerArea = {};
+        laneArea = {};
+        panelArea = {};
+    }
+
+    auto transport = transportArea.reduced (8, 10);
+    rtz.setBounds (transport.removeFromLeft (30));
+    transport.removeFromLeft (2);
+    rew.setBounds (transport.removeFromLeft (30));
+    transport.removeFromLeft (2);
+    stopButton.setBounds (transport.removeFromLeft (44));
+    transport.removeFromLeft (2);
+    playButton.setBounds (transport.removeFromLeft (46));
+    transport.removeFromLeft (2);
+    recordButton.setBounds (transport.removeFromLeft (40));
+
+    auto right = transportArea.reduced (8, 10);
+    mixButton.setBounds (right.removeFromRight (42));
+    right.removeFromRight (4);
+    editButton.setBounds (right.removeFromRight (42));
+    right.removeFromRight (10);
+    pluginsButton.setBounds (right.removeFromRight (64));
+    right.removeFromRight (10);
+    metronomeButton.setBounds (right.removeFromRight (52));
+    right.removeFromRight (8);
+    bpm.setBounds (right.removeFromRight (58));
+
+    browser.setBounds (panelArea.withTrimmedTop (28).reduced (6));
+
+    if (view == View::mix)
+    {
+        auto stripsArea = mixArea.reduced (8, 10);
+        masterArea = stripsArea.removeFromRight (108);
+        const auto width = juce::jmin (104, stripsArea.getWidth() / AudioEngine::trackCount);
 
         for (auto& strip : strips)
-            strip->setBounds (stripArea.removeFromLeft (width).reduced (3, 0));
+            strip->setBounds (stripsArea.removeFromLeft (width).reduced (2, 0));
+
+        masterFader.setBounds (masterArea.reduced (10, 36).withTrimmedRight (22));
     }
 }
 } // namespace nc

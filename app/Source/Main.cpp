@@ -37,7 +37,7 @@ class MainWindow final : public juce::DocumentWindow
 {
 public:
     MainWindow (const juce::String& name, const juce::String& commandLine)
-        : DocumentWindow (name, brand::well, DocumentWindow::allButtons)
+        : DocumentWindow (name, theme::bg, DocumentWindow::allButtons)
     {
         setUsingNativeTitleBar (true);
 
@@ -77,7 +77,7 @@ public:
     {
         auto& look = juce::LookAndFeel::getDefaultLookAndFeel();
         look.setDefaultSansSerifTypeface (juce::Typeface::createSystemTypefaceFor (BinaryData::Inter_ttf, BinaryData::Inter_ttfSize));
-        look.setColour (juce::ResizableWindow::backgroundColourId, brand::well);
+        look.setColour (juce::ResizableWindow::backgroundColourId, theme::bg);
         mainWindow = std::make_unique<MainWindow> (getApplicationName(), commandLine);
     }
 
