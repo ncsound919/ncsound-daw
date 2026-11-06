@@ -3,10 +3,17 @@ juce_add_gui_app(NCSoundHub
     COMPANY_NAME "Overlay365"
     BUNDLE_ID "com.overlay365.ncsoundhub")
 
+juce_add_binary_data(NCSoundFonts SOURCES
+    ../assets/fonts/Inter.ttf
+    ../assets/fonts/DMSans.ttf)
+
 target_sources(NCSoundHub PRIVATE
     Source/Main.cpp
     Source/MainComponent.cpp
     Source/MainComponent.h
+    Source/AudioEngine.cpp
+    Source/AudioEngine.h
+    Source/ChannelStrip.h
     Source/PluginRegistry.cpp
     Source/PluginRegistry.h)
 
@@ -15,7 +22,9 @@ target_compile_definitions(NCSoundHub PRIVATE
     JUCE_USE_CURL=0)
 
 target_link_libraries(NCSoundHub PRIVATE
+    NCSoundFonts
     juce::juce_audio_utils
+    juce::juce_audio_devices
     juce::juce_gui_extra
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags

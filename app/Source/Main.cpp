@@ -1,6 +1,7 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 
 #include "MainComponent.h"
+#include "BinaryData.h"
 
 namespace nc
 {
@@ -74,7 +75,9 @@ public:
 
     void initialise (const juce::String& commandLine) override
     {
-        juce::LookAndFeel::getDefaultLookAndFeel().setColour (juce::ResizableWindow::backgroundColourId, brand::well);
+        auto& look = juce::LookAndFeel::getDefaultLookAndFeel();
+        look.setDefaultSansSerifTypeface (juce::Typeface::createSystemTypefaceFor (BinaryData::Inter_ttf, BinaryData::Inter_ttfSize));
+        look.setColour (juce::ResizableWindow::backgroundColourId, brand::well);
         mainWindow = std::make_unique<MainWindow> (getApplicationName(), commandLine);
     }
 

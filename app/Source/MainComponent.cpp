@@ -1,4 +1,7 @@
 #include "MainComponent.h"
+#include "BinaryData.h"
+
+#include <cmath>
 
 namespace nc
 {
@@ -6,7 +9,9 @@ namespace
 {
 juce::Font labelFont (float height, bool bold = false)
 {
-    return juce::Font (juce::FontOptions().withHeight (height).withStyle (bold ? "Bold" : "Regular"));
+    static const auto display = juce::Typeface::createSystemTypefaceFor (BinaryData::DMSans_ttf, BinaryData::DMSans_ttfSize);
+    static const auto ui = juce::Typeface::createSystemTypefaceFor (BinaryData::Inter_ttf, BinaryData::Inter_ttfSize);
+    return juce::Font (juce::FontOptions (bold ? display : ui).withHeight (height).withStyle (bold ? "Bold" : "Regular"));
 }
 
 juce::Colour colourForStatus (PluginStatus status)
@@ -22,25 +27,16 @@ juce::Colour colourForStatus (PluginStatus status)
     return brand::paper;
 }
 
-constexpr int trackCount = 4;
-constexpr double loopSeconds = 16.0;
-
-juce::String timecode (double seconds)
+juce::StringArray trackNames()
 {
-    const auto whole = static_cast<int> (seconds);
-    const auto millis = static_cast<int> ((seconds - whole) * 1000.0);
-
-    return juce::String (whole / 60).paddedLeft ('0', 2) + ":"
-         + juce::String (whole % 60).paddedLeft ('0', 2) + "."
-         + juce::String (millis).paddedLeft ('0', 3);
+    return { "DRUMS", "BASS", "KEYS", "VOX", "GTR", "PERC", "AUX 1", "AUX 2" };
 }
 } // namespace
 
 MainComponent::MainComponent (juce::File registryFile)
+    : registry (loadRegistry (registryFile))
 {
-    registry = loadRegistry (registryFile);
-
-    browser.setRowHeight (34);
+    browser.setRowHeight (32);
     browser.setOutlineThickness (0);
     browser.setColour (juce::ListBox::backgroundColourId, juce::Colours::transparentBlack);
     browser.setColour (juce::ListBox::outlineColourId, juce::Colours::transparentBlack);
@@ -49,37 +45,84 @@ MainComponent::MainComponent (juce::File registryFile)
     auto styleButton = [this] (juce::TextButton& button, juce::Colour background)
     {
         button.setColour (juce::TextButton::buttonColourId, background);
+        button.setColour (juce::TextButton::buttonOnColourId, brand::accent);
         button.setColour (juce::TextButton::textColourOffId, brand::paper);
         button.setColour (juce::TextButton::textColourOnId, brand::paper);
         addAndMakeVisible (button);
     };
 
+    styleButton (arrangeButton, brand::surface);
+    styleButton (mixerButton, brand::surface);
     styleButton (playButton, brand::accent);
     styleButton (stopButton, brand::surface);
+    styleButton (metronomeButton, brand::surface);
+
+    arrangeButton.setToggleState (true, juce::dontSendNotification);
+    arrangeButton.onClick = [this] { setView (View::arrange); };
+    mixerButton.onClick = [this] { setView (View::mixer); };
 
     playButton.onClick = [this]
     {
-        playing = ! playing;
-        playButton.setButtonText (playing ? "PAUSE" : "PLAY");
+        engine.setPlaying (! engine.isPlaying());
+        playButton.setButtonText (engine.isPlaying() ? "PAUSE" : "PLAY");
     };
 
     stopButton.onClick = [this]
     {
-        playing = false;
-        playheadSeconds = 0.0;
+        engine.setPlaying (false);
+        engine.resetPosition();
         playButton.setButtonText ("PLAY");
         repaint();
     };
 
+    metronomeButton.setClickingTogglesState (true);
+    metronomeButton.setToggleState (engine.isMetronomeOn(), juce::dontSendNotification);
+    metronomeButton.onClick = [this] { engine.setMetronome (metronomeButton.getToggleState()); };
+
     bpm.setSliderStyle (juce::Slider::LinearBar);
     bpm.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     bpm.setRange (40.0, 240.0, 1.0);
-    bpm.setValue (120.0, juce::dontSendNotification);
+    bpm.setValue (engine.getBpm(), juce::dontSendNotification);
     bpm.setColour (juce::Slider::trackColourId, brand::accent);
     bpm.setColour (juce::Slider::backgroundColourId, brand::surface);
+    bpm.onValueChange = [this] { engine.setBpm (bpm.getValue()); };
     addAndMakeVisible (bpm);
 
+    const auto names = trackNames();
+
+    for (int index = 0; index < AudioEngine::trackCount; ++index)
+    {
+        strips.push_back (std::make_unique<ChannelStrip> (engine, index, names[index]));
+        addChildComponent (*strips.back());
+    }
+
+    setWantsKeyboardFocus (true);
     startTimerHz (30);
+}
+
+void MainComponent::setView (View newView)
+{
+    view = newView;
+
+    arrangeButton.setToggleState (view == View::arrange, juce::dontSendNotification);
+    mixerButton.setToggleState (view == View::mixer, juce::dontSendNotification);
+
+    for (auto& strip : strips)
+        strip->setVisible (view == View::mixer);
+
+    resized();
+    repaint();
+}
+
+bool MainComponent::keyPressed (const juce::KeyPress& key)
+{
+    if (key == juce::KeyPress::spaceKey)
+    {
+        playButton.onClick();
+        return true;
+    }
+
+    return false;
 }
 
 int MainComponent::getNumRows()
@@ -121,16 +164,30 @@ void MainComponent::selectedRowsChanged (int lastRowSelected)
 
 void MainComponent::timerCallback()
 {
-    if (! playing)
-        return;
+    if (engine.isPlaying())
+        repaint (transportArea);
 
-    playheadSeconds += 1.0 / 30.0;
+    for (auto& strip : strips)
+        strip->refresh();
 
-    if (playheadSeconds >= loopSeconds)
-        playheadSeconds = 0.0;
+    if (view == View::arrange && engine.isPlaying())
+        repaint (mainArea);
+}
 
-    repaint (arrangementArea);
-    repaint (transportArea);
+juce::String MainComponent::positionText() const
+{
+    const auto seconds = engine.positionSeconds();
+    const auto tempo = juce::jmax (1.0, engine.getBpm());
+    const auto totalBeats = seconds * tempo / 60.0;
+    const auto bar = static_cast<int> (totalBeats / 4.0) + 1;
+    const auto beat = static_cast<int> (std::fmod (totalBeats, 4.0)) + 1;
+    const auto ticks = static_cast<int> ((totalBeats - std::floor (totalBeats)) * 960.0);
+    const auto whole = static_cast<int> (seconds);
+    const auto millis = static_cast<int> ((seconds - whole) * 1000.0);
+
+    return juce::String (bar) + ":" + juce::String (beat) + ":" + juce::String (ticks).paddedLeft ('0', 3)
+         + "    " + juce::String (whole / 60).paddedLeft ('0', 2) + ":" + juce::String (whole % 60).paddedLeft ('0', 2)
+         + "." + juce::String (millis).paddedLeft ('0', 3);
 }
 
 void MainComponent::paint (juce::Graphics& g)
@@ -138,8 +195,22 @@ void MainComponent::paint (juce::Graphics& g)
     g.fillAll (brand::well);
     paintHeader (g);
     paintBrowser (g);
-    paintArrangement (g);
-    paintInspector (g);
+
+    if (view == View::arrange)
+    {
+        paintArrangement (g);
+        paintInspector (g);
+    }
+    else
+    {
+        g.setColour (brand::well);
+        g.fillRect (mainArea);
+
+        g.setColour (brand::paper.withAlpha (0.45f));
+        g.setFont (labelFont (10.0f, true));
+        g.drawText ("MIXER", mainArea.reduced (16, 12).removeFromTop (18), juce::Justification::centredLeft, false);
+    }
+
     paintTransport (g);
 }
 
@@ -149,7 +220,7 @@ void MainComponent::paintHeader (juce::Graphics& g)
     g.fillRect (headerArea);
 
     auto area = headerArea.reduced (20, 0);
-    auto brandArea = area.removeFromLeft (360);
+    auto brandArea = area.removeFromLeft (320);
 
     g.setColour (brand::paper);
     g.setFont (labelFont (21.0f, true));
@@ -164,8 +235,8 @@ void MainComponent::paintHeader (juce::Graphics& g)
     g.drawText (juce::String (registry.plugins.size()) + " PLUGINS   ·   "
                     + juce::String (registry.countInstruments()) + " INSTRUMENTS   ·   "
                     + juce::String (registry.countEffects()) + " EFFECTS   ·   "
-                    + juce::String (registry.countWithStatus (PluginStatus::native)) + " NATIVE",
-                area, juce::Justification::centredRight, false);
+                    + engine.deviceDescription(),
+                area.withTrimmedRight (200), juce::Justification::centredRight, false);
 }
 
 void MainComponent::paintBrowser (juce::Graphics& g)
@@ -173,26 +244,21 @@ void MainComponent::paintBrowser (juce::Graphics& g)
     g.setColour (brand::ink);
     g.fillRect (browserArea);
 
-    auto area = browserArea.reduced (16, 12);
     g.setColour (brand::accent);
     g.setFont (labelFont (10.0f, true));
-    g.drawText ("STOCK SUITE", area.removeFromTop (20), juce::Justification::centredLeft, false);
+    g.drawText ("STOCK SUITE", browserArea.reduced (16, 12).removeFromTop (20), juce::Justification::centredLeft, false);
 }
 
 void MainComponent::paintArrangement (juce::Graphics& g)
 {
-    g.setColour (brand::well);
-    g.fillRect (arrangementArea);
-
-    auto area = arrangementArea.reduced (16, 12);
+    auto area = mainArea.reduced (16, 12);
     auto ruler = area.removeFromTop (24);
 
     g.setColour (brand::paper.withAlpha (0.45f));
     g.setFont (labelFont (10.0f, true));
-    g.drawText ("ARRANGEMENT", ruler.removeFromLeft (160), juce::Justification::centredLeft, false);
+    g.drawText ("ARRANGEMENT  ·  16 BARS", ruler.removeFromLeft (200), juce::Justification::centredLeft, false);
 
-    const auto laneWidth = ruler.getWidth();
-    const auto pixelsPerBar = static_cast<float> (laneWidth) / 8.0f;
+    const auto pixelsPerBar = static_cast<float> (ruler.getWidth()) / 8.0f;
 
     for (int bar = 1; bar <= 8; ++bar)
     {
@@ -207,9 +273,11 @@ void MainComponent::paintArrangement (juce::Graphics& g)
         g.drawVerticalLine (static_cast<int> (x), static_cast<float> (area.getY()), static_cast<float> (area.getBottom()));
     }
 
-    const auto laneHeight = area.getHeight() / trackCount;
+    const auto names = trackNames();
+    const auto laneHeight = area.getHeight() / AudioEngine::trackCount;
+    const auto loopSeconds = 64.0 * 60.0 / juce::jmax (1.0, engine.getBpm());
 
-    for (int track = 0; track < trackCount; ++track)
+    for (int track = 0; track < AudioEngine::trackCount; ++track)
     {
         auto lane = area.withY (area.getY() + track * laneHeight).withHeight (laneHeight).reduced (0, 2);
 
@@ -218,17 +286,17 @@ void MainComponent::paintArrangement (juce::Graphics& g)
 
         g.setColour (brand::paper.withAlpha (0.35f));
         g.setFont (labelFont (10.0f, true));
-        g.drawText ("TRACK " + juce::String (track + 1), lane.withTrimmedLeft (10), juce::Justification::centredLeft, false);
+        g.drawText (names[track], lane.withTrimmedLeft (10), juce::Justification::centredLeft, false);
 
-        g.setColour (brand::paper.withAlpha (0.18f));
+        g.setColour (engine.trackMuted (track) ? brand::accent.withAlpha (0.5f) : brand::paper.withAlpha (0.16f));
         g.setFont (labelFont (11.0f));
-        g.drawText ("drop a plugin here", lane.withTrimmedRight (12), juce::Justification::centredRight, false);
+        g.drawText (engine.trackMuted (track) ? "MUTED" : "no clip", lane.withTrimmedRight (12), juce::Justification::centredRight, false);
     }
 
-    if (playing)
+    if (engine.isPlaying())
     {
-        const auto x = static_cast<float> (area.getX())
-                     + static_cast<float> (playheadSeconds / loopSeconds) * static_cast<float> (area.getWidth());
+        const auto fraction = std::fmod (engine.positionSeconds(), loopSeconds) / loopSeconds;
+        const auto x = static_cast<float> (area.getX()) + static_cast<float> (fraction) * static_cast<float> (area.getWidth());
 
         g.setColour (brand::accent);
         g.drawVerticalLine (static_cast<int> (x), static_cast<float> (area.getY()), static_cast<float> (area.getBottom()));
@@ -265,27 +333,6 @@ void MainComponent::paintInspector (juce::Graphics& g)
     g.setFont (labelFont (10.0f, true));
     g.drawText (statusName (plugin.status).toUpperCase() + "   ·   " + plugin.kind.toUpperCase(),
                 area.removeFromTop (18), juce::Justification::centredLeft, false);
-
-    area.removeFromTop (10);
-
-    g.setColour (brand::paper.withAlpha (0.35f));
-    g.setFont (labelFont (10.0f, true));
-    g.drawText ("SOURCE", area.removeFromTop (16), juce::Justification::centredLeft, false);
-
-    g.setColour (brand::paper.withAlpha (0.75f));
-    g.setFont (labelFont (11.0f));
-    g.drawFittedText (plugin.source, area.removeFromTop (54), juce::Justification::topLeft, 4);
-
-    if (plugin.note.isNotEmpty())
-    {
-        g.setColour (brand::paper.withAlpha (0.35f));
-        g.setFont (labelFont (10.0f, true));
-        g.drawText ("NOTE", area.removeFromTop (16), juce::Justification::centredLeft, false);
-
-        g.setColour (brand::accent.withAlpha (0.85f));
-        g.setFont (labelFont (11.0f));
-        g.drawFittedText (plugin.note, area.removeFromTop (54), juce::Justification::topLeft, 4);
-    }
 }
 
 void MainComponent::paintTransport (juce::Graphics& g)
@@ -294,34 +341,66 @@ void MainComponent::paintTransport (juce::Graphics& g)
     g.fillRect (transportArea);
 
     auto area = transportArea.reduced (16, 0);
-    area.removeFromLeft (300 + 260 - 16);
+    area.removeFromLeft (280).removeFromLeft (330);
 
-    g.setColour (brand::paper.withAlpha (0.85f));
-    g.setFont (labelFont (15.0f, true));
-    g.drawText (timecode (playheadSeconds), area.removeFromLeft (120), juce::Justification::centredLeft, false);
+    g.setColour (brand::paper);
+    g.setFont (labelFont (14.0f, true));
+    g.drawText (positionText(), area, juce::Justification::centredRight, false);
 
-    g.setColour (brand::paper.withAlpha (0.4f));
-    g.setFont (labelFont (10.0f));
-    g.drawText (playing ? "PLAYING" : "STOPPED", area.removeFromLeft (90), juce::Justification::centredLeft, false);
+    auto meter = transportArea.reduced (16, 16).removeFromRight (220).removeFromLeft (10);
+    meter.setY (transportArea.getCentreY() - 8);
+    meter.setHeight (16);
+
+    g.setColour (brand::surface);
+    g.fillRect (meter);
+
+    const auto level = juce::jlimit (0.0f, 1.0f, juce::Decibels::gainToDecibels (engine.masterPeak(), -60.0f) / 60.0f + 1.0f);
+    auto lit = meter.removeFromBottom (static_cast<int> (level * 16.0f));
+
+    g.setColour (level > 0.95f ? brand::accent : juce::Colour (0xff6f8f6f));
+    g.fillRect (lit);
 }
 
 void MainComponent::resized()
 {
     auto area = getLocalBounds();
     headerArea = area.removeFromTop (56);
-    transportArea = area.removeFromBottom (56);
-    browserArea = area.removeFromLeft (300);
-    inspectorArea = area.removeFromRight (260);
-    arrangementArea = area;
+    transportArea = area.removeFromBottom (64);
+    browserArea = area.removeFromLeft (280);
+
+    if (view == View::arrange)
+        inspectorArea = area.removeFromRight (240);
+    else
+        inspectorArea = {};
+
+    mainArea = area;
+
+    auto header = headerArea.reduced (16, 0);
+    auto viewButtons = header.removeFromRight (200);
+    mixerButton.setBounds (viewButtons.removeFromRight (86).reduced (0, 12));
+    viewButtons.removeFromRight (6);
+    arrangeButton.setBounds (viewButtons.removeFromRight (96).reduced (0, 12));
 
     browser.setBounds (browserArea.reduced (16, 36));
 
     auto transport = transportArea.reduced (16, 12);
-    transport.removeFromLeft (300 + 260 - 16);
-    playButton.setBounds (transport.removeFromLeft (76).reduced (0, 2));
+    playButton.setBounds (transport.removeFromLeft (74).reduced (0, 2));
     transport.removeFromLeft (6);
-    stopButton.setBounds (transport.removeFromLeft (66).reduced (0, 2));
+    stopButton.setBounds (transport.removeFromLeft (64).reduced (0, 2));
+    transport.removeFromLeft (6);
+    metronomeButton.setBounds (transport.removeFromLeft (68).reduced (0, 2));
     transport.removeFromLeft (12);
-    bpm.setBounds (transport.removeFromRight (140).reduced (0, 6));
+    bpm.setBounds (transport.removeFromLeft (110).reduced (0, 8));
+
+    if (view == View::mixer)
+    {
+        auto stripArea = mainArea.reduced (16, 32);
+        stripArea.removeFromTop (10);
+        const auto width = juce::jmin (120, stripArea.getWidth() / AudioEngine::trackCount);
+
+        for (auto& strip : strips)
+            strip->setBounds (stripArea.removeFromLeft (width).reduced (3, 0));
+    }
 }
 } // namespace nc
+// end of file
