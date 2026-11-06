@@ -13,7 +13,7 @@ juce_add_plugin(NCChopStation
     PRODUCT_NAME "Chop Station")
 
 juce_add_binary_data(NCChopFonts SOURCES
-    ../../assets/fonts/DMSans.ttf)
+    ../../assets/fonts/BankGothic.ttf)
 
 target_sources(NCChopStation PRIVATE
     Source/PluginProcessor.cpp

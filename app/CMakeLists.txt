@@ -5,7 +5,10 @@ juce_add_gui_app(NCSoundHub
 
 juce_add_binary_data(NCSoundFonts SOURCES
     ../assets/fonts/Inter.ttf
-    ../assets/fonts/DMSans.ttf)
+    ../assets/fonts/DMSans.ttf
+    ../assets/fonts/BremenBlack.ttf
+    ../assets/fonts/BankGothic.ttf
+    ../assets/fonts/DigitalReadout.ttf)
 
 target_sources(NCSoundHub PRIVATE
     Source/Main.cpp

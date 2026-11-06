@@ -12,6 +12,9 @@ const auto accent = juce::Colour (0xffc25a2a);
 ChopStationEditor::ChopStationEditor (nc::ChopStationProcessor& p)
     : AudioProcessorEditor (&p), processor (p)
 {
+    if (auto face = juce::Typeface::createSystemTypefaceFor (BinaryData::BankGothic_ttf, BinaryData::BankGothic_ttfSize))
+        getLookAndFeel().setDefaultSansSerifTypeface (face);
+
     titleLabel.setText ("CHOP STATION", juce::dontSendNotification);
     titleLabel.setFont (juce::Font (juce::FontOptions (18.0f).withStyle ("Bold")));
     titleLabel.setColour (juce::Label::textColourId, paper);

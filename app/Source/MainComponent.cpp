@@ -9,9 +9,11 @@ namespace
 {
 juce::Font labelFont (float height, bool bold = false)
 {
-    static const auto display = juce::Typeface::createSystemTypefaceFor (BinaryData::DMSans_ttf, BinaryData::DMSans_ttfSize);
+    static const auto display = juce::Typeface::createSystemTypefaceFor (BinaryData::BremenBlack_ttf, BinaryData::BremenBlack_ttfSize);
+    static const auto small = juce::Typeface::createSystemTypefaceFor (BinaryData::BankGothic_ttf, BinaryData::BankGothic_ttfSize);
     static const auto ui = juce::Typeface::createSystemTypefaceFor (BinaryData::Inter_ttf, BinaryData::Inter_ttfSize);
-    return juce::Font (juce::FontOptions (bold ? display : ui).withHeight (height).withStyle (bold ? "Bold" : "Regular"));
+    const auto face = bold ? (height <= 12.0f ? small : display) : ui;
+    return juce::Font (juce::FontOptions (face).withHeight (height).withStyle (bold ? "Bold" : "Regular"));
 }
 
 juce::Colour colourForStatus (PluginStatus status)
@@ -344,7 +346,8 @@ void MainComponent::paintTransport (juce::Graphics& g)
     area.removeFromLeft (280).removeFromLeft (330);
 
     g.setColour (brand::paper);
-    g.setFont (labelFont (14.0f, true));
+    static const auto digital = juce::Typeface::createSystemTypefaceFor (BinaryData::DigitalReadout_ttf, BinaryData::DigitalReadout_ttfSize);
+    g.setFont (juce::Font (juce::FontOptions (digital).withHeight (16.0f)));
     g.drawText (positionText(), area, juce::Justification::centredRight, false);
 
     auto meter = transportArea.reduced (16, 16).removeFromRight (220).removeFromLeft (10);
