@@ -353,7 +353,31 @@ inline std::string toJson (const ProjectDocument& document)
     out += std::to_string (document.version);
     out += ",\"bpm\":";
     json::writeNumber (out, document.bpm);
-    out += ",\"activeTrackCount\":";
+    out += ",\"tempoMap\":[";
+    for (size_t pointIndex = 0; pointIndex < document.tempoMap.points.size(); ++pointIndex)
+    {
+        if (pointIndex != 0)
+            out += ',';
+        const auto& point = document.tempoMap.points[pointIndex];
+        out += "{\"ppq\":";
+        json::writeNumber (out, point.ppq);
+        out += ",\"bpm\":";
+        json::writeNumber (out, point.bpm);
+        out += '}';
+    }
+    out += "],\"markers\":[";
+    for (size_t markerIndex = 0; markerIndex < document.markers.size(); ++markerIndex)
+    {
+        if (markerIndex != 0)
+            out += ',';
+        const auto& marker = document.markers[markerIndex];
+        out += "{\"ppq\":";
+        json::writeNumber (out, marker.ppq);
+        out += ",\"name\":";
+        json::writeString (out, marker.name);
+        out += '}';
+    }
+    out += "],\"activeTrackCount\":";
     out += std::to_string (document.activeTrackCount);
     out += ",\"loopEnabled\":";
     json::writeBool (out, document.loopEnabled);
@@ -526,6 +550,31 @@ inline std::optional<ProjectDocument> fromJson (const std::string& text)
 
     document.version = detail::intField (*root, "version", projectSchemaVersion);
     document.bpm = detail::numberField (*root, "bpm", document.bpm);
+
+    if (const auto* tempoMap = root->find ("tempoMap");
+        tempoMap != nullptr && tempoMap->type == json::Value::Type::array)
+    {
+        for (const auto& entry : tempoMap->array)
+        {
+            if (entry.type != json::Value::Type::object)
+                continue;
+            document.tempoMap.points.push_back ({ detail::numberField (entry, "ppq", 0.0),
+                                                  detail::numberField (entry, "bpm", document.bpm) });
+        }
+    }
+
+    if (const auto* markers = root->find ("markers");
+        markers != nullptr && markers->type == json::Value::Type::array)
+    {
+        for (const auto& entry : markers->array)
+        {
+            if (entry.type != json::Value::Type::object)
+                continue;
+            document.markers.push_back ({ detail::numberField (entry, "ppq", 0.0),
+                                          detail::stringField (entry, "name") });
+        }
+    }
+
     document.activeTrackCount = detail::intField (*root, "activeTrackCount", document.activeTrackCount);
     document.loopEnabled = detail::boolField (*root, "loopEnabled", document.loopEnabled);
     document.loopStartBar = detail::numberField (*root, "loopStartBar", document.loopStartBar);

@@ -1,7 +1,9 @@
 #pragma once
 
+#include <nc/engine/Markers.hpp>
 #include <nc/engine/MidiClip.hpp>
 #include <nc/engine/ProjectLimits.hpp>
+#include <nc/engine/TempoMap.hpp>
 
 #include <algorithm>
 #include <array>
@@ -14,10 +16,11 @@ namespace nc::engine
 {
 /** Bumped whenever the saved shape changes. A loader that meets a higher
     number refuses the file instead of half-reading it. v3 adds per-track
-    instrument slots and MIDI clips (ClipState::isMidi + notes). v2 files
-    have no "kind"/"notes" fields and load as audio clips with no
-    instruments, which is exactly the v2 behaviour. */
-inline constexpr int projectSchemaVersion = 3;
+    instrument slots and MIDI clips (ClipState::isMidi + notes). v4 adds
+    the tempo map and user markers; v3 and earlier files have no
+    "tempoMap"/"markers" fields and load as a constant map from `bpm`
+    with no markers, which is exactly the v3 behaviour. */
+inline constexpr int projectSchemaVersion = 4;
 
 /** Per-slot cap for opaque plugin data. A hostile or truncated project must not
     make the loader hold an unbounded XML/state string. */
@@ -73,6 +76,12 @@ struct ProjectDocument
 {
     int version = projectSchemaVersion;
     double bpm = 120.0;
+    // v4: piecewise tempo. Empty means "constant at bpm" (pre-v4 files and
+    // the default document); sanitize fills it from bpm so playback code
+    // can always walk the map. bpm stays as the legacy/display value and
+    // is kept in sync with the map's first point on save.
+    TempoMap tempoMap;
+    std::vector<Marker> markers;
     int activeTrackCount = nc::limits::defaultActiveTracks;
     bool loopEnabled = false;
     double loopStartBar = 1.0;
@@ -145,6 +154,16 @@ inline ProjectDocument sanitize (ProjectDocument document)
 
     document.bpm = nc::limits::clampBpm (document.bpm);
     document.activeTrackCount = nc::limits::clampActiveTracks (document.activeTrackCount);
+
+    if (document.tempoMap.empty())
+        document.tempoMap = constantTempoMap (document.bpm);
+    else
+    {
+        sanitizeTempoMap (document.tempoMap);
+        document.bpm = document.tempoMap.points.front().bpm;
+    }
+
+    sanitizeMarkers (document.markers);
 
     // Rack state is a fixed-size snapshot; a corrupt or hostile file cannot
     // make the project loader hold an unbounded string.

@@ -144,13 +144,26 @@ MainComponent::MainComponent (juce::File registryFile)
             return;
         }
 
+        juce::String error;
+
+        if (plugin.isInstrument())
+        {
+            if (! engine.loadTrackInstrumentFromId (selectedTrack, plugin.id, error))
+            {
+                setStatus (plugin.name + " / " + error, true);
+                return;
+            }
+
+            setStatus ("LOADING " + plugin.name + " as instrument on " + trackName (selectedTrack), false, 3.0);
+            setBrowserOpen (false);
+            return;
+        }
+
         if (browserSlot < 0 || browserSlot > 3)
         {
             setStatus ("Choose a user insert slot (1-4), not the native strip", true);
             return;
         }
-
-        juce::String error;
 
         if (! engine.loadTrackInsertFromId (selectedTrack, browserSlot, plugin.id, error))
         {
@@ -699,6 +712,10 @@ void MainComponent::openMenu (int menuIndex)
             menu.addItem (2006, "Duplicate Clip", arrange.hasSelectedClip());
             menu.addItem (2007, "Delete Clip", arrange.hasSelectedClip());
             menu.addSeparator();
+            menu.addSectionHeader ("MIDI");
+            menu.addItem (2050, "Edit MIDI Clip (Piano Roll)", arrange.hasSelectedClip());
+            menu.addItem (2051, "Import MIDI File...", true);
+            menu.addSeparator();
             menu.addSectionHeader ("AUDIOSUITE");
             menu.addItem (2100, "LoFi", arrange.hasSelectedClip());
             menu.addItem (2101, "Var-Fi", arrange.hasSelectedClip());
@@ -760,6 +777,13 @@ void MainComponent::openMenu (int menuIndex)
             menu.addItem (4002, "Add Audio Track", true);
             menu.addItem (4003, "Add Return Track", true);
             menu.addItem (4010, "Remove Last Track", engine.getActiveTrackCount() > 1);
+            menu.addSeparator();
+            menu.addSectionHeader ("INSTRUMENT");
+            menu.addItem (4011, "Built-in PolySynth (Sine)", true);
+            menu.addItem (4012, "Built-in PolySynth (Triangle)", true);
+            menu.addItem (4013, "Built-in PolySynth (Saw)", true);
+            menu.addItem (4014, "Load Track Instrument...", engine.scannedInstrumentCount() > 0);
+            menu.addItem (4015, "Remove Track Instrument", engine.trackInstrumentName (selectedTrack).isNotEmpty());
             menu.addSeparator();
             menu.addItem (4004, "Mute Selected Track", true, engine.trackMuted (selectedTrack));
             menu.addItem (4005, "Solo Selected Track", true, engine.trackSolo (selectedTrack));
@@ -1145,6 +1169,21 @@ void MainComponent::handleMenuResult (int result)
         case 2003: arrange.splitSelectedAtPlayhead(); break;
         case 2006: arrange.duplicateSelected(); break;
         case 2007: arrange.deleteSelected(); break;
+        case 2050: arrange.openPianoRollForSelected(); break;
+        case 2051:
+        {
+            auto chooser = std::make_shared<juce::FileChooser> ("Import a MIDI file", juce::File::getSpecialLocation (juce::File::userHomeDirectory), "*.mid;*.midi");
+            chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                                  [safe = juce::Component::SafePointer<MainComponent> (this), chooser] (const juce::FileChooser& chosen)
+                                  {
+                                      if (safe == nullptr || chosen.getResult() == juce::File())
+                                          return;
+                                      const auto index = safe->engine.importMidiFile (chosen.getResult(), safe->selectedTrack, 1.0);
+                                      safe->arrange.refresh();
+                                      safe->setStatus (index >= 0 ? "MIDI IMPORTED " + chosen.getResult().getFileName() : "MIDI IMPORT FAILED", index < 0);
+                                  });
+            break;
+        }
         case 2004: setStatus ("All clips already visible in this preview session"); break;
         case 2005: setStatus ("Preferences are not wired in this build / audio follows the system device"); break;
 
@@ -1225,6 +1264,47 @@ void MainComponent::handleMenuResult (int result)
             engine.setTrackMuted (selectedTrack, ! engine.trackMuted (selectedTrack));
             setStatus ("Mute " + juce::String (engine.trackMuted (selectedTrack) ? "on" : "off")
                            + " / " + trackName (selectedTrack));
+            break;
+
+        case 4011:
+        case 4012:
+        case 4013:
+        {
+            const auto wave = result - 4011;
+            juce::String error;
+            engine.loadBuiltinInstrumentForTrack (selectedTrack, wave, error);
+            arrange.refresh();
+            setStatus ("INSTRUMENT / PolySynth on " + trackName (selectedTrack), false, 3.0);
+            break;
+        }
+
+        case 4014:
+        {
+            if (engine.scannedInstrumentCount() == 0)
+            {
+                setStatus ("SCAN PLUGINS FIRST", true);
+                break;
+            }
+            juce::PopupMenu pluginMenu;
+            pluginMenu.addSectionHeader ("TRACK INSTRUMENT");
+            for (int i = 0; i < engine.scannedInstrumentCount(); ++i)
+                pluginMenu.addItem (i + 1, engine.scannedInstrumentName (i));
+            pluginMenu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+                                      [safe = juce::Component::SafePointer<MainComponent> (this)] (int chosen)
+                                      {
+                                          if (safe == nullptr || chosen <= 0)
+                                              return;
+                                          juce::String error;
+                                          if (! safe->engine.loadTrackInstrumentByIndex (safe->selectedTrack, chosen - 1, error))
+                                              safe->setStatus ("INSTRUMENT / " + error, true);
+                                      });
+            break;
+        }
+
+        case 4015:
+            engine.unloadTrackInstrument (selectedTrack);
+            arrange.refresh();
+            setStatus ("INSTRUMENT REMOVED / " + trackName (selectedTrack));
             break;
 
         case 4005:
@@ -1414,6 +1494,8 @@ void MainComponent::writeProject (const juce::File& file)
 
     nc::engine::ProjectDocument document;
     document.bpm = engine.getBpm();
+    document.tempoMap = engine.tempoMap();
+    document.markers = engine.markers();
     document.activeTrackCount = engine.getActiveTrackCount();
 
     for (auto track = 0; track < document.activeTrackCount; ++track)
@@ -1428,10 +1510,23 @@ void MainComponent::writeProject (const juce::File& file)
         for (int slot = 0; slot < 4; ++slot)
             state.inserts[static_cast<size_t> (slot)] = engine.trackInsertState (track, slot);
 
+        state.instrument = engine.trackInstrumentState (track);
         document.tracks.push_back (std::move (state));
     }
 
     arrange.writeClipsToDocument (document, file);
+
+    for (const auto& clip : engine.midiClips())
+    {
+        nc::engine::ClipState state;
+        state.isMidi = true;
+        state.name = clip.name.toStdString();
+        state.track = clip.track;
+        state.startBar = clip.startBar;
+        state.lengthBars = clip.lengthBars;
+        state.notes = clip.notes;
+        document.clips.push_back (std::move (state));
+    }
 
     if (engine.hasMasterPlugin())
     {
@@ -1466,8 +1561,26 @@ void MainComponent::readProject (const juce::File& file)
         return;
     }
 
-    engine.setBpm (document->bpm);
+    engine.setTempoMap (document->tempoMap);
+    engine.setMarkers (document->markers);
     engine.setActiveTrackCount (document->activeTrackCount);
+
+    {
+        std::vector<AudioEngine::MidiTimelineClip> midiClips;
+        for (const auto& clip : document->clips)
+        {
+            if (! clip.isMidi)
+                continue;
+            AudioEngine::MidiTimelineClip midi;
+            midi.track = clip.track;
+            midi.startBar = clip.startBar;
+            midi.lengthBars = clip.lengthBars;
+            midi.name = juce::String (clip.name);
+            midi.notes = clip.notes;
+            midiClips.push_back (std::move (midi));
+        }
+        engine.setMidiClips (std::move (midiClips));
+    }
 
     // A project can carry track inserts before the browser has been opened.
     // Registry rows alone are not loadable, so scan when nothing is linked yet.
@@ -1499,6 +1612,18 @@ void MainComponent::readProject (const juce::File& file)
                 if (missingInsertNames.length() < 120)
                     missingInsertNames += (missingInsertNames.isEmpty() ? "" : ", ")
                                           + juce::String (insert.identifier);
+            }
+        }
+
+        if (! trackState.instrument.isEmpty())
+        {
+            juce::String instrumentError;
+            if (! engine.restoreTrackInstrument (track, trackState.instrument, instrumentError))
+            {
+                ++missingInserts;
+                if (missingInsertNames.length() < 120)
+                    missingInsertNames += (missingInsertNames.isEmpty() ? "" : ", ")
+                                          + juce::String (trackState.instrument.identifier);
             }
         }
     }

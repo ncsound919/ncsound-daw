@@ -13,7 +13,8 @@ HostedInsert::HostedInsert (std::unique_ptr<juce::AudioPluginInstance> instanceT
 std::unique_ptr<HostedInsert> HostedInsert::create (std::unique_ptr<juce::AudioPluginInstance> instance,
                                                     double sampleRate,
                                                     int blockSize,
-                                                    juce::String& error)
+                                                    juce::String& error,
+                                                    bool allowInstruments)
 {
     if (instance == nullptr)
     {
@@ -21,14 +22,32 @@ std::unique_ptr<HostedInsert> HostedInsert::create (std::unique_ptr<juce::AudioP
         return {};
     }
 
-    if (instance->getBusCount (true) == 0 || instance->getTotalNumInputChannels() == 0)
+    // JUCE 8 dropped AudioPluginInstance::isInstrument(). Instruments are
+    // recognised by having no audio input channels (MIDI in, stereo out);
+    // effects keep at least one input channel.
+    const auto isInst = instance->getTotalNumInputChannels() == 0;
+
+    if (isInst && ! allowInstruments)
     {
-        error = "This is an instrument; inserts are effects-only in this build";
+        error = "This is an instrument; inserts are effects-only. Load it as the track instrument instead.";
+        return {};
+    }
+
+    if (instance->getBusCount (true) == 0 && ! isInst)
+    {
+        error = "The plugin could not be instantiated";
         return {};
     }
 
     instance->setPlayHead (nullptr);
-    instance->setPlayConfigDetails (2, 2, sampleRate, blockSize);
+
+    // Effects are stereo in / stereo out. Instruments are MIDI in (no audio
+    // input channels) / stereo out; asking for stereo input on an instrument
+    // fails the negotiation and every synth would be rejected. The input
+    // request tracks the plugin's own input channel count so a mono effect
+    // still lands on its own layout instead of being forced stereo.
+    const auto desiredInputs = isInst ? 0 : juce::jmax (1, instance->getTotalNumInputChannels());
+    instance->setPlayConfigDetails (desiredInputs, 2, sampleRate, blockSize);
 
     // setPlayConfigDetails returns void in JUCE, so verify the negotiation
     // actually landed on a stereo main bus (JUCE bus-layout tutorial: the
@@ -37,16 +56,25 @@ std::unique_ptr<HostedInsert> HostedInsert::create (std::unique_ptr<juce::AudioP
     const auto mainIn = instance->getMainBusNumInputChannels();
     const auto mainOut = instance->getMainBusNumOutputChannels();
 
-    if (mainIn != 2 || mainOut != 2
-        || instance->getTotalNumInputChannels() != 2
-        || instance->getTotalNumOutputChannels() != 2)
+    if (mainOut != 2 || instance->getTotalNumOutputChannels() != 2)
     {
         error = "The plugin does not support a stereo main bus";
         return {};
     }
 
-    if (instance->getChannelLayoutOfBus (true, 0) != juce::AudioChannelSet::stereo()
-        || instance->getChannelLayoutOfBus (false, 0) != juce::AudioChannelSet::stereo())
+    if (! isInst && (mainIn != 2 || instance->getTotalNumInputChannels() != 2))
+    {
+        error = "The plugin does not support a stereo main bus";
+        return {};
+    }
+
+    if (instance->getChannelLayoutOfBus (false, 0) != juce::AudioChannelSet::stereo())
+    {
+        error = "The plugin does not support a stereo main bus";
+        return {};
+    }
+
+    if (! isInst && instance->getChannelLayoutOfBus (true, 0) != juce::AudioChannelSet::stereo())
     {
         error = "The plugin does not support a stereo main bus";
         return {};
@@ -110,6 +138,14 @@ juce::String HostedInsert::name() const
 
 void HostedInsert::process (juce::AudioBuffer<float>& buffer, const nc::engine::TransportBlock& block)
 {
+    juce::MidiBuffer emptyMidi;
+    process (buffer, block, emptyMidi);
+}
+
+void HostedInsert::process (juce::AudioBuffer<float>& buffer,
+                            const nc::engine::TransportBlock& block,
+                            juce::MidiBuffer& midi)
+{
     if (plugin == nullptr || buffer.getNumChannels() == 0 || buffer.getNumSamples() == 0)
         return;
 
@@ -131,8 +167,6 @@ void HostedInsert::process (juce::AudioBuffer<float>& buffer, const nc::engine::
     // never unwind through the audio callback, so contain it here: hand the caller
     // silence, drop the insert out of the signal path, and let the message thread
     // decide what to tell the user.
-    juce::MidiBuffer midi;
-
     try
     {
         plugin->processBlock (buffer, midi);

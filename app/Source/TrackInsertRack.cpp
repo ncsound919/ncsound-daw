@@ -58,6 +58,10 @@ void TrackInsertRack::prepare (double sampleRate, int maxBlockSize, int active)
             if (insert.owned != nullptr)
                 insert.owned->prepare (sampleRate, maxBlockSize);
 
+    for (auto& instrument : instruments)
+        if (instrument.owned != nullptr)
+            instrument.owned->prepare (sampleRate, maxBlockSize);
+
     if (master.owned != nullptr)
         master.owned->prepare (sampleRate, maxBlockSize);
 
@@ -122,7 +126,7 @@ void TrackInsertRack::processTrack (int track, juce::AudioBuffer<float>& buffer,
 }
 
 void TrackInsertRack::processMaster (juce::AudioBuffer<float>& buffer,
-                                     const engine::TransportBlock& block)
+                                      const engine::TransportBlock& block)
 {
     auto* processor = master.active.load (std::memory_order_acquire);
 
@@ -197,6 +201,122 @@ bool TrackInsertRack::installMaster (std::unique_ptr<InsertProcessor> processor,
     master.bypassed.store (state.bypassed || master.owned->isBypassed(), std::memory_order_relaxed);
     master.missing = false;
     return true;
+}
+
+void TrackInsertRack::processTrackInstrument (int track, juce::AudioBuffer<float>& buffer,
+                                                 const engine::TransportBlock& block,
+                                                 juce::MidiBuffer& midi)
+{
+    if (! validTrack (track) || track >= activeTracks.load (std::memory_order_acquire))
+        return;
+
+    auto& instrument = instruments[static_cast<size_t> (track)];
+    auto* processor = instrument.active.load (std::memory_order_acquire);
+
+    if (processor == nullptr || instrument.bypassed.load (std::memory_order_relaxed))
+        return;
+
+    processor->process (buffer, block, midi);
+
+    for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
+    {
+        auto* samples = buffer.getWritePointer (channel);
+        for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
+            if (! std::isfinite (samples[sample]))
+                samples[sample] = 0.0f;
+    }
+}
+
+bool TrackInsertRack::installInstrument (int track, std::unique_ptr<InsertProcessor> processor,
+                                         const engine::PluginSlotState& state, juce::String& error)
+{
+    if (! validTrack (track))
+    {
+        error = "Instrument target is outside the session";
+        return false;
+    }
+    if (processor == nullptr)
+    {
+        error = "The hosted instrument is empty";
+        return false;
+    }
+
+    processor->prepare (preparedSampleRate, preparedBlockSize);
+    auto& instrument = instruments[static_cast<size_t> (track)];
+
+    if (instrument.owned != nullptr)
+        instrument.retiredOwned.push_back (std::move (instrument.owned));
+
+    instrument.owned = std::move (processor);
+    instrument.active.store (instrument.owned.get(), std::memory_order_release);
+    instrument.saved = state;
+    instrument.displayName = instrument.owned->name();
+    instrument.bypassed.store (state.bypassed || instrument.owned->isBypassed(), std::memory_order_relaxed);
+    instrument.missing = false;
+    return true;
+}
+
+juce::String TrackInsertRack::instrumentName (int track) const
+{
+    if (! validTrack (track))
+        return {};
+    const auto& instrument = instruments[static_cast<size_t> (track)];
+    return instrument.missing ? (instrument.displayName.isNotEmpty() ? instrument.displayName : juce::String ("MISSING"))
+                              : instrument.displayName;
+}
+
+bool TrackInsertRack::isInstrumentMissing (int track) const
+{
+    return validTrack (track) && instruments[static_cast<size_t> (track)].missing;
+}
+
+engine::PluginSlotState TrackInsertRack::instrumentState (int track) const
+{
+    if (! validTrack (track))
+        return {};
+    const auto& instrument = instruments[static_cast<size_t> (track)];
+    if (! instrument.missing && instrument.active.load (std::memory_order_acquire) == nullptr)
+        return {};
+    return instrument.saved;
+}
+
+TrackInsertRack::Slot& TrackInsertRack::instrumentSlot (int track)
+{
+    return instruments[static_cast<size_t> (juce::jlimit (0, trackCount - 1, track))];
+}
+
+const TrackInsertRack::Slot& TrackInsertRack::instrumentSlot (int track) const
+{
+    return instruments[static_cast<size_t> (juce::jlimit (0, trackCount - 1, track))];
+}
+
+void TrackInsertRack::removeInstrument (int track)
+{
+    if (! validTrack (track))
+        return;
+    auto& instrument = instruments[static_cast<size_t> (track)];
+    if (instrument.owned != nullptr)
+        instrument.retiredOwned.push_back (std::move (instrument.owned));
+    instrument.active.store (nullptr, std::memory_order_release);
+    instrument.saved = {};
+    instrument.displayName = {};
+    instrument.bypassed.store (false, std::memory_order_relaxed);
+    instrument.missing = false;
+}
+
+void TrackInsertRack::markInstrumentMissing (int track, const engine::PluginSlotState& state,
+                                             juce::String displayName)
+{
+    if (! validTrack (track))
+        return;
+    auto& instrument = instruments[static_cast<size_t> (track)];
+    if (instrument.owned != nullptr)
+        instrument.retiredOwned.push_back (std::move (instrument.owned));
+    instrument.active.store (nullptr, std::memory_order_release);
+    instrument.saved = state;
+    instrument.displayName = std::move (displayName);
+    instrument.bypassed.store (state.bypassed, std::memory_order_relaxed);
+    instrument.missing = true;
 }
 
 void TrackInsertRack::remove (int track, int slotIndex)
@@ -283,6 +403,9 @@ void TrackInsertRack::collectGarbage()
         for (auto& insert : track)
             insert.retiredOwned.clear();
 
+    for (auto& instrument : instruments)
+        instrument.retiredOwned.clear();
+
     master.retiredOwned.clear();
 }
 
@@ -314,6 +437,12 @@ int TrackInsertRack::chainLatency (int track) const
         return 0;
 
     int total = 0;
+
+    const auto& instrument = instruments[static_cast<size_t> (track)];
+
+    if (! instrument.bypassed.load (std::memory_order_relaxed))
+        if (auto* processor = instrument.active.load (std::memory_order_acquire))
+            total += juce::jlimit (0, maxCompensationSamples, processor->latencySamples());
 
     for (const auto& insert : tracks[static_cast<size_t> (track)])
     {

@@ -10,8 +10,12 @@
 #include "Automation.h"
 
 #include <nc/engine/AudioSuite.hpp>
+#include <nc/engine/MidiClip.hpp>
+#include <nc/engine/MidiSchedule.hpp>
 #include <nc/engine/ProjectLimits.hpp>
+#include <nc/engine/SpscQueue.hpp>
 #include <nc/engine/SyncClock.hpp>
+#include <nc/engine/TempoMap.hpp>
 
 #include <array>
 #include <cstdint>
@@ -61,6 +65,51 @@ public:
 
     void setBpm (double newBpm);
     double getBpm() const { return bpm.load(); }
+
+    //==========================================================================
+    // Tempo map + markers (Task 2) and MIDI clips (Task 4). Snapshots are
+    // published lock-free: the message thread replaces the owned snapshot,
+    // the audio callback only reads the live pointer. Retired snapshots are
+    // freed on device stop along with automation lanes.
+    //==========================================================================
+    void setTempoMap (nc::engine::TempoMap map);
+    nc::engine::TempoMap tempoMap() const;
+    void setMarkers (std::vector<nc::engine::Marker> markers) { markers_ = std::move (markers); }
+    const std::vector<nc::engine::Marker>& markers() const { return markers_; }
+
+    struct MidiTimelineClip
+    {
+        int track = 0;
+        double startBar = 1.0;
+        double lengthBars = 4.0;
+        juce::String name;
+        std::vector<nc::engine::MidiNote> notes;
+    };
+
+    void setMidiClips (std::vector<MidiTimelineClip> clips);
+    std::vector<MidiTimelineClip> midiClips() const;
+
+    /** Imports a MIDI file (type 0/1) as one clip on `track` at `startBar`.
+        Returns the clip index or -1. Message thread. */
+    int importMidiFile (const juce::File& file, int track, double startBar);
+
+    /** Exports all MIDI clips on `track` as one MIDI file. Message thread. */
+    bool exportMidiFile (const juce::File& file, int track) const;
+
+    // Track instrument hosting (Task 4). The instrument lane receives the
+    // scheduled MidiBuffer; inserts process its audio afterwards.
+    bool loadTrackInstrument (int track, const juce::PluginDescription&, juce::String& error);
+    bool restoreTrackInstrument (int track, const nc::engine::PluginSlotState&, juce::String& error);
+    void unloadTrackInstrument (int track);
+    void setBuiltinInstrument (int track, int wave = 0);
+    juce::String trackInstrumentName (int track) const;
+    bool trackInstrumentIsMissing (int track) const;
+    nc::engine::PluginSlotState trackInstrumentState (int track) const;
+    int scannedInstrumentCount() const;
+    juce::String scannedInstrumentName (int index) const;
+    bool loadTrackInstrumentByIndex (int track, int scannedIndex, juce::String& error);
+    bool loadBuiltinInstrumentForTrack (int track, int wave, juce::String& error);
+    bool loadTrackInstrumentFromId (int track, const juce::String& catalogId, juce::String& error);
 
     /** Visible session rows, 1..trackCount. */
     void setActiveTrackCount (int count);
@@ -284,6 +333,7 @@ private:
     TrackInsertRack inserts;
     std::shared_ptr<std::atomic<bool>> engineAlive;
     juce::AudioBuffer<float> mixBuffer;
+    juce::AudioBuffer<float> instrumentBlock;
     juce::AudioBuffer<float> trackBlock;
     std::array<MixRackChannel, trackCount> mixRack;
     MasterRack masterRack;
@@ -415,6 +465,28 @@ private:
     std::array<AutomationSlot, trackCount> panAutomation;
     std::vector<std::unique_ptr<AutomationLane>> automationRetired;
 
+    struct TempoSlot
+    {
+        std::unique_ptr<nc::engine::TempoMap> owned;
+        std::atomic<const nc::engine::TempoMap*> live { nullptr };
+    };
+
+    struct MidiSlot
+    {
+        std::unique_ptr<std::vector<MidiTimelineClip>> owned;
+        std::atomic<const std::vector<MidiTimelineClip>*> live { nullptr };
+    };
+
+    TempoSlot tempoSlot;
+    MidiSlot midiSlot;
+    // Audio-thread scratch for MIDI scheduling: reserved once in
+    // audioDeviceAboutToStart so renderBlock never allocates.
+    std::vector<nc::engine::MidiEvent> midiEventScratch;
+    std::vector<std::unique_ptr<nc::engine::TempoMap>> tempoRetired;
+    std::vector<std::unique_ptr<std::vector<MidiTimelineClip>>> midiRetired;
+    nc::engine::TempoMap fallbackTempo = nc::engine::constantTempoMap (120.0);
+    std::vector<nc::engine::Marker> markers_;
+
     std::atomic<bool> captureAvailable { false };
     std::array<RecordBuffer, trackCount> recordBuffers;
     std::array<std::atomic<bool>, trackCount> recordArmed {};
@@ -449,6 +521,7 @@ private:
 
     void setPluginStatus (juce::String message);
     std::vector<CatalogEntry> loadablePluginEntries() const;
+    std::vector<CatalogEntry> loadableInstrumentEntries() const;
 
     std::atomic<double> contentEnd { 1.0 };
     std::atomic<bool> loopEnabled { true };
@@ -463,9 +536,8 @@ private:
     std::array<int, trackCount> demoAssets { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
 
     // SPSC command rail: message thread writes, audio callback drains.
-    std::array<Command, commandCapacity> commandQueue {};
-    std::atomic<juce::uint32> commandWrite { 0 };
-    std::atomic<juce::uint32> commandRead { 0 };
+    // Shared nc::engine::SpscQueue (Task 1), not an ad-hoc array.
+    nc::engine::SpscQueue<Command> commandQueue { commandCapacity };
 
     // Audio-thread only. renderScratch is reused every block: the prep loop
     // invalidates each slot it skips so stale clips can never replay.

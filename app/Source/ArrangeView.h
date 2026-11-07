@@ -37,6 +37,11 @@ public:
     bool undo();
     bool canUndo() const { return hasUndo; }
 
+    // Opens the piano-roll editor for the selected MIDI clip (or the clip
+    // under double-click). Edits are undoable and publish immediately.
+    bool openPianoRollForSelected();
+    bool openPianoRollForClip (int clipIndex);
+
     // Basic edit functions, also reachable from the toolbar and Edit menu.
     bool splitSelectedAtPlayhead();
     bool duplicateSelected();
@@ -83,6 +88,7 @@ private:
         float fadeOutBars = 0.25f;
         int assetId = -1;
         double sourceOffsetSeconds = 0.0;
+        std::vector<nc::engine::MidiNote> notes; // MIDI clips: clip-relative beats
     };
 
     enum class DragMode { none, move, trimLeft, trimRight, fadeIn, fadeOut, gain };
@@ -121,6 +127,7 @@ private:
     void addClipAt (int trackIndex, int bar);
     void pushUndo();
     void publishTimeline();
+    void applyMidiNotes (int clipIndex, std::vector<nc::engine::MidiNote> notes);
 
     AudioEngine& engine;
     InspectorPanel inspector;

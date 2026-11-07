@@ -1,3 +1,4 @@
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <nc/engine/MidiClip.hpp>
@@ -12,7 +13,7 @@ TEST_CASE ("midi note names use scientific pitch notation")
 {
     REQUIRE (midiNoteName (60) == "C4");
     REQUIRE (midiNoteName (61) == "C#4");
-    REQUIRE (midiNoteName (12) == "C1");
+    REQUIRE (midiNoteName (12) == "C0");
     REQUIRE (midiNoteName (127) == "G9");
     REQUIRE (isBlackPitch (61));
     REQUIRE_FALSE (isBlackPitch (60));
@@ -62,7 +63,8 @@ TEST_CASE ("demo patterns are deterministic and stay inside the clip")
         REQUIRE (first[i].pitch == again[i].pitch);
         REQUIRE (first[i].startBeat >= 0.0);
         REQUIRE (first[i].startBeat < 16.0);
-        REQUIRE (first[i].pitch >= 0 && first[i].pitch <= 127);
+        REQUIRE (first[i].pitch >= 0);
+        REQUIRE (first[i].pitch <= 127);
     }
 }
 

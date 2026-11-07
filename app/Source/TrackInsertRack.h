@@ -47,6 +47,9 @@ public:
     void beginBlock();
     void processTrack (int track, juce::AudioBuffer<float>& buffer,
                        const engine::TransportBlock& block);
+    void processTrackInstrument (int track, juce::AudioBuffer<float>& buffer,
+                                 const engine::TransportBlock& block,
+                                 juce::MidiBuffer& midi);
     void processMaster (juce::AudioBuffer<float>& buffer,
                         const engine::TransportBlock& block);
     void endBlock();
@@ -54,9 +57,12 @@ public:
     // Message thread.
     bool install (int track, int slot, std::unique_ptr<InsertProcessor>,
                   const engine::PluginSlotState&, juce::String& error);
+    bool installInstrument (int track, std::unique_ptr<InsertProcessor>,
+                            const engine::PluginSlotState&, juce::String& error);
     bool installMaster (std::unique_ptr<InsertProcessor>,
                         const engine::PluginSlotState&, juce::String& error);
     void remove (int track, int slot);
+    void removeInstrument (int track);
 
     /** Moves the insert in `from` to `to` within one track, swapping whatever
         occupies `to`. Instances are moved, never destroyed, so a reorder keeps
@@ -64,6 +70,7 @@ public:
     bool moveInsert (int track, int from, int to);
     void removeMaster();
     void markMissing (int track, int slot, const engine::PluginSlotState&, juce::String displayName);
+    void markInstrumentMissing (int track, const engine::PluginSlotState&, juce::String displayName);
     void collectGarbage();
 
     void setBypassed (int track, int slot, bool);
@@ -75,13 +82,18 @@ public:
     bool overBudget() const { return overBudgetFlag; }
 
     juce::String slotName (int track, int slot) const;
+    juce::String instrumentName (int track) const;
     juce::String masterName() const;
     bool isMissing (int track, int slot) const;
+    bool isInstrumentMissing (int track) const;
     bool isMasterMissing() const;
     engine::PluginSlotState slotState (int track, int slot) const;
+    engine::PluginSlotState instrumentState (int track) const;
     engine::PluginSlotState masterState() const;
     Slot& slot (int track, int slot);
     const Slot& slot (int track, int slot) const;
+    Slot& instrumentSlot (int track);
+    const Slot& instrumentSlot (int track) const;
     Slot& masterSlot() { return master; }
     const Slot& masterSlot() const { return master; }
 
@@ -113,6 +125,7 @@ private:
     }
 
     std::array<std::array<Slot, slotsPerTrack>, trackCount> tracks {};
+    std::array<Slot, trackCount> instruments {};
     Slot master;
     std::array<TrackDelay, trackCount> delays {};
     std::array<int, trackCount> trackLatencies {};

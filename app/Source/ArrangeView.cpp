@@ -1,4 +1,5 @@
 #include "ArrangeView.h"
+#include "PianoRoll.h"
 
 #include <nc/engine/MediaCollect.hpp>
 
@@ -136,8 +137,12 @@ ArrangeView::ArrangeView (AudioEngine& engineToUse)
         clip.seed = source.seed;
         clip.fadeInBars = 0.25f;
         clip.fadeOutBars = 0.25f;
-        clip.assetId = engine.demoAssetId (source.track);
+        clip.assetId = clip.kind == 0 ? -1 : engine.demoAssetId (source.track);
         clip.sourceOffsetSeconds = static_cast<double> (source.startBar - 1) * secondsPerBar;
+
+        if (clip.kind == 0 && clip.notes.empty())
+            clip.notes = nc::engine::demoMidiNotes (clip.seed, static_cast<double> (clip.lengthBars), clip.track);
+
         clips.push_back (std::move (clip));
     }
 
@@ -801,42 +806,55 @@ void ArrangeView::paintClipContents (juce::Graphics& g, const Clip& clip, juce::
     }
     else
     {
-        const auto rows = 6;
-        const auto rowHeight = area.getHeight() / static_cast<float> (rows);
+        // Real notes: pitch maps vertically (C-1 at bottom to C9 at top
+        // compressed to the lane), time maps horizontally. Rows are the
+        // 12 pitch classes, shaded on black-key rows like a piano-roll.
+        const auto beats = nc::engine::clipLengthBeats (static_cast<double> (clip.lengthBars));
 
-        for (int row = 0; row < rows; ++row)
+        for (int row = 0; row < 12; ++row)
         {
-            const auto y = area.getY() + row * rowHeight;
-            g.setColour (theme::paper.withAlpha (0.035f));
-            g.drawHorizontalLine (juce::roundToInt (y), area.getX(), area.getRight());
+            const auto y = area.getY() + area.getHeight() * static_cast<float> (row) / 12.0f;
+            if (nc::engine::isBlackPitch (row))
+            {
+                g.setColour (theme::paper.withAlpha (0.06f));
+                g.fillRect (juce::Rectangle<float> (area.getX(), y, area.getWidth(), area.getHeight() / 12.0f));
+            }
+            else
+            {
+                g.setColour (theme::paper.withAlpha (0.035f));
+                g.drawHorizontalLine (juce::roundToInt (y), area.getX(), area.getRight());
+            }
         }
 
-        const auto steps = juce::jlimit (8, 128, clip.lengthBars * 16);
-        const auto stepWidth = area.getWidth() / static_cast<float> (steps);
-        juce::Random random (static_cast<int> (clip.seed));
-
-        for (int step = 0; step < steps; ++step)
+        if (beats > 0.0)
         {
-            const auto x = area.getX() + step * stepWidth;
-            const auto density = step % 4 == 0 ? 0.55f : 0.24f;
-
-            for (int row = 0; row < rows; ++row)
+            const auto widthFor = [&](double beat)
             {
-                if (random.nextFloat() > density)
-                    continue;
+                return area.getX() + area.getWidth() * static_cast<float> (beat / beats);
+            };
 
-                const auto y = area.getBottom() - (row + 1) * rowHeight;
-                const auto height = juce::jmax (2.0f, rowHeight * 0.44f);
+            const auto yFor = [&](int pitch)
+            {
+                const auto norm = static_cast<float> (juce::jlimit (0, 127, pitch)) / 127.0f;
+                return area.getBottom() - norm * area.getHeight();
+            };
 
-                g.setColour ((step % 4 == 0 ? theme::accentHot : tint).withAlpha (0.62f));
-                g.fillRoundedRectangle (juce::Rectangle<float> (x + 0.4f, y + rowHeight * 0.28f,
-                                                               juce::jmax (1.5f, stepWidth - 1.2f), height), 1.0f);
+            const auto rowH = area.getHeight() / 12.0f;
+
+            for (const auto& note : clip.notes)
+            {
+                const auto x = widthFor (note.startBeat);
+                const auto w = juce::jmax (1.5f, widthFor (note.startBeat + note.lengthBeats) - x);
+                const auto y = yFor (note.pitch) - rowH * 0.3f;
+                g.setColour ((nc::engine::isBlackPitch (note.pitch) ? theme::accentHot : tint).withAlpha (0.75f));
+                g.fillRoundedRectangle (juce::Rectangle<float> (x, y, w, rowH * 0.6f), 1.0f);
             }
         }
 
         g.setColour (theme::paper.withAlpha (0.42f));
         g.setFont (theme::label (10.5f));
-        g.drawText (juce::String (clip.lengthBars) + " BAR", area.toNearestInt().withTrimmedRight (4).withTrimmedBottom (2),
+        g.drawText (juce::String (clip.lengthBars) + " BAR / " + juce::String (clip.notes.size()) + " NOTES",
+                    area.toNearestInt().withTrimmedRight (4).withTrimmedBottom (2),
                     juce::Justification::bottomRight, false);
     }
 }
@@ -1315,6 +1333,45 @@ void ArrangeView::splitClip (int clipIndex, int bar)
     original.fadeOutBars = 0.0f;
     original.fadeInBars = juce::jmin (original.fadeInBars, static_cast<float> (original.lengthBars) * 0.45f);
 
+    // MIDI split: notes at/after the split move right and rebase to 0;
+    // notes straddling the split are cut at the boundary.
+    if (original.kind == 0)
+    {
+        const auto splitBeat = static_cast<double> (bar - clips[static_cast<size_t> (clipIndex)].startBar) * 4.0;
+        std::vector<nc::engine::MidiNote> leftNotes, rightNotes;
+
+        for (const auto& note : clips[static_cast<size_t> (clipIndex)].notes)
+        {
+            if (note.startBeat + note.lengthBeats <= splitBeat)
+            {
+                leftNotes.push_back (note);
+                continue;
+            }
+
+            if (note.startBeat >= splitBeat)
+            {
+                auto shifted = note;
+                shifted.startBeat -= splitBeat;
+                rightNotes.push_back (shifted);
+                continue;
+            }
+
+            auto left = note;
+            left.lengthBeats = splitBeat - note.startBeat;
+            leftNotes.push_back (left);
+
+            auto rightNote = note;
+            rightNote.startBeat = 0.0;
+            rightNote.lengthBeats = note.startBeat + note.lengthBeats - splitBeat;
+            rightNotes.push_back (rightNote);
+        }
+
+        original.notes = std::move (leftNotes);
+        right.notes = std::move (rightNotes);
+        nc::engine::sanitizeNotes (original.notes, nc::engine::clipLengthBeats (static_cast<double> (original.lengthBars)));
+        nc::engine::sanitizeNotes (right.notes, nc::engine::clipLengthBeats (static_cast<double> (right.lengthBars)));
+    }
+
     clips[static_cast<size_t> (clipIndex)] = original;
     clips.insert (clips.begin() + clipIndex + 1, right);
     selectedClip = clipIndex + 1;
@@ -1443,9 +1500,23 @@ void ArrangeView::publishTimeline()
 {
     std::vector<AudioEngine::TimelineClip> schedule;
     schedule.reserve (clips.size());
+    std::vector<AudioEngine::MidiTimelineClip> midiSchedule;
+    midiSchedule.reserve (clips.size());
 
     for (const auto& clip : clips)
     {
+        if (clip.kind == 0)
+        {
+            AudioEngine::MidiTimelineClip next;
+            next.track = clip.track;
+            next.startBar = static_cast<double> (clip.startBar);
+            next.lengthBars = static_cast<double> (clip.lengthBars);
+            next.name = clip.name;
+            next.notes = clip.notes;
+            midiSchedule.push_back (std::move (next));
+            continue;
+        }
+
         if (clip.assetId < 0)
             continue;
 
@@ -1462,6 +1533,7 @@ void ArrangeView::publishTimeline()
     }
 
     const auto dropped = engine.setTimelineClips (std::move (schedule));
+    engine.setMidiClips (std::move (midiSchedule));
 
     if (dropped > 0 && onStatus)
         onStatus (juce::String (dropped) + " CLIP" + juce::String (dropped == 1 ? "" : "S")
@@ -1760,6 +1832,22 @@ void ArrangeView::writeClipsToDocument (nc::engine::ProjectDocument& document, c
 
     for (const auto& clip : clips)
     {
+        if (clip.kind == 0)
+        {
+            nc::engine::ClipState state;
+            state.isMidi = true;
+            state.name = clip.name.toStdString();
+            state.track = clip.track;
+            state.startBar = static_cast<double> (clip.startBar);
+            state.lengthBars = static_cast<double> (clip.lengthBars);
+            state.gainDb = static_cast<double> (clip.gainDb);
+            state.fadeInBars = static_cast<double> (clip.fadeInBars);
+            state.fadeOutBars = static_cast<double> (clip.fadeOutBars);
+            state.notes = clip.notes;
+            document.clips.push_back (std::move (state));
+            continue;
+        }
+
         const auto file = engine.assetFile (clip.assetId);
 
         if (file == juce::File())
@@ -1774,6 +1862,7 @@ void ArrangeView::writeClipsToDocument (nc::engine::ProjectDocument& document, c
             continue;
 
         nc::engine::ClipState state;
+        state.isMidi = false;
         state.assetPath = file.getRelativePathFrom (folder).toStdString();
         state.name = clip.name.toStdString();
         state.track = clip.track;
@@ -1797,6 +1886,24 @@ int ArrangeView::readClipsFromDocument (const nc::engine::ProjectDocument& docum
 
     for (const auto& state : document.clips)
     {
+        if (state.isMidi)
+        {
+            Clip clip;
+            clip.track = juce::jlimit (0, juce::jmax (0, engine.getActiveTrackCount() - 1), state.track);
+            clip.startBar = juce::jmax (1, static_cast<int> (state.startBar));
+            clip.lengthBars = juce::jmax (1, static_cast<int> (state.lengthBars));
+            clip.name = juce::String (state.name);
+            clip.kind = 0;
+            clip.gainDb = static_cast<float> (state.gainDb);
+            clip.fadeInBars = static_cast<float> (state.fadeInBars);
+            clip.fadeOutBars = static_cast<float> (state.fadeOutBars);
+            clip.notes = state.notes;
+            clip.seed = static_cast<juce::uint32> (std::hash<std::string> {} (state.name));
+            clips.push_back (clip);
+            ++restored;
+            continue;
+        }
+
         const auto path = juce::String (state.assetPath);
 
         // Defence in depth with sanitize(): even if a caller bypassed it,
@@ -1875,6 +1982,71 @@ bool ArrangeView::undo()
     hasUndo = false;
     publishTimeline();
     repaint();
+    return true;
+}
+
+void ArrangeView::applyMidiNotes (int clipIndex, std::vector<nc::engine::MidiNote> notes)
+{
+    if (clipIndex < 0 || clipIndex >= static_cast<int> (clips.size()))
+        return;
+
+    auto& clip = clips[static_cast<size_t> (clipIndex)];
+
+    if (clip.kind != 0)
+        return;
+
+    pushUndo();
+    clip.notes = std::move (notes);
+    nc::engine::sanitizeNotes (clip.notes, nc::engine::clipLengthBeats (static_cast<double> (clip.lengthBars)));
+    publishTimeline();
+    repaint();
+}
+
+bool ArrangeView::openPianoRollForSelected()
+{
+    return openPianoRollForClip (selectedClip);
+}
+
+bool ArrangeView::openPianoRollForClip (int clipIndex)
+{
+    if (clipIndex < 0 || clipIndex >= static_cast<int> (clips.size()))
+    {
+        if (onStatus)
+            onStatus ("Select a MIDI clip first / then open the piano roll");
+
+        return false;
+    }
+
+    const auto& clip = clips[static_cast<size_t> (clipIndex)];
+
+    if (clip.kind != 0)
+    {
+        if (onStatus)
+            onStatus ("Piano roll edits MIDI clips only / " + clip.name + " is audio");
+
+        return false;
+    }
+
+    auto editor = std::make_unique<PianoRoll> (clip.name, static_cast<double> (clip.lengthBars), clip.notes,
+                                               [this, clipIndex] (const std::vector<nc::engine::MidiNote>& notes)
+                                               {
+                                                   applyMidiNotes (clipIndex, notes);
+                                               });
+    editor->setSize (760, 420);
+    selectedClip = clipIndex;
+    selectedTrack = clip.track;
+    inspector.setTrack (selectedTrack);
+
+    auto* window = new juce::DocumentWindow (clip.name + " / Piano Roll", juce::Colours::black, juce::DocumentWindow::closeButton);
+    window->setResizable (true, true);
+    window->setUsingNativeTitleBar (false);
+    window->centreWithSize (760, 420);
+    window->setContentComponent (editor.release());
+    window->setVisible (true);
+
+    if (onStatus)
+        onStatus ("PIANO ROLL / " + clip.name + " / double-click a MIDI clip to edit it");
+
     return true;
 }
 
@@ -2273,12 +2445,20 @@ void ArrangeView::mouseDoubleClick (const juce::MouseEvent& event)
     if (! laneArea.contains (position))
         return;
 
-    if (clipAt (position) < 0)
+    const auto hit = clipAt (position);
+
+    if (hit >= 0)
     {
-        const auto trackIndex = trackAt (position);
-        const auto bar = juce::jmax (1, juce::roundToInt (xToBar (static_cast<double> (position.x))));
-        addClipAt (trackIndex, bar);
+        selectedClip = hit;
+        selectedTrack = clips[static_cast<size_t> (hit)].track;
+        inspector.setTrack (selectedTrack);
+
+        if (clips[static_cast<size_t> (hit)].kind == 0)
+            openPianoRollForClip (hit);
+        return;
     }
+
+    addClipAt (trackAt (position), juce::jmax (1, juce::roundToInt (xToBar (static_cast<double> (position.x)))));
 }
 
 void ArrangeView::mouseMove (const juce::MouseEvent& event)

@@ -19,6 +19,18 @@ public:
 
     virtual void prepare (double sampleRate, int blockSize) = 0;
     virtual void process (juce::AudioBuffer<float>&, const nc::engine::TransportBlock&) = 0;
+
+    /** MIDI-aware process. Effects keep the default (MIDI ignored) so a
+        track insert never hears notes; a track instrument overrides this
+        and receives the scheduled buffer. */
+    virtual void process (juce::AudioBuffer<float>& buffer,
+                          const nc::engine::TransportBlock& block,
+                          juce::MidiBuffer& midi)
+    {
+        (void) midi;
+        process (buffer, block);
+    }
+
     virtual int latencySamples() const = 0;
     virtual void setBypassed (bool) = 0;
     virtual bool isBypassed() const = 0;
@@ -36,12 +48,15 @@ public:
     static std::unique_ptr<HostedInsert> create (std::unique_ptr<juce::AudioPluginInstance>,
                                                  double sampleRate,
                                                  int blockSize,
-                                                 juce::String& error);
+                                                 juce::String& error,
+                                                 bool allowInstruments = false);
 
     ~HostedInsert() override;
 
     void prepare (double sampleRate, int blockSize) override;
     void process (juce::AudioBuffer<float>&, const nc::engine::TransportBlock&) override;
+    void process (juce::AudioBuffer<float>&, const nc::engine::TransportBlock&,
+                  juce::MidiBuffer&) override;
     int latencySamples() const override;
     void setBypassed (bool) override;
     bool isBypassed() const override;
@@ -65,7 +80,7 @@ private:
     std::atomic<bool> bypassed { false };
     std::atomic<bool> sanitized { false };
     std::atomic<bool> failedProcessing { false };
-    std::atomic<int> latency { 0 };
+    mutable std::atomic<int> latency { 0 };
 
     // The audio callback publishes one block snapshot; the plugin reads it from
     // getPosition() on the same thread. No mutex is held across processBlock.

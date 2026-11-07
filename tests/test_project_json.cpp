@@ -98,7 +98,7 @@ TEST_CASE ("the saved text is one readable JSON object carrying the version")
 
     REQUIRE (text.front() == '{');
     REQUIRE (text.back() == '}');
-    REQUIRE (text.find ("\"version\":2") != std::string::npos);
+    REQUIRE (text.find ("\"version\":" + std::to_string (projectSchemaVersion)) != std::string::npos);
     REQUIRE (text.find ("\"inserts\"") != std::string::npos);
     REQUIRE (text.find ("\"clips\"") != std::string::npos);
 }

@@ -1,8 +1,10 @@
 #include "AudioEngine.h"
 
+#include "BuiltinSynth.h"
 #include "Session.h"
 
 #include <nc/engine/ClipTimeline.hpp>
+#include <nc/engine/MidiSchedule.hpp>
 #include <nc/engine/ProjectLimits.hpp>
 #include <nc/engine/StreamWindow.hpp>
 
@@ -27,6 +29,11 @@ AudioEngine::AudioEngine()
     engineAlive = std::make_shared<std::atomic<bool>> (true);
     formats.registerBasicFormats();
 
+    tempoSlot.owned = std::make_unique<nc::engine::TempoMap> (nc::engine::constantTempoMap (120.0));
+    tempoSlot.live.store (tempoSlot.owned.get(), std::memory_order_release);
+    midiSlot.owned = std::make_unique<std::vector<MidiTimelineClip>> ();
+    midiSlot.live.store (midiSlot.owned.get(), std::memory_order_release);
+
     // Ask for capture channels so recording has something to record, but never
     // lose playback on a machine without an input: fall back to output-only.
     auto error = deviceManager.initialiseWithDefaultDevices (2, 2);
@@ -41,6 +48,14 @@ AudioEngine::AudioEngine()
     // exercise the same path as imported files; File > Import Audio replaces
     // them with real recordings.
     createDemoAssets();
+
+    // Demo INSTRUMENT tracks get the built-in synth so MIDI clips make
+    // sound with no VST3 installed; projects can replace them.
+    for (int track = 0; track < demoTrackCount; ++track)
+    {
+        if (sessionTracks()[static_cast<size_t> (track)].kind == "INSTRUMENT")
+            setBuiltinInstrument (track, track % 3);
+    }
 
     // Vocal tracks carry the Open Mic stage. The role comes from the session
     // model, not from a plugin name, so a renamed vocal track still gets it.
@@ -59,7 +74,344 @@ void AudioEngine::setMetronome (bool on)          { metronome.store (on); }
 
 void AudioEngine::setBpm (double newBpm)
 {
-    bpm.store (nc::limits::clampBpm (newBpm));
+    const auto clamped = nc::limits::clampBpm (newBpm);
+    bpm.store (clamped);
+    setTempoMap (nc::engine::constantTempoMap (clamped));
+}
+
+void AudioEngine::setTempoMap (nc::engine::TempoMap map)
+{
+    nc::engine::sanitizeTempoMap (map);
+    auto fresh = std::make_unique<nc::engine::TempoMap> (std::move (map));
+
+    if (tempoSlot.owned != nullptr)
+        tempoRetired.push_back (std::move (tempoSlot.owned));
+
+    tempoSlot.owned = std::move (fresh);
+    tempoSlot.live.store (tempoSlot.owned.get(), std::memory_order_release);
+    bpm.store (tempoSlot.owned->points.front().bpm);
+}
+
+nc::engine::TempoMap AudioEngine::tempoMap() const
+{
+    if (const auto* live = tempoSlot.live.load (std::memory_order_acquire))
+        return *live;
+
+    return fallbackTempo;
+}
+
+void AudioEngine::setMidiClips (std::vector<MidiTimelineClip> clips)
+{
+    for (auto& clip : clips)
+    {
+        clip.track = juce::jlimit (0, trackCount - 1, clip.track);
+        clip.startBar = juce::jmax (1.0, clip.startBar);
+        clip.lengthBars = juce::jmax (0.25, clip.lengthBars);
+        nc::engine::sanitizeNotes (clip.notes, nc::engine::clipLengthBeats (clip.lengthBars));
+    }
+
+    auto fresh = std::make_unique<std::vector<MidiTimelineClip>> (std::move (clips));
+
+    if (midiSlot.owned != nullptr)
+        midiRetired.push_back (std::move (midiSlot.owned));
+
+    midiSlot.owned = std::move (fresh);
+    midiSlot.live.store (midiSlot.owned.get(), std::memory_order_release);
+}
+
+std::vector<AudioEngine::MidiTimelineClip> AudioEngine::midiClips() const
+{
+    if (const auto* live = midiSlot.live.load (std::memory_order_acquire))
+        return *live;
+
+    return {};
+}
+
+int AudioEngine::importMidiFile (const juce::File& file, int track, double startBar)
+{
+    if (! file.existsAsFile())
+        return -1;
+
+    juce::MidiFile midiFile;
+    std::unique_ptr<juce::FileInputStream> input (file.createInputStream());
+    if (input == nullptr || ! midiFile.readFrom (*input))
+        return -1;
+
+    // getTimeFormat() is positive for ticks-per-quarter-note files; SMPTE
+    // files (negative) fall back to 480.
+    const auto timeFormat = midiFile.getTimeFormat();
+    const auto ticksPerBeat = juce::jmax (1, timeFormat > 0 ? static_cast<int> (timeFormat) : 480);
+    MidiTimelineClip clip;
+    clip.track = juce::jlimit (0, trackCount - 1, track);
+    clip.startBar = juce::jmax (1.0, startBar);
+    clip.name = file.getFileNameWithoutExtension();
+
+    // Pair note-ons with note-offs per (channel, pitch) across all tracks.
+    struct OpenNote { double startBeat; int velocity; int channel; };
+    std::vector<std::vector<OpenNote>> open (16 * 128);
+    double lastBeat = 0.0;
+
+    for (int trackIndex = 0; trackIndex < midiFile.getNumTracks(); ++trackIndex)
+    {
+        if (const auto* sequence = midiFile.getTrack (trackIndex))
+        {
+            for (int eventIndex = 0; eventIndex < sequence->getNumEvents(); ++eventIndex)
+            {
+                const auto* holder = sequence->getEventPointer (eventIndex);
+                if (holder == nullptr)
+                    continue;
+                const auto beat = sequence->getEventTime (eventIndex) / ticksPerBeat;
+                lastBeat = juce::jmax (lastBeat, beat);
+                const auto& message = holder->message;
+
+                if (message.isNoteOn())
+                {
+                    auto& slot = open[static_cast<size_t> (message.getChannel() * 128 + message.getNoteNumber())];
+                    slot.push_back ({ beat, message.getVelocity(), message.getChannel() });
+                }
+                else if (message.isNoteOff())
+                {
+                    auto& slot = open[static_cast<size_t> (message.getChannel() * 128 + message.getNoteNumber())];
+                    if (slot.empty())
+                        continue;
+                    const auto started = slot.front();
+                    slot.erase (slot.begin());
+                    clip.notes.push_back ({ started.startBeat, juce::jmax (engine::minMidiNoteBeats, beat - started.startBeat),
+                                            message.getNoteNumber(), started.velocity, started.channel });
+                }
+            }
+        }
+    }
+
+    clip.lengthBars = juce::jmax (0.25, (lastBeat / engine::beatsPerBarMidi) + 0.25);
+    engine::sanitizeNotes (clip.notes, engine::clipLengthBeats (clip.lengthBars));
+
+    auto clips = midiClips();
+    clips.push_back (std::move (clip));
+    const auto index = static_cast<int> (clips.size()) - 1;
+    setMidiClips (std::move (clips));
+    return index;
+}
+
+bool AudioEngine::exportMidiFile (const juce::File& file, int track) const
+{
+    juce::MidiFile midiFile;
+    midiFile.setTicksPerQuarterNote (480);
+
+    juce::MidiMessageSequence sequence;
+    bool any = false;
+
+    for (const auto& clip : midiClips())
+    {
+        if (clip.track != track)
+            continue;
+
+        const auto offsetBeats = engine::clipStartBeat (clip.startBar);
+
+        for (const auto& note : clip.notes)
+        {
+            sequence.addEvent (juce::MidiMessage::noteOn (note.channel, note.pitch,
+                                                           static_cast<juce::uint8> (note.velocity)),
+                               (offsetBeats + note.startBeat) * 480);
+            sequence.addEvent (juce::MidiMessage::noteOff (note.channel, note.pitch),
+                               (offsetBeats + note.startBeat + note.lengthBeats) * 480);
+            any = true;
+        }
+    }
+
+    if (! any)
+        return false;
+
+    sequence.sort();
+    midiFile.addTrack (sequence);
+    std::unique_ptr<juce::FileOutputStream> output (file.createOutputStream());
+    return output != nullptr && midiFile.writeTo (*output);
+}
+
+bool AudioEngine::loadTrackInstrument (int track, const juce::PluginDescription& description,
+                                       juce::String& error)
+{
+    if (! juce::isPositiveAndBelow (track, activeTrackCount.load()))
+    {
+        error = "Instrument target is outside the session";
+        return false;
+    }
+
+    const auto rate = juce::jmax (1.0, sampleRate.load());
+    const auto block = juce::jmax (1, bufferSize.load());
+    auto alive = engineAlive;
+
+    catalog.createAsync (description, rate, block,
+                         [this, alive, track, rate, block, description]
+                         (std::unique_ptr<juce::AudioPluginInstance> instance, juce::String creationError)
+                         {
+                             if (! alive->load (std::memory_order_acquire))
+                                 return;
+                             if (instance == nullptr)
+                             {
+                                 setPluginStatus ("INSTRUMENT FAILED / " + creationError);
+                                 return;
+                             }
+                             juce::String error;
+                             auto hosted = HostedInsert::create (std::move (instance), rate, block, error, true);
+                             if (hosted == nullptr)
+                             {
+                                 setPluginStatus ("INSTRUMENT FAILED / " + error);
+                                 return;
+                             }
+                             nc::engine::PluginSlotState state;
+                             state.identifier = description.createIdentifierString().toStdString();
+                             state.format = description.pluginFormatName.toStdString();
+                             if (const auto xml = description.createXml())
+                                 state.descriptionXml = xml->toString().toStdString();
+                             if (! inserts.installInstrument (track, std::move (hosted), state, error))
+                             {
+                                 setPluginStatus ("INSTRUMENT FAILED / " + error);
+                                 return;
+                             }
+                             setPluginStatus ("INSTRUMENT / " + description.name + " / TRACK " + juce::String (track + 1));
+                         });
+    return true;
+}
+
+bool AudioEngine::restoreTrackInstrument (int track, const nc::engine::PluginSlotState& state,
+                                          juce::String& error)
+{
+    if (! juce::isPositiveAndBelow (track, activeTrackCount.load()))
+    {
+        error = "Instrument target is outside the session";
+        return false;
+    }
+    if (state.isEmpty())
+        return false;
+
+    // Built-in synth reopens without a scan.
+    if (state.identifier == builtinSynthIdentifier)
+    {
+        auto synth = std::make_unique<BuiltinSynth>();
+        synth->setState (state);
+        juce::String installError;
+        return inserts.installInstrument (track, std::move (synth), state, installError);
+    }
+
+    std::optional<juce::PluginDescription> description;
+    if (auto found = catalog.findDescription (juce::String (state.identifier)))
+        description = *found;
+    if (! description.has_value() && ! state.descriptionXml.empty())
+    {
+        if (const auto xml = juce::XmlDocument::parse (juce::String (state.descriptionXml)))
+        {
+            juce::PluginDescription parsed;
+            if (parsed.loadFromXml (*xml))
+                description = parsed;
+        }
+    }
+
+    const auto displayName = description.has_value() ? description->name : juce::String (state.identifier);
+    if (! description.has_value())
+    {
+        inserts.markInstrumentMissing (track, state, displayName);
+        error = "Instrument not found: " + displayName;
+        return false;
+    }
+
+    const auto rate = juce::jmax (1.0, sampleRate.load());
+    const auto block = juce::jmax (1, bufferSize.load());
+    auto instance = catalog.createSync (*description, rate, block, error);
+    if (instance == nullptr)
+    {
+        inserts.markInstrumentMissing (track, state, displayName);
+        return false;
+    }
+    auto hosted = HostedInsert::create (std::move (instance), rate, block, error, true);
+    if (hosted == nullptr)
+    {
+        inserts.markInstrumentMissing (track, state, displayName);
+        return false;
+    }
+    if (! hosted->setState (state))
+    {
+        inserts.markInstrumentMissing (track, state, displayName);
+        error = "The saved instrument state could not be restored";
+        return false;
+    }
+    return inserts.installInstrument (track, std::move (hosted), state, error);
+}
+
+void AudioEngine::unloadTrackInstrument (int track)
+{
+    inserts.removeInstrument (track);
+}
+
+void AudioEngine::setBuiltinInstrument (int track, int wave)
+{
+    if (! juce::isPositiveAndBelow (track, activeTrackCount.load()))
+        return;
+    auto synth = std::make_unique<BuiltinSynth>();
+    synth->setWave (static_cast<BuiltinSynth::Wave> (juce::jlimit (0, 2, wave)));
+    nc::engine::PluginSlotState state;
+    state.identifier = builtinSynthIdentifier;
+    state.format = "builtin";
+    juce::String error;
+    inserts.installInstrument (track, std::move (synth), state, error);
+}
+
+juce::String AudioEngine::trackInstrumentName (int track) const
+{
+    return inserts.instrumentName (track);
+}
+
+bool AudioEngine::trackInstrumentIsMissing (int track) const
+{
+    return inserts.isInstrumentMissing (track);
+}
+
+nc::engine::PluginSlotState AudioEngine::trackInstrumentState (int track) const
+{
+    return inserts.instrumentState (track);
+}
+
+bool AudioEngine::loadTrackInstrumentByIndex (int track, int scannedIndex, juce::String& error)
+{
+    const auto entries = loadableInstrumentEntries();
+
+    if (! juce::isPositiveAndBelow (scannedIndex, static_cast<int> (entries.size())))
+    {
+        error = "That instrument is not in the scanned VST3 catalog";
+        return false;
+    }
+
+    return loadTrackInstrument (track, entries[static_cast<size_t> (scannedIndex)].description, error);
+}
+
+bool AudioEngine::loadBuiltinInstrumentForTrack (int track, int wave, juce::String& error)
+{
+    if (! juce::isPositiveAndBelow (track, activeTrackCount.load()))
+    {
+        error = "Instrument target is outside the session";
+        return false;
+    }
+
+    setBuiltinInstrument (track, wave);
+    return true;
+}
+
+bool AudioEngine::loadTrackInstrumentFromId (int track, const juce::String& catalogId, juce::String& error)
+{
+    if (catalogId == builtinSynthIdentifier)
+        return loadBuiltinInstrumentForTrack (track, 0, error);
+
+    const auto description = catalog.resolveDescription (catalogId, error);
+
+    if (! description.has_value())
+    {
+        if (error.isEmpty())
+            error = "That plugin is not in the scanned VST3 catalog";
+
+        return false;
+    }
+
+    return loadTrackInstrument (track, *description, error);
 }
 
 void AudioEngine::setActiveTrackCount (int count)
@@ -142,10 +494,37 @@ std::vector<CatalogEntry> AudioEngine::loadablePluginEntries() const
     std::vector<CatalogEntry> result;
 
     for (const auto& entry : catalog.snapshot())
-        if (entry.external && entry.scanned)
+        if (entry.external && entry.scanned && ! entry.isInstrument)
             result.push_back (entry);
 
     return result;
+}
+
+std::vector<CatalogEntry> AudioEngine::loadableInstrumentEntries() const
+{
+    std::vector<CatalogEntry> result;
+
+    for (const auto& entry : catalog.snapshot())
+        if (entry.external && entry.scanned && entry.isInstrument)
+            result.push_back (entry);
+
+    return result;
+}
+
+int AudioEngine::scannedInstrumentCount() const
+{
+    return static_cast<int> (loadableInstrumentEntries().size());
+}
+
+juce::String AudioEngine::scannedInstrumentName (int index) const
+{
+    const auto entries = loadableInstrumentEntries();
+
+    if (! juce::isPositiveAndBelow (index, static_cast<int> (entries.size())))
+        return {};
+
+    const auto& entry = entries[static_cast<size_t> (index)];
+    return entry.manufacturer.isEmpty() ? entry.name : entry.name + " / " + entry.manufacturer;
 }
 
 int AudioEngine::scannedPluginCount() const
@@ -201,9 +580,11 @@ int AudioEngine::masterPluginLatency() const
 nc::engine::TransportBlock AudioEngine::transportBlock (int blockSize) const
 {
     const auto rate = juce::jmax (1.0, sampleRate.load());
-    const auto tempo = juce::jmax (1.0, bpm.load());
-    const auto loopStart = static_cast<int64_t> (std::llround (engine::barToSeconds (loopStartBar.load(), tempo) * rate));
-    const auto loopEnd = static_cast<int64_t> (std::llround (engine::barToSeconds (loopEndBar.load(), tempo) * rate));
+    const auto map = tempoMap();
+    const auto ppq = engine::ppqAtSamplesWithMap (map, positionSamples.load(), rate);
+    const auto tempo = juce::jmax (1.0, engine::bpmAt (map, ppq));
+    const auto loopStart = static_cast<int64_t> (std::llround (engine::ppqToSeconds (map, engine::clipStartBeat (loopStartBar.load())) * rate));
+    const auto loopEnd = static_cast<int64_t> (std::llround (engine::ppqToSeconds (map, engine::clipStartBeat (loopEndBar.load())) * rate));
 
     return engine::blockContext (positionSamples.load(), blockSize, tempo, rate,
                                  playing.load(), loopEnabled.load(), loopStart, loopEnd);
@@ -673,26 +1054,15 @@ int AudioEngine::setTimelineClips (std::vector<TimelineClip> newClips)
 
 bool AudioEngine::pushCommand (const Command& command)
 {
-    const auto write = commandWrite.load (std::memory_order_relaxed);
-    const auto read = commandRead.load (std::memory_order_acquire);
-
-    if (write - read >= static_cast<juce::uint32> (commandCapacity))
-        return false;
-
-    commandQueue[write % static_cast<juce::uint32> (commandCapacity)] = command;
-    commandWrite.store (write + 1, std::memory_order_release);
-    return true;
+    return commandQueue.tryPush (command);
 }
 
 void AudioEngine::processCommands()
 {
-    auto read = commandRead.load (std::memory_order_relaxed);
-    const auto write = commandWrite.load (std::memory_order_acquire);
+    Command command;
 
-    while (read != write)
+    while (commandQueue.tryPop (command))
     {
-        const auto& command = commandQueue[read % static_cast<juce::uint32> (commandCapacity)];
-
         if (command.type == CommandType::clear)
         {
             playbackClipCount = 0;
@@ -702,11 +1072,7 @@ void AudioEngine::processCommands()
             playbackClips[static_cast<size_t> (playbackClipCount)] = command.clip;
             ++playbackClipCount;
         }
-
-        ++read;
     }
-
-    commandRead.store (read, std::memory_order_release);
 }
 
 void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
@@ -721,7 +1087,10 @@ void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
     resetRequested.store (true);
 
     mixBuffer.setSize (2, juce::jmax (bufferSize.load(), 4096), false, true, false);
+    instrumentBlock.setSize (2, juce::jmax (bufferSize.load(), 4096), false, true, false);
     trackBlock.setSize (2 * trackCount, juce::jmax (bufferSize.load(), 16384), false, true, false);
+    midiEventScratch.clear();
+    midiEventScratch.reserve (4096);
 
     const auto maxBlock = juce::jmax (1, bufferSize.load());
     const auto active = juce::jlimit (0, trackCount, activeTrackCount.load());
@@ -738,6 +1107,8 @@ void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
 void AudioEngine::audioDeviceStopped()
 {
     automationRetired.clear();
+    tempoRetired.clear();
+    midiRetired.clear();
     deviceOpen.store (false);
     bufferSize.store (0);
     dspLoadValue.store (0.0f);
@@ -829,13 +1200,19 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
     }
 
     const auto rate = sampleRate.load();
-    const auto tempo = bpm.load();
     const auto isPlaying = playing.load();
     const auto clickOn = metronome.load();
 
     if (rate <= 0.0)
         return;
 
+    // Tempo map (Task 2): the live snapshot drives clip placement, loop
+    // points, automation PPQ and MIDI scheduling. `tempo` is the BPM in
+    // force at the block start, for the click and transport block.
+    const auto* tempoMapPtr = tempoSlot.live.load (std::memory_order_acquire);
+    const auto& tempoMap = tempoMapPtr != nullptr ? *tempoMapPtr : fallbackTempo;
+    const auto blockStartPpq = engine::ppqAtSamplesWithMap (tempoMap, positionSamples.load(), rate);
+    const auto tempo = engine::bpmAt (tempoMap, blockStartPpq);
     const auto secondsPerBar = engine::secondsPerBar (tempo);
     const auto beatSamples = rate * 60.0 / juce::jmax (1.0, tempo);
 
@@ -853,12 +1230,13 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
         if (clip.asset == nullptr || assetFrameCount (*clip.asset) <= 0)
             continue;
 
-        const auto lengthSeconds = juce::jmax (0.0, clip.lengthBars * secondsPerBar);
+        const auto clipStartPpq = engine::clipStartBeat (clip.startBar);
+        const auto clipEndPpq = clipStartPpq + engine::clipLengthBeats (clip.lengthBars);
+        const auto startSeconds = engine::ppqToSeconds (tempoMap, clipStartPpq);
+        const auto lengthSeconds = juce::jmax (0.0, engine::ppqToSeconds (tempoMap, clipEndPpq) - startSeconds);
 
         if (lengthSeconds <= 0.0)
             continue;
-
-        const auto startSeconds = engine::barToSeconds (clip.startBar, tempo);
         const auto startSample = static_cast<int64_t> (std::llround (startSeconds * rate));
         const auto endSample = static_cast<int64_t> (std::llround ((startSeconds + lengthSeconds) * rate));
 
@@ -876,9 +1254,9 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
     }
 
     const auto loopStart = static_cast<int64_t> (std::llround (
-        engine::barToSeconds (loopStartBar.load(), tempo) * rate));
+        engine::ppqToSeconds (tempoMap, engine::clipStartBeat (loopStartBar.load())) * rate));
     const auto loopEnd = static_cast<int64_t> (std::llround (
-        engine::barToSeconds (loopEndBar.load(), tempo) * rate));
+        engine::ppqToSeconds (tempoMap, engine::clipStartBeat (loopEndBar.load())) * rate));
     const auto loop = loopEnabled.load() && loopEnd > loopStart;
 
     auto position = positionSamples.load();
@@ -1001,17 +1379,64 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
         }
     }
 
-    // Pass 2: inserts and PDC happen once per block, before the native strip.
+    // Pass 2: instruments, inserts and PDC happen once per block, before
+    // the native strip. MIDI is scheduled per track from the live clip
+    // snapshot through the tempo map (Task 4); the instrument renders
+    // into the track lane, then the insert chain processes it.
     if (trackBufferReady)
     {
         inserts.beginBlock();
         const auto insertBlock = engine::blockContext (blockStartSamples, numSamples, tempo, rate,
                                                        isPlaying, loop, loopStart, loopEnd);
+        const auto blockEndPpq = engine::ppqAtSamplesWithMap (tempoMap, blockStartSamples + numSamples, rate);
+        const auto* midiClipsPtr = midiSlot.live.load (std::memory_order_acquire);
 
         for (int trackIndex = 0; trackIndex < trackCount; ++trackIndex)
         {
             juce::AudioBuffer<float> lane (trackBlock.getArrayOfWritePointers() + trackIndex * 2,
                                            2, numSamples);
+
+            if (isPlaying && midiClipsPtr != nullptr)
+            {
+                juce::MidiBuffer midi;
+                auto& events = midiEventScratch;
+
+                for (const auto& clip : *midiClipsPtr)
+                {
+                    if (clip.track != trackIndex)
+                        continue;
+
+                    events.clear();
+                    engine::scheduleMidiClip (clip.notes, clip.startBar, clip.lengthBars,
+                                              blockStartPpq, blockEndPpq, tempoMap,
+                                              rate, numSamples, events);
+
+                    for (const auto& event : events)
+                    {
+                        if (event.velocity > 0)
+                            midi.addEvent (juce::MidiMessage::noteOn (event.channel, event.pitch,
+                                                                        static_cast<juce::uint8> (event.velocity)),
+                                           event.sampleOffset);
+                        else
+                            midi.addEvent (juce::MidiMessage::noteOff (event.channel, event.pitch),
+                                           event.sampleOffset);
+                    }
+                }
+
+                if (! midi.isEmpty() && instrumentBlock.getNumChannels() >= 2
+                    && instrumentBlock.getNumSamples() >= numSamples)
+                {
+                    // Instruments overwrite their buffer in processBlock, so
+                    // render into a scratch and add it to the lane: an audio
+                    // clip sharing this track keeps the lane it already wrote.
+                    instrumentBlock.clear (0, numSamples);
+                    juce::AudioBuffer<float> scratch (instrumentBlock.getArrayOfWritePointers(), 2, numSamples);
+                    inserts.processTrackInstrument (trackIndex, scratch, insertBlock, midi);
+                    lane.addFrom (0, 0, instrumentBlock, 0, 0, numSamples);
+                    lane.addFrom (1, 0, instrumentBlock, 1, 0, numSamples);
+                }
+            }
+
             inserts.processTrack (trackIndex, lane, insertBlock);
         }
 
@@ -1022,9 +1447,7 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
     // and the existing per-sample smoothing turns each step into a ramp.
     float automatedGain[trackCount];
     float automatedPan[trackCount];
-    const auto blockBeat = static_cast<double> (blockStartSamples)
-                           / juce::jmax (1.0, sampleRate.load())
-                           * (tempo / 60.0);
+    const auto blockBeat = engine::ppqAtSamplesWithMap (tempoMap, blockStartSamples, rate);
 
     for (int trackIndex = 0; trackIndex < trackCount; ++trackIndex)
     {
@@ -1477,7 +1900,10 @@ void AudioEngine::prepareForRender (double rate, int maxBlock)
     // Sized exactly as audioDeviceAboutToStart() does, so renderBlock() never
     // sees a block larger than the scratch it was promised.
     mixBuffer.setSize (2, juce::jmax (block, 4096), false, true, false);
+    instrumentBlock.setSize (2, juce::jmax (block, 4096), false, true, false);
     trackBlock.setSize (2 * trackCount, juce::jmax (block, 16384), false, true, false);
+    midiEventScratch.clear();
+    midiEventScratch.reserve (4096);
 
     const auto active = juce::jlimit (0, trackCount, activeTrackCount.load());
 

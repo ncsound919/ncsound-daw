@@ -24,7 +24,14 @@ nc_add_library(nc_engine
         engine/include/nc/engine/ProjectState.hpp
         engine/include/nc/engine/MediaCollect.hpp
         engine/include/nc/engine/ProjectJson.hpp
-        engine/include/nc/engine/ProjectLimits.hpp)
+        engine/include/nc/engine/ProjectLimits.hpp
+        engine/include/nc/engine/SpscQueue.hpp
+        engine/include/nc/engine/TempoMap.hpp
+        engine/include/nc/engine/Markers.hpp
+        engine/include/nc/engine/ClipEdit.hpp
+        engine/include/nc/engine/UndoStack.hpp
+        engine/include/nc/engine/MidiClip.hpp
+        engine/include/nc/engine/MidiSchedule.hpp)
 
 target_include_directories(nc_engine PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/engine/include")
 
