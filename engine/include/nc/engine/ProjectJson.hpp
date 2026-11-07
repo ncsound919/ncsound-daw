@@ -345,6 +345,17 @@ inline void writeNumber (std::string& out, double value)
 inline void writeBool (std::string& out, bool value) { out += value ? "true" : "false"; }
 } // namespace json
 
+inline void writePitch (std::string& out, const PitchStack& p)
+{
+    out += "{\"transpose\":";
+    out += std::to_string (p.transpose);
+    out += ",\"pitchCents\":";
+    json::writeNumber (out, p.pitchCents);
+    out += ",\"tuningHz\":";
+    json::writeNumber (out, p.tuningHz);
+    out += '}';
+}
+
 inline std::string toJson (const ProjectDocument& document)
 {
     std::string out = "{";
@@ -353,6 +364,8 @@ inline std::string toJson (const ProjectDocument& document)
     out += std::to_string (document.version);
     out += ",\"bpm\":";
     json::writeNumber (out, document.bpm);
+    out += ",\"pitch\":";
+    writePitch (out, document.globalPitch);
     out += ",\"tempoMap\":[";
     for (size_t pointIndex = 0; pointIndex < document.tempoMap.points.size(); ++pointIndex)
     {
@@ -415,6 +428,10 @@ inline std::string toJson (const ProjectDocument& document)
         json::writeBool (out, track.muted);
         out += ",\"soloed\":";
         json::writeBool (out, track.soloed);
+        out += ",\"pitch\":";
+        writePitch (out, track.pitch);
+        out += ",\"instrumentPitch\":";
+        writePitch (out, track.instrumentPitch);
         out += ",\"inserts\":[";
 
         for (size_t slotIndex = 0; slotIndex < track.inserts.size(); ++slotIndex)
@@ -502,6 +519,40 @@ inline std::string toJson (const ProjectDocument& document)
                 out += '}';
             }
 
+            out += "],\"ccs\":[";
+
+            for (size_t ccIndex = 0; ccIndex < clip.ccs.size(); ++ccIndex)
+            {
+                if (ccIndex != 0)
+                    out += ',';
+                const auto& cc = clip.ccs[ccIndex];
+                out += "{\"beat\":";
+                json::writeNumber (out, cc.beat);
+                out += ",\"channel\":";
+                out += std::to_string (cc.channel);
+                out += ",\"ctl\":";
+                out += std::to_string (cc.controller);
+                out += ",\"val\":";
+                out += std::to_string (cc.value);
+                out += '}';
+            }
+
+            out += "],\"bends\":[";
+
+            for (size_t bendIndex = 0; bendIndex < clip.bends.size(); ++bendIndex)
+            {
+                if (bendIndex != 0)
+                    out += ',';
+                const auto& bend = clip.bends[bendIndex];
+                out += "{\"beat\":";
+                json::writeNumber (out, bend.beat);
+                out += ",\"channel\":";
+                out += std::to_string (bend.channel);
+                out += ",\"bend\":";
+                out += std::to_string (bend.bend);
+                out += '}';
+            }
+
             out += ']';
         }
 
@@ -523,6 +574,20 @@ inline double numberField (const json::Value& object, const char* key, double fa
 inline int intField (const json::Value& object, const char* key, int fallback)
 {
     return static_cast<int> (numberField (object, key, static_cast<double> (fallback)));
+}
+
+inline PitchStack pitchField (const json::Value& object, const char* key)
+{
+    PitchStack p;
+    const auto* value = object.find (key);
+    if (value != nullptr && value->type == json::Value::Type::object)
+    {
+        p.transpose = intField (*value, "transpose", p.transpose);
+        p.pitchCents = static_cast<float> (numberField (*value, "pitchCents", p.pitchCents));
+        p.tuningHz = static_cast<float> (numberField (*value, "tuningHz", p.tuningHz));
+        p.clamp();
+    }
+    return p;
 }
 
 inline bool boolField (const json::Value& object, const char* key, bool fallback)
@@ -550,6 +615,7 @@ inline std::optional<ProjectDocument> fromJson (const std::string& text)
 
     document.version = detail::intField (*root, "version", projectSchemaVersion);
     document.bpm = detail::numberField (*root, "bpm", document.bpm);
+    document.globalPitch = detail::pitchField (*root, "pitch");
 
     if (const auto* tempoMap = root->find ("tempoMap");
         tempoMap != nullptr && tempoMap->type == json::Value::Type::array)
@@ -608,6 +674,8 @@ inline std::optional<ProjectDocument> fromJson (const std::string& text)
             track.pan = detail::numberField (entry, "pan", 0.0);
             track.muted = detail::boolField (entry, "muted", false);
             track.soloed = detail::boolField (entry, "soloed", false);
+            track.pitch = detail::pitchField (entry, "pitch");
+            track.instrumentPitch = detail::pitchField (entry, "instrumentPitch");
 
             if (const auto* inserts = entry.find ("inserts");
                 inserts != nullptr && inserts->type == json::Value::Type::array)
@@ -684,6 +752,37 @@ inline std::optional<ProjectDocument> fromJson (const std::string& text)
                         note.velocity = detail::intField (noteEntry, "vel", 100);
                         note.channel = detail::intField (noteEntry, "channel", 0);
                         clip.notes.push_back (note);
+                    }
+                }
+
+                if (const auto* ccs = entry.find ("ccs");
+                    ccs != nullptr && ccs->type == json::Value::Type::array)
+                {
+                    for (const auto& ccEntry : ccs->array)
+                    {
+                        if (ccEntry.type != json::Value::Type::object)
+                            continue;
+                        MidiCC cc;
+                        cc.beat = detail::numberField (ccEntry, "beat", 0.0);
+                        cc.channel = detail::intField (ccEntry, "channel", 0);
+                        cc.controller = detail::intField (ccEntry, "ctl", 64);
+                        cc.value = detail::intField (ccEntry, "val", 0);
+                        clip.ccs.push_back (cc);
+                    }
+                }
+
+                if (const auto* bends = entry.find ("bends");
+                    bends != nullptr && bends->type == json::Value::Type::array)
+                {
+                    for (const auto& bendEntry : bends->array)
+                    {
+                        if (bendEntry.type != json::Value::Type::object)
+                            continue;
+                        MidiBend bend;
+                        bend.beat = detail::numberField (bendEntry, "beat", 0.0);
+                        bend.channel = detail::intField (bendEntry, "channel", 0);
+                        bend.bend = detail::intField (bendEntry, "bend", 8192);
+                        clip.bends.push_back (bend);
                     }
                 }
             }

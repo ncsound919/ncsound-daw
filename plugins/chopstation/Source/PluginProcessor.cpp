@@ -230,11 +230,25 @@ bool ChopStationProcessor::loadSample (const juce::File& file)
     if (reader == nullptr || reader->lengthInSamples <= 0)
         return false;
 
+    // Hostile/header-bomb guard: reject before allocating. A malformed header
+    // claiming gigabytes must not OOM the host.
+    if (reader->lengthInSamples > maxSampleFrames)
+        return false;
+
+    if (reader->numChannels <= 0 || reader->numChannels > maxSampleChannels)
+        return false;
+
+    const auto numChannels = static_cast<int> (reader->numChannels);
+    const auto numSamples = static_cast<int> (reader->lengthInSamples);
+
+    // Re-check after downcast: the allocation happens once, here, with known bounds.
+    if (numSamples <= 0)
+        return false;
+
     auto data = std::make_shared<SampleData>();
     data->sourceRate = reader->sampleRate;
-    data->buffer.setSize (static_cast<int> (reader->numChannels),
-                          static_cast<int> (reader->lengthInSamples));
-    reader->read (&data->buffer, 0, static_cast<int> (reader->lengthInSamples), 0, true, true);
+    data->buffer.setSize (numChannels, numSamples);
+    reader->read (&data->buffer, 0, numSamples, 0, true, true);
 
     std::vector<const float*> channels;
 
@@ -268,10 +282,111 @@ int ChopStationProcessor::getSliceCount() const
     return data == nullptr ? 0 : static_cast<int> (data->slices.size());
 }
 
+juce::String ChopStationProcessor::presetName (int index)
+{
+    switch (index)
+    {
+        case 0: return "Clean Chop";
+        case 1: return "Gritty Break";
+        case 2: return "Lo-Fi";
+        default: return "Default";
+    }
+}
+
+void ChopStationProcessor::applyPreset (int index)
+{
+    // Values come from createLayout() defaults: written straight to APVTS so
+    // host automation, undo, and A/B see exactly what the sliders show.
+    struct Preset { float gain, drive, bits, cutoff, reso, delayMix, delayTime, reverb, pan; int chops; };
+    static const Preset presets[3] = {
+        { 0.0f, 0.1f, 16.0f, 18000.0f, 1.0f, 0.0f, 0.25f, 0.0f, 0.0f, 8 },     // Clean
+        { 0.0f, 0.6f, 12.0f, 9000.0f, 3.0f, 0.15f, 0.35f, 0.2f, 0.0f, 16 },    // Gritty
+        { -3.0f, 0.8f, 8.0f, 4000.0f, 5.0f, 0.3f, 0.5f, 0.35f, 0.0f, 8 },     // Lo-Fi
+    };
+
+    if (index < 0 || index >= numPresets())
+        return;
+
+    const auto& p = presets[index];
+
+    auto setFloat = [this] (const char* id, float v)
+    {
+        if (auto* param = apvts.getParameter (id))
+            param->setValueNotifyingHost (param->convertTo0to1 (v));
+    };
+
+    setFloat ("gain", p.gain);
+    setFloat ("drive", p.drive);
+    setFloat ("bits", p.bits);
+    setFloat ("cutoff", p.cutoff);
+    setFloat ("reso", p.reso);
+    setFloat ("delayMix", p.delayMix);
+    setFloat ("delayTime", p.delayTime);
+    setFloat ("reverb", p.reverb);
+    setFloat ("pan", p.pan);
+
+    if (auto* param = apvts.getParameter ("chops"))
+        param->setValueNotifyingHost (param->convertTo0to1 (static_cast<float> (p.chops)));
+
+    rebuildSlices();
+}
+
+void ChopStationProcessor::rebuildSlices()
+{
+    const auto current = holder.current.load();
+
+    if (current == nullptr || current->buffer.getNumSamples() <= 0)
+        return;
+
+    std::vector<const float*> channels;
+
+    for (int ch = 0; ch < current->buffer.getNumChannels(); ++ch)
+        channels.push_back (current->buffer.getReadPointer (ch));
+
+    const auto transients = detectTransients (channels.data(),
+                                              current->buffer.getNumChannels(),
+                                              current->buffer.getNumSamples(),
+                                              0.45);
+    const auto chopCount = static_cast<int> (apvts.getRawParameterValue ("chops")->load());
+
+    auto next = std::make_shared<SampleData>();
+    next->buffer = current->buffer;
+    next->sourceRate = current->sourceRate;
+    next->slices = planSlices (next->buffer.getNumSamples(), transients, chopCount);
+    holder.current.store (std::move (next));
+}
+
 void ChopStationProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
     state.setProperty ("samplePath", activePath, nullptr);
+    state.setProperty ("sampleName", sampleName, nullptr);
+
+    // Embed the decoded sample as WAV so the preset travels cross-machine.
+    // A 30 s stereo cap keeps state blobs bounded; longer samples save path-only.
+    if (const auto data = holder.current.load())
+    {
+        if (data->buffer.getNumSamples() > 0
+            && data->buffer.getNumSamples() <= 30 * 44100 * 2)
+        {
+            juce::MemoryBlock wav;
+
+            if (auto* wavFormat = dynamic_cast<juce::WavAudioFormat*> (formats.findFormatForFileExtension ("wav")))
+            {
+                juce::MemoryOutputStream stream (wav, false);
+
+                if (auto writer = std::unique_ptr<juce::AudioFormatWriter>
+                    (wavFormat->createWriterFor (&stream, data->sourceRate > 0 ? data->sourceRate : 44100.0,
+                                                 data->buffer.getNumChannels(), 32, {}, 0)))
+                {
+                    writer->writeFromAudioSampleBuffer (data->buffer, 0, data->buffer.getNumSamples());
+                    writer.reset();
+                    stream.flush();
+                    state.setProperty ("sampleData", wav.toBase64Encoding(), nullptr);
+                }
+            }
+        }
+    }
 
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
@@ -291,6 +406,52 @@ void ChopStationProcessor::setStateInformation (const void* data, int sizeInByte
 
     apvts.replaceState (tree);
 
+    // Embedded sample wins: decode without touching the filesystem.
+    const auto embedded = tree.getProperty ("sampleData").toString();
+
+    if (embedded.isNotEmpty())
+    {
+        juce::MemoryBlock wav;
+
+        if (wav.fromBase64Encoding (embedded) && wav.getSize() > 0)
+        {
+            juce::MemoryInputStream stream (wav, false);
+
+            if (auto* reader = formats.createReaderFor (stream))
+            {
+                std::unique_ptr<juce::AudioFormatReader> ownedReader (reader);
+
+                if (reader->lengthInSamples <= 0 || reader->lengthInSamples > maxSampleFrames)
+                    return;
+
+                auto sampleData = std::make_shared<SampleData>();
+                sampleData->sourceRate = reader->sampleRate;
+                const auto numCh = static_cast<int> (juce::jmin<int64_t> (reader->numChannels, maxSampleChannels));
+                const auto numSamples = static_cast<int> (reader->lengthInSamples);
+                sampleData->buffer.setSize (numCh, numSamples);
+                reader->read (&sampleData->buffer, 0, numSamples, 0, true, true);
+
+                std::vector<const float*> channels;
+
+                for (int ch = 0; ch < sampleData->buffer.getNumChannels(); ++ch)
+                    channels.push_back (sampleData->buffer.getReadPointer (ch));
+
+                const auto transients = detectTransients (channels.data(),
+                                                          sampleData->buffer.getNumChannels(),
+                                                          sampleData->buffer.getNumSamples(),
+                                                          0.45);
+                const auto chopCount = static_cast<int> (apvts.getRawParameterValue ("chops")->load());
+                sampleData->slices = planSlices (sampleData->buffer.getNumSamples(), transients, chopCount);
+                holder.current.store (std::move (sampleData));
+                sampleName = tree.getProperty ("sampleName").toString();
+                activePath.clear();
+                sampleFile = {};
+                return;
+            }
+        }
+    }
+
+    // Fallback: legacy projects that stored only a path.
     const auto path = tree.getProperty ("samplePath").toString();
 
     if (path.isNotEmpty())

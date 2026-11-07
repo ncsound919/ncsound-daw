@@ -4,14 +4,17 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include "MixRack.h"
-#include "PluginHost.h"
+#include "MidiRecorder.h"
 #include "PluginCatalog.h"
 #include "TrackInsertRack.h"
 #include "Automation.h"
 
 #include <nc/engine/AudioSuite.hpp>
 #include <nc/engine/MidiClip.hpp>
+#include <nc/engine/MidiPitch.hpp>
 #include <nc/engine/MidiSchedule.hpp>
+#include <nc/engine/MidiScheduler.hpp>
+#include <nc/engine/PitchStack.hpp>
 #include <nc/engine/ProjectLimits.hpp>
 #include <nc/engine/SpscQueue.hpp>
 #include <nc/engine/SyncClock.hpp>
@@ -84,6 +87,8 @@ public:
         double lengthBars = 4.0;
         juce::String name;
         std::vector<nc::engine::MidiNote> notes;
+        std::vector<nc::engine::MidiCC> ccs;
+        std::vector<nc::engine::MidiBend> bends;
     };
 
     void setMidiClips (std::vector<MidiTimelineClip> clips);
@@ -105,6 +110,11 @@ public:
     juce::String trackInstrumentName (int track) const;
     bool trackInstrumentIsMissing (int track) const;
     nc::engine::PluginSlotState trackInstrumentState (int track) const;
+
+    /** Live hosted instance behind a slot, for editor windows. Null for
+        the built-in synth, missing, or empty slots. Message thread. */
+    juce::AudioPluginInstance* trackInstrumentInstance (int track) const;
+    juce::AudioPluginInstance* trackInsertInstance (int track, int slot) const;
     int scannedInstrumentCount() const;
     juce::String scannedInstrumentName (int index) const;
     bool loadTrackInstrumentByIndex (int track, int scannedIndex, juce::String& error);
@@ -131,6 +141,17 @@ public:
     bool trackMuted (int track) const;
     void setTrackSolo (int track, bool soloed);
     bool trackSolo (int track) const;
+
+    //==========================================================================
+    // Pitch: global + per-track + per-instrument (ported from ChordStudio).
+    // Message thread writes, audio thread reads atomics (gain/pan pattern).
+    //==========================================================================
+    void setGlobalPitch (const nc::engine::PitchStack& stack);
+    nc::engine::PitchStack globalPitchStack() const noexcept;
+    void setTrackPitch (int track, const nc::engine::PitchStack& stack);
+    nc::engine::PitchStack trackPitchStack (int track) const noexcept;
+    void setInstrumentPitch (int track, const nc::engine::PitchStack& stack);
+    nc::engine::PitchStack instrumentPitchStack (int track) const noexcept;
 
     void setMasterGain (float linearGain);
     float masterGain() const { return masterGainValue.load(); }
@@ -177,6 +198,14 @@ public:
     /** Re-loads the saved insert and applies its state. False when the plugin
         is no longer installed or the state is unreadable. */
     bool restoreMasterPlugin (const juce::String& identifier, const juce::String& stateBase64);
+    bool restoreMasterInsert (const nc::engine::PluginSlotState&, juce::String& error);
+    bool loadMasterInsert (const juce::PluginDescription&, juce::String& error);
+    void setMasterInsertBypassed (bool bypassed);
+    bool masterInsertIsMissing() const;
+    nc::engine::PluginSlotState masterInsertState() const;
+
+    /** Live hosted instance for the master editor window, or null. */
+    juce::AudioPluginInstance* masterInsertInstance() const;
 
     //==========================================================================
     // Track insert hosting. The four user slots are effects-only in Phase 2.
@@ -286,9 +315,33 @@ public:
     void setRecordArmed (int track, bool armed);
     bool isRecordArmed (int track) const;
 
+    /** Input monitoring: armed tracks hear their input through the insert
+        chain (default on). Direct-monitor bypass is the device's own. */
+    void setTrackMonitor (int track, bool on);
+    bool isTrackMonitor (int track) const;
+
+    /** Set by the audio thread when a punch-out (loop end) is crossed
+        while recording; the message thread finalises the take. */
+    bool consumePunchOut();
+
+    //==========================================================================
+    // MIDI recording (Task 5). Device callback -> SPSC -> quantized clip.
+    //==========================================================================
+    static juce::Array<juce::MidiDeviceInfo> availableMidiDevices();
+    bool openMidiDevice (const juce::String& deviceIdentifier, juce::String& error);
+    void closeMidiDevice();
+    bool startMidiRecording (int track, juce::String& error);
+    bool isMidiRecording() const { return midiRecorder.isRecording(); }
+    void drainMidiRecording();
+    nc::engine::ClipState stopMidiRecording();
+
     /** Opens a capture buffer per armed track. Fails when nothing is armed or
         the engine has no usable rate yet. */
     bool startRecording (juce::String& error);
+
+    /** Streaming variant: takes write straight to `folder` via threaded
+        writers, so long takes are disk-bound, not RAM-bound. */
+    bool startRecording (const juce::File& folder, juce::String& error);
     bool isRecording() const { return recording.load(); }
 
     /** Frames captured since startRecording, across all armed tracks. */
@@ -328,7 +381,6 @@ public:
     void suspendAudioCallbackForTesting();
 
 private:
-    PluginHost pluginHost;
     PluginCatalog catalog;
     TrackInsertRack inserts;
     std::shared_ptr<std::atomic<bool>> engineAlive;
@@ -400,6 +452,13 @@ private:
         std::atomic<float> peak { 0.0f };
         std::atomic<bool> muted { false };
         std::atomic<bool> soloed { false };
+        // Pitch scopes (message writes, audio reads).
+        std::atomic<int> trackTranspose { 0 };
+        std::atomic<float> trackPitchCents { 0.0f };
+        std::atomic<float> trackTuningHz { 440.0f };
+        std::atomic<int> instTranspose { 0 };
+        std::atomic<float> instPitchCents { 0.0f };
+        std::atomic<float> instTuningHz { 440.0f };
     };
 
     // Render scratch for the audio callback: preallocated once with the engine
@@ -482,6 +541,11 @@ private:
     // Audio-thread scratch for MIDI scheduling: reserved once in
     // audioDeviceAboutToStart so renderBlock never allocates.
     std::vector<nc::engine::MidiEvent> midiEventScratch;
+
+    // One cursor per published MIDI clip, parallel to the live snapshot.
+    // Reset whenever the snapshot pointer changes (setMidiClips).
+    std::vector<nc::engine::MidiCursor> midiCursors;
+    const std::vector<MidiTimelineClip>* midiCursorsFor = nullptr;
     std::vector<std::unique_ptr<nc::engine::TempoMap>> tempoRetired;
     std::vector<std::unique_ptr<std::vector<MidiTimelineClip>>> midiRetired;
     nc::engine::TempoMap fallbackTempo = nc::engine::constantTempoMap (120.0);
@@ -490,6 +554,23 @@ private:
     std::atomic<bool> captureAvailable { false };
     std::array<RecordBuffer, trackCount> recordBuffers;
     std::array<std::atomic<bool>, trackCount> recordArmed {};
+
+    MidiRecorder midiRecorder;
+    std::vector<float> recordSilence { 16384, 0.0f }; // ThreadedWriter needs non-null channels
+
+    // Streaming takes (ThreadedWriter): when non-empty, capture pushes
+    // straight to disk instead of the RAM buffers above.
+    struct ThreadedTake
+    {
+        std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> writer;
+        juce::File file;
+        int track = -1;
+        int64_t startFrame = 0;
+    };
+    std::vector<ThreadedTake> threadedTakes;
+    juce::TimeSliceThread writerThread { "RecordWriter" };
+    std::array<std::atomic<bool>, trackCount> trackMonitor {};
+    std::atomic<bool> punchOutPending { false };
     std::atomic<bool> recording { false };
     std::atomic<int> recordLatency { 0 };
     std::atomic<int> overflowCount { 0 };
@@ -509,6 +590,9 @@ private:
     std::atomic<double> sampleRate { 48000.0 };
     std::atomic<int64_t> positionSamples { 0 };
     std::atomic<float> masterGainValue { 0.8f };
+    std::atomic<int> globalTranspose { 0 };
+    std::atomic<float> globalPitchCents { 0.0f };
+    std::atomic<float> globalTuningHz { 440.0f };
     std::atomic<bool> masterDim { false };
     std::atomic<bool> masterMono { false };
     std::atomic<float> masterPeakValue { 0.0f };

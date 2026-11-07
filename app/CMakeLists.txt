@@ -39,6 +39,7 @@ target_sources(NCMixRackTests PRIVATE
     Source/VstHostSmokeTests.cpp
     Source/HostedInsert.cpp
     Source/BuiltinSynth.cpp
+    Source/MidiRecorder.cpp
     Source/TrackInsertRack.cpp
     Source/Automation.cpp
     Source/MixPlan.cpp
@@ -140,6 +141,10 @@ target_sources(NCSoundHub PRIVATE
     Source/PluginScanner.h
     Source/HostedInsert.cpp
     Source/HostedInsert.h
+    Source/PluginEditorWindow.cpp
+    Source/PluginEditorWindow.h
+    Source/MidiRecorder.cpp
+    Source/MidiRecorder.h
     Source/BuiltinSynth.cpp
     Source/BuiltinSynth.h
     Source/PianoRoll.cpp

@@ -8,6 +8,7 @@
 #include "AudioEngine.h"
 #include "BrowserOverlay.h"
 #include "MixerPanel.h"
+#include "PluginEditorWindow.h"
 #include "PluginRegistry.h"
 #include "Theme.h"
 #include "TransportBar.h"
@@ -43,6 +44,9 @@ private:
     void openMenu (int menuIndex);
     void handleMenuResult (int result);
     void importAudioFile();
+    void startRecording();
+    void finishRecording();
+    double recordStartBar = 1.0;
     void writeProject (const juce::File& file);
     void readProject (const juce::File& file);
     void setStatus (juce::String message, bool alert = false, double seconds = 5.0);

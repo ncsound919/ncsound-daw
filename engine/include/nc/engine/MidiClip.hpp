@@ -24,6 +24,24 @@ struct MidiNote
     int channel = 0;         // 0..15
 };
 
+/** One controller event in a MIDI clip (clip-relative beats, like notes).
+    Controller 64 is sustain pedal; 0..127 value. */
+struct MidiCC
+{
+    double beat = 0.0;
+    int channel = 0;
+    int controller = 64;
+    int value = 0;
+};
+
+/** One pitch-bend event. Bend is 0..16383 (8192 == centre). */
+struct MidiBend
+{
+    double beat = 0.0;
+    int channel = 0;
+    int bend = 8192;
+};
+
 /** Smallest editable length: a 64th note (1/4 of a 16th). Shorter than this
     is inaudible on any grid and is clamped in sanitizeNotes(). */
 inline constexpr double minMidiNoteBeats = 0.0625;
@@ -117,6 +135,59 @@ inline void sanitizeNotes (std::vector<MidiNote>& notes, double lengthBeats)
     });
 
     notes = std::move (kept);
+}
+
+/** Brings CC/bend lists inside the same limits as notes: finite times,
+    clamped ranges, sorted by beat, clipped to the clip, capped. */
+inline void sanitizeMidiCCs (std::vector<MidiCC>& ccs, double lengthBeats)
+{
+    const auto clipBeats = std::max (0.0, lengthBeats);
+    std::vector<MidiCC> kept;
+    kept.reserve (ccs.size());
+
+    for (auto cc : ccs)
+    {
+        if (! std::isfinite (cc.beat))
+            continue;
+        cc.beat = std::max (0.0, cc.beat);
+        if (cc.beat >= clipBeats)
+            continue;
+        cc.channel = std::clamp (cc.channel, 0, 15);
+        cc.controller = std::clamp (cc.controller, 0, 127);
+        cc.value = std::clamp (cc.value, 0, 127);
+        kept.push_back (cc);
+        if (static_cast<int> (kept.size()) >= nc::limits::maxMidiNotesPerClip)
+            break;
+    }
+
+    std::sort (kept.begin(), kept.end(),
+               [] (const MidiCC& a, const MidiCC& b) { return a.beat < b.beat; });
+    ccs = std::move (kept);
+}
+
+inline void sanitizeMidiBends (std::vector<MidiBend>& bends, double lengthBeats)
+{
+    const auto clipBeats = std::max (0.0, lengthBeats);
+    std::vector<MidiBend> kept;
+    kept.reserve (bends.size());
+
+    for (auto bend : bends)
+    {
+        if (! std::isfinite (bend.beat))
+            continue;
+        bend.beat = std::max (0.0, bend.beat);
+        if (bend.beat >= clipBeats)
+            continue;
+        bend.channel = std::clamp (bend.channel, 0, 15);
+        bend.bend = std::clamp (bend.bend, 0, 16383);
+        kept.push_back (bend);
+        if (static_cast<int> (kept.size()) >= nc::limits::maxMidiNotesPerClip)
+            break;
+    }
+
+    std::sort (kept.begin(), kept.end(),
+               [] (const MidiBend& a, const MidiBend& b) { return a.beat < b.beat; });
+    bends = std::move (kept);
 }
 
 /** Deterministic demo pattern for a MIDI clip with no authored notes, so the

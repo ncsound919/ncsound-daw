@@ -58,7 +58,9 @@ std::unique_ptr<HostedInsert> HostedInsert::create (std::unique_ptr<juce::AudioP
 
     if (mainOut != 2 || instance->getTotalNumOutputChannels() != 2)
     {
-        error = "The plugin does not support a stereo main bus";
+        // Multi-channel instruments (extra output buses) are rejected
+        // explicitly rather than running silently on the wrong layout.
+        error = "The plugin does not support a stereo main bus (extra output buses unsupported)";
         return {};
     }
 

@@ -47,7 +47,7 @@ TransportBar::TransportBar (AudioEngine& engineToUse)
     rewindButton.setTooltip ("Return to bar 1 (Home)");
     stopButton.setTooltip ("Stop and return to bar 1");
     playButton.setTooltip ("Play or stop (Space)");
-    recordButton.setTooltip ("Record (not wired in this build)");
+    recordButton.setTooltip ("Record armed tracks (punch at loop end)");
     loopButton.setTooltip ("Loop region on the timeline");
     metronomeButton.setTooltip ("Metronome click");
     browserButton.setTooltip ("Plug-in browser (B)");
@@ -65,6 +65,8 @@ TransportBar::TransportBar (AudioEngine& engineToUse)
 
     stopButton.onClick = [this]
     {
+        if (recording && onRecordRequest)
+            onRecordRequest (false);
         engine.setPlaying (false);
         engine.resetPosition();
         recording = false;
@@ -80,13 +82,21 @@ TransportBar::TransportBar (AudioEngine& engineToUse)
 
     recordButton.onClick = [this]
     {
-        // Nothing captures audio yet, so the button must not claim it does.
-        recordButton.setToggleState (false, juce::dontSendNotification);
-        recording = false;
-        refreshTransportState();
+        const auto shouldRecord = recordButton.getToggleState();
 
-        if (onStatus)
-            onStatus ("Recording is not wired in this build / no input is being captured");
+        if (! onRecordRequest)
+        {
+            recordButton.setToggleState (false, juce::dontSendNotification);
+            recording = false;
+            refreshTransportState();
+            if (onStatus)
+                onStatus ("Recording is not wired in this build");
+            return;
+        }
+
+        recording = shouldRecord;
+        onRecordRequest (shouldRecord);
+        refreshTransportState();
     };
 
     metronomeButton.onClick = [this]
@@ -310,6 +320,8 @@ void TransportBar::timerCallback()
 
 void TransportBar::refreshTransportState()
 {
+    // Punch-out finalises on the main timer, so mirror the engine here.
+    recording = engine.isRecording();
     playButton.setToggleState (engine.isPlaying(), juce::dontSendNotification);
     recordButton.setToggleState (recording, juce::dontSendNotification);
 

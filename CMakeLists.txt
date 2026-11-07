@@ -14,6 +14,8 @@ nc_add_library(nc_engine
     HEADERS
         engine/include/nc/version.hpp
         engine/include/nc/engine/MidiClip.hpp
+        engine/include/nc/engine/PitchStack.hpp
+        engine/include/nc/engine/MidiPitch.hpp
         engine/include/nc/engine/SlicePlanner.hpp
         engine/include/nc/engine/ClipTimeline.hpp
         engine/include/nc/engine/PluginPolicy.hpp
@@ -31,7 +33,8 @@ nc_add_library(nc_engine
         engine/include/nc/engine/ClipEdit.hpp
         engine/include/nc/engine/UndoStack.hpp
         engine/include/nc/engine/MidiClip.hpp
-        engine/include/nc/engine/MidiSchedule.hpp)
+        engine/include/nc/engine/MidiSchedule.hpp
+        engine/include/nc/engine/MidiScheduler.hpp)
 
 target_include_directories(nc_engine PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/engine/include")
 

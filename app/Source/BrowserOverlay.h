@@ -26,6 +26,7 @@ public:
     void setTarget (juce::String trackName, int slotIndex);
     void setExternalPlugins (const std::vector<PluginInfo>&);
     void setScanState (bool isScanning, float progress = 0.0f);
+    void setStatusLine (juce::String message);
     void refresh();
 
     void paint (juce::Graphics&) override;
@@ -58,6 +59,7 @@ private:
     int filterIndex = 0;
     bool scanning = false;
     float scanProgress = 0.0f;
+    juce::String statusLine;
     juce::String targetTrack;
     int targetSlot = 0;
 

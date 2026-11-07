@@ -20,6 +20,7 @@ public:
     std::function<void (bool)> onViewChanged;
     std::function<void()> onBrowserToggled;
     std::function<void (const juce::String&)> onStatus;
+    std::function<void (bool)> onRecordRequest; // true = start, false = stop
 
     void setView (bool mixView);
     void setBrowserOpen (bool shouldBeOpen);

@@ -394,6 +394,17 @@ void TrackInsertRack::markMissing (int track, int slotIndex, const engine::Plugi
     insert.missing = true;
 }
 
+void TrackInsertRack::markMasterMissing (const engine::PluginSlotState& state, juce::String displayName)
+{
+    if (master.owned != nullptr)
+        master.retiredOwned.push_back (std::move (master.owned));
+    master.active.store (nullptr, std::memory_order_release);
+    master.saved = state;
+    master.displayName = std::move (displayName);
+    master.bypassed.store (state.bypassed, std::memory_order_relaxed);
+    master.missing = true;
+}
+
 void TrackInsertRack::collectGarbage()
 {
     if (audioInCallback.load (std::memory_order_acquire))

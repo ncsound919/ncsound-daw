@@ -29,6 +29,9 @@ AudioEngine::AudioEngine()
     engineAlive = std::make_shared<std::atomic<bool>> (true);
     formats.registerBasicFormats();
 
+    for (auto& monitor : trackMonitor)
+        monitor.store (true, std::memory_order_relaxed);
+
     tempoSlot.owned = std::make_unique<nc::engine::TempoMap> (nc::engine::constantTempoMap (120.0));
     tempoSlot.live.store (tempoSlot.owned.get(), std::memory_order_release);
     midiSlot.owned = std::make_unique<std::vector<MidiTimelineClip>> ();
@@ -108,6 +111,8 @@ void AudioEngine::setMidiClips (std::vector<MidiTimelineClip> clips)
         clip.startBar = juce::jmax (1.0, clip.startBar);
         clip.lengthBars = juce::jmax (0.25, clip.lengthBars);
         nc::engine::sanitizeNotes (clip.notes, nc::engine::clipLengthBeats (clip.lengthBars));
+        nc::engine::sanitizeMidiCCs (clip.ccs, nc::engine::clipLengthBeats (clip.lengthBars));
+        nc::engine::sanitizeMidiBends (clip.bends, nc::engine::clipLengthBeats (clip.lengthBars));
     }
 
     auto fresh = std::make_unique<std::vector<MidiTimelineClip>> (std::move (clips));
@@ -179,6 +184,15 @@ int AudioEngine::importMidiFile (const juce::File& file, int track, double start
                     clip.notes.push_back ({ started.startBeat, juce::jmax (engine::minMidiNoteBeats, beat - started.startBeat),
                                             message.getNoteNumber(), started.velocity, started.channel });
                 }
+                else if (message.isController())
+                {
+                    clip.ccs.push_back ({ beat, message.getChannel(), message.getControllerNumber(),
+                                          message.getControllerValue() });
+                }
+                else if (message.isPitchWheel())
+                {
+                    clip.bends.push_back ({ beat, message.getChannel(), message.getPitchWheelValue() });
+                }
             }
         }
     }
@@ -215,6 +229,20 @@ bool AudioEngine::exportMidiFile (const juce::File& file, int track) const
                                (offsetBeats + note.startBeat) * 480);
             sequence.addEvent (juce::MidiMessage::noteOff (note.channel, note.pitch),
                                (offsetBeats + note.startBeat + note.lengthBeats) * 480);
+            any = true;
+        }
+
+        for (const auto& cc : clip.ccs)
+        {
+            sequence.addEvent (juce::MidiMessage::controllerEvent (cc.channel, cc.controller, cc.value),
+                               (offsetBeats + cc.beat) * 480);
+            any = true;
+        }
+
+        for (const auto& bend : clip.bends)
+        {
+            sequence.addEvent (juce::MidiMessage::pitchWheel (bend.channel, bend.bend),
+                               (offsetBeats + bend.beat) * 480);
             any = true;
         }
     }
@@ -371,6 +399,30 @@ nc::engine::PluginSlotState AudioEngine::trackInstrumentState (int track) const
     return inserts.instrumentState (track);
 }
 
+juce::AudioPluginInstance* AudioEngine::trackInstrumentInstance (int track) const
+{
+    if (track < 0 || track >= trackCount)
+        return nullptr;
+
+    auto* owned = inserts.instrumentSlot (track).owned.get();
+    if (auto* hosted = dynamic_cast<HostedInsert*> (owned))
+        return hosted->instance();
+
+    return nullptr;
+}
+
+juce::AudioPluginInstance* AudioEngine::trackInsertInstance (int track, int slot) const
+{
+    if (track < 0 || track >= trackCount || slot < 0 || slot >= 4)
+        return nullptr;
+
+    auto* owned = inserts.slot (track, slot).owned.get();
+    if (auto* hosted = dynamic_cast<HostedInsert*> (owned))
+        return hosted->instance();
+
+    return nullptr;
+}
+
 bool AudioEngine::loadTrackInstrumentByIndex (int track, int scannedIndex, juce::String& error)
 {
     const auto entries = loadableInstrumentEntries();
@@ -453,6 +505,72 @@ void AudioEngine::setTrackPan (int track, float pan)
 float AudioEngine::trackPan (int track) const
 {
     return juce::isPositiveAndBelow (track, trackCount) ? tracks[static_cast<size_t> (track)].pan.load() : 0.0f;
+}
+
+void AudioEngine::setGlobalPitch (const nc::engine::PitchStack& stack)
+{
+    nc::engine::PitchStack p = stack;
+    p.clamp();
+    globalTranspose.store (p.transpose, std::memory_order_relaxed);
+    globalPitchCents.store (p.pitchCents, std::memory_order_relaxed);
+    globalTuningHz.store (p.tuningHz, std::memory_order_relaxed);
+}
+
+nc::engine::PitchStack AudioEngine::globalPitchStack() const noexcept
+{
+    nc::engine::PitchStack p;
+    p.transpose = globalTranspose.load (std::memory_order_relaxed);
+    p.pitchCents = globalPitchCents.load (std::memory_order_relaxed);
+    p.tuningHz = globalTuningHz.load (std::memory_order_relaxed);
+    return p;
+}
+
+void AudioEngine::setTrackPitch (int track, const nc::engine::PitchStack& stack)
+{
+    if (! juce::isPositiveAndBelow (track, trackCount))
+        return;
+    nc::engine::PitchStack p = stack;
+    p.clamp();
+    auto& t = tracks[static_cast<size_t> (track)];
+    t.trackTranspose.store (p.transpose, std::memory_order_relaxed);
+    t.trackPitchCents.store (p.pitchCents, std::memory_order_relaxed);
+    t.trackTuningHz.store (p.tuningHz, std::memory_order_relaxed);
+}
+
+nc::engine::PitchStack AudioEngine::trackPitchStack (int track) const noexcept
+{
+    nc::engine::PitchStack p;
+    if (! juce::isPositiveAndBelow (track, trackCount))
+        return p;
+    const auto& t = tracks[static_cast<size_t> (track)];
+    p.transpose = t.trackTranspose.load (std::memory_order_relaxed);
+    p.pitchCents = t.trackPitchCents.load (std::memory_order_relaxed);
+    p.tuningHz = t.trackTuningHz.load (std::memory_order_relaxed);
+    return p;
+}
+
+void AudioEngine::setInstrumentPitch (int track, const nc::engine::PitchStack& stack)
+{
+    if (! juce::isPositiveAndBelow (track, trackCount))
+        return;
+    nc::engine::PitchStack p = stack;
+    p.clamp();
+    auto& t = tracks[static_cast<size_t> (track)];
+    t.instTranspose.store (p.transpose, std::memory_order_relaxed);
+    t.instPitchCents.store (p.pitchCents, std::memory_order_relaxed);
+    t.instTuningHz.store (p.tuningHz, std::memory_order_relaxed);
+}
+
+nc::engine::PitchStack AudioEngine::instrumentPitchStack (int track) const noexcept
+{
+    nc::engine::PitchStack p;
+    if (! juce::isPositiveAndBelow (track, trackCount))
+        return p;
+    const auto& t = tracks[static_cast<size_t> (track)];
+    p.transpose = t.instTranspose.load (std::memory_order_relaxed);
+    p.pitchCents = t.instPitchCents.load (std::memory_order_relaxed);
+    p.tuningHz = t.instTuningHz.load (std::memory_order_relaxed);
+    return p;
 }
 
 void AudioEngine::setTrackMuted (int track, bool muted)
@@ -553,28 +671,93 @@ bool AudioEngine::loadMasterPlugin (int index)
     const auto& entry = entries[static_cast<size_t> (index)];
 
     juce::String error;
-    return pluginHost.loadDescription (entry.description, juce::jmax (1.0, sampleRate.load()),
-                                       juce::jmax (1, bufferSize.load()), error);
+    return loadMasterInsert (entry.description, error);
+}
+
+bool AudioEngine::loadMasterInsert (const juce::PluginDescription& description, juce::String& error)
+{
+    const auto rate = juce::jmax (1.0, sampleRate.load());
+    const auto block = juce::jmax (1, bufferSize.load());
+    auto instance = catalog.createSync (description, rate, block, error);
+
+    if (instance == nullptr)
+        return false;
+
+    auto hosted = HostedInsert::create (std::move (instance), rate, block, error);
+
+    if (hosted == nullptr)
+        return false;
+
+    nc::engine::PluginSlotState state;
+    state.identifier = description.createIdentifierString().toStdString();
+    state.format = description.pluginFormatName.toStdString();
+
+    if (const auto xml = description.createXml())
+        state.descriptionXml = xml->toString().toStdString();
+
+    if (! inserts.installMaster (std::move (hosted), state, error))
+        return false;
+
+    setPluginStatus ("INSERT / " + description.name + " / MASTER");
+    return true;
 }
 
 void AudioEngine::removeMasterPlugin()
 {
-    pluginHost.releasePlugin();
+    inserts.removeMaster();
 }
 
 bool AudioEngine::hasMasterPlugin() const
 {
-    return pluginHost.hasPlugin();
+    return inserts.masterSlot().active.load (std::memory_order_acquire) != nullptr;
 }
 
 juce::String AudioEngine::masterPluginName() const
 {
-    return pluginHost.pluginName();
+    return inserts.masterName();
 }
 
 int AudioEngine::masterPluginLatency() const
 {
-    return pluginHost.latencySamples() + masterRack.latencySamples();
+    return inserts.masterLatency() + masterRack.latencySamples();
+}
+
+void AudioEngine::setMasterInsertBypassed (bool bypassed)
+{
+    inserts.setMasterBypassed (bypassed);
+}
+
+bool AudioEngine::masterInsertIsMissing() const
+{
+    return inserts.isMasterMissing();
+}
+
+nc::engine::PluginSlotState AudioEngine::masterInsertState() const
+{
+    auto* owned = inserts.masterSlot().owned.get();
+
+    if (owned != nullptr)
+    {
+        if (auto* hosted = dynamic_cast<HostedInsert*> (owned))
+        {
+            nc::engine::PluginSlotState state;
+            hosted->getState (state);
+            state.descriptionXml = inserts.masterSlot().saved.descriptionXml;
+            return state;
+        }
+    }
+
+    return inserts.masterState();
+}
+
+juce::AudioPluginInstance* AudioEngine::masterInsertInstance() const
+{
+    auto* owned = inserts.masterSlot().owned.get();
+
+    if (auto* hosted = dynamic_cast<HostedInsert*> (owned))
+        return hosted->instance();
+
+    return nullptr;
 }
 
 nc::engine::TransportBlock AudioEngine::transportBlock (int blockSize) const
@@ -1100,7 +1283,6 @@ void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
 
     masterRack.prepare (sampleRate.load(), maxBlock);
     preparedRackCount.store (active);
-    pluginHost.prepare (sampleRate.load(), maxBlock);
     inserts.prepare (sampleRate.load(), maxBlock, active);
 }
 
@@ -1263,6 +1445,11 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
 
     if (isPlaying && loop && position >= loopEnd)
     {
+        // Punch-out: the loop end finalises a take. The audio thread only
+        // flags it; the message thread stops and places the take.
+        if (recording.load (std::memory_order_acquire))
+            punchOutPending.store (true, std::memory_order_release);
+
         position = loopStart;
         clickPhase = 0.0;
         clickEnvelope = 0.0;
@@ -1391,35 +1578,113 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
         const auto blockEndPpq = engine::ppqAtSamplesWithMap (tempoMap, blockStartSamples + numSamples, rate);
         const auto* midiClipsPtr = midiSlot.live.load (std::memory_order_acquire);
 
+        // One cursor per published clip; a new snapshot rewinds them all.
+        if (midiClipsPtr != midiCursorsFor)
+        {
+            midiCursorsFor = midiClipsPtr;
+            midiCursors.assign (midiClipsPtr != nullptr ? midiClipsPtr->size() : 0, {});
+        }
+
         for (int trackIndex = 0; trackIndex < trackCount; ++trackIndex)
         {
             juce::AudioBuffer<float> lane (trackBlock.getArrayOfWritePointers() + trackIndex * 2,
                                            2, numSamples);
+
+            // Input monitoring (Task 4): armed tracks hear their input
+            // through the instrument/insert chain and strip, like playback.
+            // The same input is captured by captureInputBlock above.
+            if (isPlaying && numInputChannels > 0 && inputChannelData != nullptr
+                && recordArmed[static_cast<size_t> (trackIndex)].load (std::memory_order_relaxed)
+                && trackMonitor[static_cast<size_t> (trackIndex)].load (std::memory_order_relaxed))
+            {
+                int armedBefore = 0;
+                for (int t = 0; t < trackIndex; ++t)
+                    if (recordArmed[static_cast<size_t> (t)].load (std::memory_order_relaxed))
+                        ++armedBefore;
+
+                const auto* inLeft = inputChannelData[armedBefore % numInputChannels];
+                const auto* inRight = numInputChannels > 1
+                                          ? inputChannelData[(armedBefore + 1) % numInputChannels]
+                                          : inLeft;
+
+                if (inLeft != nullptr || inRight != nullptr)
+                {
+                    auto* laneLeft = lane.getWritePointer (0);
+                    auto* laneRight = lane.getWritePointer (1);
+                    for (int sample = 0; sample < numSamples; ++sample)
+                    {
+                        if (inLeft != nullptr)
+                            laneLeft[sample] += inLeft[sample];
+                        if (inRight != nullptr)
+                            laneRight[sample] += inRight[sample];
+                    }
+                }
+            }
 
             if (isPlaying && midiClipsPtr != nullptr)
             {
                 juce::MidiBuffer midi;
                 auto& events = midiEventScratch;
 
-                for (const auto& clip : *midiClipsPtr)
+                for (size_t clipIndex = 0; clipIndex < midiClipsPtr->size(); ++clipIndex)
                 {
+                    const auto& clip = (*midiClipsPtr)[clipIndex];
+
                     if (clip.track != trackIndex)
                         continue;
 
                     events.clear();
-                    engine::scheduleMidiClip (clip.notes, clip.startBar, clip.lengthBars,
-                                              blockStartPpq, blockEndPpq, tempoMap,
-                                              rate, numSamples, events);
+                    engine::scheduleMidiClipCursor (clip.notes, clip.ccs, clip.bends,
+                                                    clip.startBar, clip.lengthBars,
+                                                    blockStartPpq, blockEndPpq, tempoMap,
+                                                    rate, numSamples,
+                                                    midiCursors[clipIndex], events);
+
+                    // Ported from ChordStudio: global + track + instrument pitch.
+                    // Snapshot at block start so a change mid-note lands next block.
+                    {
+                        auto gp = globalPitchStack();
+                        auto tp = trackPitchStack (trackIndex);
+                        auto ip = instrumentPitchStack (trackIndex);
+                        engine::PitchStack combined;
+                        combined.transpose = gp.transpose + tp.transpose + ip.transpose;
+                        combined.transpose = std::clamp (combined.transpose,
+                                                           engine::PitchStack::kTransposeMin * 3,
+                                                           engine::PitchStack::kTransposeMax * 3);
+                        combined.pitchCents = gp.pitchCents + tp.pitchCents + ip.pitchCents;
+                        combined.tuningHz = 440.0f;
+                        // Fold Hz offsets into cents (Hz is log-additive).
+                        combined.pitchCents += engine::PitchStack::hzToCents (gp.tuningHz)
+                                            + engine::PitchStack::hzToCents (tp.tuningHz)
+                                            + engine::PitchStack::hzToCents (ip.tuningHz);
+                        // Clamp combined pitch to +-1200c for audio safety; MIDI transpose part is exact.
+                        combined.pitchCents = std::clamp (combined.pitchCents, -1200.0f, 1200.0f);
+                        engine::applyPitch (events, combined);
+                    }
 
                     for (const auto& event : events)
                     {
-                        if (event.velocity > 0)
-                            midi.addEvent (juce::MidiMessage::noteOn (event.channel, event.pitch,
-                                                                        static_cast<juce::uint8> (event.velocity)),
-                                           event.sampleOffset);
-                        else
-                            midi.addEvent (juce::MidiMessage::noteOff (event.channel, event.pitch),
-                                           event.sampleOffset);
+                        switch (event.kind)
+                        {
+                            case engine::MidiEvent::Kind::noteOn:
+                                midi.addEvent (juce::MidiMessage::noteOn (event.channel, event.pitch,
+                                                                            static_cast<juce::uint8> (event.velocity)),
+                                               event.sampleOffset);
+                                break;
+                            case engine::MidiEvent::Kind::noteOff:
+                                midi.addEvent (juce::MidiMessage::noteOff (event.channel, event.pitch),
+                                               event.sampleOffset);
+                                break;
+                            case engine::MidiEvent::Kind::cc:
+                                midi.addEvent (juce::MidiMessage::controllerEvent (event.channel, event.controller,
+                                                                                     event.value),
+                                               event.sampleOffset);
+                                break;
+                            case engine::MidiEvent::Kind::bend:
+                                midi.addEvent (juce::MidiMessage::pitchWheel (event.channel, event.value),
+                                               event.sampleOffset);
+                                break;
+                        }
                     }
                 }
 
@@ -1550,7 +1815,7 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
 
         masterRack.process (mixed, numSamples);
 
-        pluginHost.processBlock (mixed, engine::blockContext (blockStartSamples, numSamples, tempo, rate,
+        inserts.processMaster (mixed, engine::blockContext (blockStartSamples, numSamples, tempo, rate,
                                                               isPlaying, loop, loopStart, loopEnd));
 
         // Monitor section: mono fold and dim sit after the insert, so they
@@ -1607,37 +1872,92 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
 
 juce::String AudioEngine::masterPluginIdentifier() const
 {
-    return pluginHost.loadedIdentifier();
+    return inserts.masterState().identifier;
 }
 
 juce::String AudioEngine::masterPluginStateBase64() const
 {
-    return pluginHost.stateBase64();
+    return masterInsertState().stateBase64;
 }
 
 bool AudioEngine::restoreMasterPlugin (const juce::String& identifier, const juce::String& stateBase64)
 {
-    auto description = catalog.findDescription (identifier);
+    nc::engine::PluginSlotState state;
+    state.identifier = identifier.toStdString();
+    if (state.identifier.empty())
+        return false;
+    state.format = "VST3";
+    state.stateBase64 = stateBase64.toStdString();
+    juce::String error;
+    return restoreMasterInsert (state, error);
+}
 
-    if (! description.has_value())
+bool AudioEngine::restoreMasterInsert (const nc::engine::PluginSlotState& state, juce::String& error)
+{
+    if (state.isEmpty())
+        return false;
+
+    std::optional<juce::PluginDescription> description;
+
+    if (auto found = catalog.findDescription (juce::String (state.identifier)))
+        description = *found;
+
+    if (! description.has_value() && ! state.descriptionXml.empty())
     {
-        juce::String resolveError;
-        description = catalog.resolveDescription (identifier, resolveError);
+        if (const auto xml = juce::XmlDocument::parse (juce::String (state.descriptionXml)))
+        {
+            juce::PluginDescription parsed;
+
+            if (parsed.loadFromXml (*xml))
+                description = parsed;
+        }
     }
 
     if (! description.has_value())
+    {
+        // Legacy projects saved only identifier+state; try single-bundle resolve.
+        juce::String resolveError;
+
+        if (const auto resolved = catalog.resolveDescription (juce::String (state.identifier), resolveError))
+            description = *resolved;
+    }
+
+    const auto displayName = description.has_value() ? description->name
+                                                     : juce::String (state.identifier);
+
+    if (! description.has_value())
+    {
+        inserts.markMasterMissing (state, displayName);
+        error = "Plugin not found: " + displayName;
         return false;
+    }
 
-    juce::String error;
+    const auto rate = juce::jmax (1.0, sampleRate.load());
+    const auto block = juce::jmax (1, bufferSize.load());
+    auto instance = catalog.createSync (*description, rate, block, error);
 
-    if (! pluginHost.loadDescription (*description, juce::jmax (1.0, sampleRate.load()),
-                                      juce::jmax (1, bufferSize.load()), error))
+    if (instance == nullptr)
+    {
+        inserts.markMasterMissing (state, displayName);
         return false;
+    }
 
-    if (stateBase64.isNotEmpty() && ! pluginHost.applyStateBase64 (stateBase64))
+    auto hosted = HostedInsert::create (std::move (instance), rate, block, error);
+
+    if (hosted == nullptr)
+    {
+        inserts.markMasterMissing (state, displayName);
         return false;
+    }
 
-    return true;
+    if (! state.stateBase64.empty() && ! hosted->setState (state))
+    {
+        error = "The saved plugin state could not be restored";
+        inserts.markMasterMissing (state, displayName);
+        return false;
+    }
+
+    return inserts.installMaster (std::move (hosted), state, error);
 }
 
 void AudioEngine::setPluginStatus (juce::String message)
@@ -1912,7 +2232,6 @@ void AudioEngine::prepareForRender (double rate, int maxBlock)
 
     masterRack.prepare (rate, block);
     preparedRackCount.store (active);
-    pluginHost.prepare (rate, block);
     inserts.prepare (rate, block, active);
 }
 
@@ -2146,7 +2465,26 @@ void AudioEngine::captureInputBlock (const float* const* inputChannelData,
         const auto* right = numInputChannels > 1
                                 ? inputChannelData[(inputIndex + 1) % numInputChannels] : left;
 
-        recordBuffers[static_cast<size_t> (track)].push (left, right, numSamples);
+        // Threaded path: push straight into the writer FIFO (no copy here;
+        // the writer thread owns the disk). RAM path: preallocated buffer.
+        bool pushedThreaded = false;
+
+        for (auto& take : threadedTakes)
+        {
+            if (take.track != track || take.writer == nullptr)
+                continue;
+
+            const auto silence = recordSilence.data();
+            const float* channels[2] { left != nullptr ? left : silence,
+                                        right != nullptr ? right : silence };
+            if (! take.writer->write (channels, numSamples))
+                overflowCount.fetch_add (1, std::memory_order_relaxed);
+            pushedThreaded = true;
+        }
+
+        if (! pushedThreaded)
+            recordBuffers[static_cast<size_t> (track)].push (left, right, numSamples);
+
         ++inputIndex;
     }
 
@@ -2165,6 +2503,69 @@ bool AudioEngine::isRecordArmed (int track) const
 {
     return track >= 0 && track < trackCount
            && recordArmed[static_cast<size_t> (track)].load (std::memory_order_acquire);
+}
+
+void AudioEngine::setTrackMonitor (int track, bool on)
+{
+    if (track >= 0 && track < trackCount)
+        trackMonitor[static_cast<size_t> (track)].store (on, std::memory_order_release);
+}
+
+bool AudioEngine::isTrackMonitor (int track) const
+{
+    return track >= 0 && track < trackCount
+           && trackMonitor[static_cast<size_t> (track)].load (std::memory_order_acquire);
+}
+
+bool AudioEngine::consumePunchOut()
+{
+    return punchOutPending.exchange (false, std::memory_order_acq_rel);
+}
+
+juce::Array<juce::MidiDeviceInfo> AudioEngine::availableMidiDevices()
+{
+    return MidiRecorder::availableDevices();
+}
+
+bool AudioEngine::openMidiDevice (const juce::String& deviceIdentifier, juce::String& error)
+{
+    return midiRecorder.openDevice (deviceIdentifier, error);
+}
+
+void AudioEngine::closeMidiDevice()
+{
+    midiRecorder.closeDevice();
+}
+
+bool AudioEngine::startMidiRecording (int track, juce::String& error)
+{
+    if (midiRecorder.isRecording())
+    {
+        error = "MIDI recording already in progress";
+        return false;
+    }
+
+    if (! juce::isPositiveAndBelow (track, trackCount))
+    {
+        error = "MIDI record target is outside the session";
+        return false;
+    }
+
+    const auto map = tempoMap();
+    const auto rate = juce::jmax (1.0, sampleRate.load());
+    const auto ppq = engine::ppqAtSamplesWithMap (map, positionSamples.load(), rate);
+    midiRecorder.startRecording (track, ppq, map);
+    return true;
+}
+
+void AudioEngine::drainMidiRecording()
+{
+    midiRecorder.drain();
+}
+
+nc::engine::ClipState AudioEngine::stopMidiRecording()
+{
+    return midiRecorder.stopRecording();
 }
 
 int64_t AudioEngine::recordedFrames() const
@@ -2240,6 +2641,66 @@ bool AudioEngine::startRecording (juce::String& error)
     return true;
 }
 
+bool AudioEngine::startRecording (const juce::File& folder, juce::String& error)
+{
+    if (! folder.isDirectory() && ! folder.createDirectory())
+    {
+        error = "Cannot create the recording folder";
+        return false;
+    }
+
+    if (! startRecording (error))
+        return false;
+
+    // Replace the RAM buffers with threaded writers: the callback pushes
+    // blocks into a FIFO, the writer thread flushes WAV to disk.
+    threadedTakes.clear();
+    juce::WavAudioFormat wav;
+    const auto rate = sampleRate.load();
+    int takeNumber = 0;
+
+    for (int track = 0; track < trackCount; ++track)
+    {
+        if (! recordArmed[static_cast<size_t> (track)].load (std::memory_order_relaxed))
+            continue;
+
+        const auto file = folder.getChildFile ("Track " + juce::String (track + 1)
+                                               + " take " + juce::String (++takeNumber) + ".wav");
+        file.deleteFile();
+        std::unique_ptr<juce::FileOutputStream> stream (file.createOutputStream());
+
+        if (stream == nullptr)
+        {
+            error = "Cannot write " + file.getFullPathName();
+            threadedTakes.clear();
+            recording.store (false, std::memory_order_release);
+            return false;
+        }
+
+        std::unique_ptr<juce::AudioFormatWriter> writer (
+            wav.createWriterFor (stream.get(), rate, 2, 24, {}, 0));
+
+        if (writer == nullptr)
+        {
+            error = "Unsupported recording format";
+            threadedTakes.clear();
+            recording.store (false, std::memory_order_release);
+            return false;
+        }
+
+        ThreadedTake take;
+        take.writer = std::make_unique<juce::AudioFormatWriter::ThreadedWriter> (
+            writer.release(), writerThread, 65536);
+        take.file = file;
+        take.track = track;
+        take.startFrame = recordStartFrame.load (std::memory_order_acquire);
+        threadedTakes.push_back (std::move (take));
+    }
+
+    error.clear();
+    return true;
+}
+
 std::vector<AudioEngine::RecordedTake> AudioEngine::stopRecording (const juce::File& folder,
                                                                   int bitDepth,
                                                                   juce::String& error)
@@ -2249,6 +2710,27 @@ std::vector<AudioEngine::RecordedTake> AudioEngine::stopRecording (const juce::F
     if (! recording.exchange (false, std::memory_order_acq_rel))
     {
         error = "Not recording";
+        return takes;
+    }
+
+    // Streaming takes are already on disk; deleting the writers flushes.
+    // Note: the latency trim that the RAM path applies is not applied to
+    // streamed takes (they start at the punch-in transport frame).
+    if (! threadedTakes.empty())
+    {
+        for (auto& take : threadedTakes)
+        {
+            take.writer.reset();
+            RecordedTake recorded;
+            recorded.track = take.track;
+            recorded.file = take.file;
+            recorded.startFrame = take.startFrame;
+            recorded.frames = recordFramesWritten;
+            takes.push_back (std::move (recorded));
+        }
+
+        threadedTakes.clear();
+        error.clear();
         return takes;
     }
 

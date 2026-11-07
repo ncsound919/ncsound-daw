@@ -29,8 +29,41 @@ ChopStationEditor::ChopStationEditor (nc::ChopStationProcessor& p)
     loadButton.onClick = [this] { chooseFile(); };
     addAndMakeVisible (loadButton);
 
+    presetBox.setColour (juce::ComboBox::backgroundColourId, surface.brighter (0.08f));
+    presetBox.setColour (juce::ComboBox::textColourId, paper);
+
+    for (int i = 0; i < processor.numPresets(); ++i)
+        presetBox.addItem (processor.presetName (i), i + 1);
+
+    presetBox.setSelectedId (1, juce::dontSendNotification);
+    presetBox.onChange = [this]
+    {
+        processor.applyPreset (presetBox.getSelectedId() - 1);
+    };
+    addAndMakeVisible (presetBox);
+
+    const char* paramIds[10] = { "chops", "gain", "drive", "bits", "cutoff",
+                                 "reso", "delayMix", "delayTime", "reverb", "pan" };
+    const char* paramNames[10] = { "Chops", "Gain", "Drive", "Bits", "Cutoff",
+                                   "Reso", "Delay Mix", "Delay Time", "Reverb", "Pan" };
+
+    for (int i = 0; i < 10; ++i)
+    {
+        auto control = std::make_unique<ParamControl> (paramNames[i]);
+        control->slider.setSliderStyle (juce::Slider::RotaryHorizontalDrag);
+        control->slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 64, 18);
+        control->nameLabel.setColour (juce::Label::textColourId, paper.withAlpha (0.85f));
+        control->nameLabel.setFont (juce::Font (12.0f));
+        control->nameLabel.setJustificationType (juce::Justification::centred);
+        addAndMakeVisible (control->slider);
+        addAndMakeVisible (control->nameLabel);
+        control->attachment = std::make_unique<juce::SliderAttachment>
+            (processor.apvts, paramIds[i], control->slider);
+        controls[static_cast<size_t> (i)] = std::move (control);
+    }
+
     refreshLabels();
-    setSize (460, 170);
+    setSize (460, 380);
     startTimerHz (4);
 }
 
@@ -52,7 +85,30 @@ void ChopStationEditor::resized()
     area.removeFromTop (8);
     statusLabel.setBounds (area.removeFromTop (22));
     area.removeFromTop (12);
-    loadButton.setBounds (area.removeFromTop (30).removeFromLeft (150));
+
+    auto row = area.removeFromTop (30);
+    loadButton.setBounds (row.removeFromLeft (150));
+    row.removeFromLeft (12);
+    presetBox.setBounds (row.removeFromLeft (160));
+
+    area.removeFromTop (14);
+
+    // 5 columns x 2 rows of rotary knobs.
+    constexpr int columns = 5;
+    constexpr int rows = 2;
+    const auto cellW = area.getWidth() / columns;
+    const auto cellH = area.getHeight() / rows;
+
+    for (int i = 0; i < 10; ++i)
+    {
+        const auto col = i % columns;
+        const auto r = i / columns;
+        auto cell = juce::Rectangle<int> (area.getX() + col * cellW, area.getY()
+                                          + r * cellH, cellW, cellH);
+        auto* control = controls[static_cast<size_t> (i)].get();
+        control->nameLabel.setBounds (cell.removeFromTop (16));
+        control->slider.setBounds (cell.reduced (6, 2));
+    }
 }
 
 void ChopStationEditor::timerCallback()

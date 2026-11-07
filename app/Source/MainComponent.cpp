@@ -109,6 +109,14 @@ MainComponent::MainComponent (juce::File registryFile)
         setStatus (message, false, 5.0);
     };
 
+    transport.onRecordRequest = [this] (bool shouldRecord)
+    {
+        if (shouldRecord)
+            startRecording();
+        else
+            finishRecording();
+    };
+
     browser.onClose = [this]
     {
         setBrowserOpen (false);
@@ -132,6 +140,7 @@ MainComponent::MainComponent (juce::File registryFile)
 
                 safe->browser.setExternalPlugins (safe->engine.pluginCatalog().asPluginInfo());
                 safe->browser.setScanState (false);
+                safe->browser.setStatusLine ("SCAN / " + message);
                 safe->setStatus ("SCAN / " + message, ! success);
             });
     };
@@ -191,6 +200,7 @@ MainComponent::MainComponent (juce::File registryFile)
 
         safe->browser.setExternalPlugins (safe->engine.pluginCatalog().asPluginInfo());
         safe->browser.setScanState (false);
+        safe->browser.setStatusLine (safe->engine.pluginCatalog().lastScanStatus());
     });
 
     newButton.setCompact (true);
@@ -581,6 +591,53 @@ void MainComponent::paintStatus (juce::Graphics& g)
 }
 
 //==============================================================================
+void MainComponent::startRecording()
+{
+    juce::String error;
+    const auto folder = juce::File::getCurrentWorkingDirectory().getChildFile ("Recorded Takes");
+
+    if (! engine.startRecording (folder, error))
+    {
+        setStatus ("RECORD / " + error, true);
+        return;
+    }
+
+    // Recording captures from the current position (punch-in); with the
+    // loop on, the audio thread flags punch-out at the loop end and the
+    // timer finalises the take. Placement uses the take's start frame.
+    engine.setPlaying (true);
+    setStatus ("RECORDING / ARMED TRACKS CAPTURING / STOP TO PLACE TAKES", false, 0.0);
+}
+
+void MainComponent::finishRecording()
+{
+    if (! engine.isRecording())
+        return;
+
+    const auto folder = juce::File::getCurrentWorkingDirectory().getChildFile ("Recorded Takes");
+    juce::String error;
+    const auto takes = engine.stopRecording (folder, 24, error);
+
+    if (takes.empty())
+    {
+        setStatus ("RECORD / " + (error.isEmpty() ? juce::String ("no audio captured") : error), true);
+        return;
+    }
+
+    auto placed = 0;
+
+    for (const auto& take : takes)
+    {
+        const auto startBar = 1.0 + static_cast<double> (take.startFrame)
+                              / juce::jmax (1.0, engine.currentSampleRate())
+                              / (240.0 / juce::jmax (1.0, engine.getBpm()));
+        if (arrange.placeRecordedTake (take.file, take.track, startBar))
+            ++placed;
+    }
+
+    setStatus ("TAKES PLACED / " + juce::String (placed) + " OF " + juce::String (static_cast<int> (takes.size())));
+}
+
 void MainComponent::timerCallback()
 {
     ++tick;
@@ -589,6 +646,16 @@ void MainComponent::timerCallback()
     // reads the window that is already resident.
     engine.serviceStreaming();
     engine.pollRetiredInserts();
+
+    if (engine.consumePunchOut())
+    {
+        finishRecording();
+        engine.setPlaying (false);
+        setStatus ("PUNCH OUT / TAKE PLACED AT LOOP START");
+    }
+
+    if (engine.isMidiRecording())
+        engine.drainMidiRecording();
 
     if (engine.pluginCatalog().isScanning())
         browser.setScanState (true, engine.pluginCatalog().scanProgress());
@@ -784,6 +851,9 @@ void MainComponent::openMenu (int menuIndex)
             menu.addItem (4013, "Built-in PolySynth (Saw)", true);
             menu.addItem (4014, "Load Track Instrument...", engine.scannedInstrumentCount() > 0);
             menu.addItem (4015, "Remove Track Instrument", engine.trackInstrumentName (selectedTrack).isNotEmpty());
+            menu.addItem (4016, "Open Instrument Editor", engine.trackInstrumentInstance (selectedTrack) != nullptr);
+            menu.addItem (4017, "Record MIDI from Device...", ! engine.isMidiRecording());
+            menu.addItem (4018, "Stop MIDI Recording", engine.isMidiRecording());
             menu.addSeparator();
             menu.addItem (4004, "Mute Selected Track", true, engine.trackMuted (selectedTrack));
             menu.addItem (4005, "Solo Selected Track", true, engine.trackSolo (selectedTrack));
@@ -1096,6 +1166,13 @@ void MainComponent::handleMenuResult (int result)
                            : "MASTER INSERT / EMPTY");
             break;
 
+        case 2204:
+            if (auto* instance = engine.masterInsertInstance())
+                new PluginEditorWindow (engine.masterPluginName(), instance);
+            else
+                setStatus ("NO MASTER INSERT LOADED", true);
+            break;
+
         case 2100:
         {
             nc::engine::audiosuite::Process process;
@@ -1307,6 +1384,69 @@ void MainComponent::handleMenuResult (int result)
             setStatus ("INSTRUMENT REMOVED / " + trackName (selectedTrack));
             break;
 
+        case 4016:
+        {
+            if (auto* instance = engine.trackInstrumentInstance (selectedTrack))
+                new PluginEditorWindow (engine.trackInstrumentName (selectedTrack), instance);
+            else
+                setStatus ("NO HOSTED INSTRUMENT ON " + trackName (selectedTrack), true);
+            break;
+        }
+
+        case 4017:
+        {
+            const auto devices = AudioEngine::availableMidiDevices();
+            if (devices.isEmpty())
+            {
+                setStatus ("NO MIDI DEVICES FOUND", true);
+                break;
+            }
+            juce::PopupMenu deviceMenu;
+            for (int i = 0; i < devices.size(); ++i)
+                deviceMenu.addItem (i + 1, devices[i].name);
+            deviceMenu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+                                      [safe = juce::Component::SafePointer<MainComponent> (this), devices] (int chosen)
+                                      {
+                                          if (safe == nullptr || chosen <= 0)
+                                              return;
+                                          juce::String error;
+                                          if (! safe->engine.openMidiDevice (devices[chosen - 1].identifier, error))
+                                          {
+                                              safe->setStatus ("MIDI / " + error, true);
+                                              return;
+                                          }
+                                          if (! safe->engine.startMidiRecording (safe->selectedTrack, error))
+                                          {
+                                              safe->setStatus ("MIDI RECORD / " + error, true);
+                                              return;
+                                          }
+                                          safe->engine.setPlaying (true);
+                                          safe->setStatus ("MIDI RECORDING / PLAY TO CAPTURE / STOP TO PLACE");
+                                      });
+            break;
+        }
+
+        case 4018:
+        {
+            if (! engine.isMidiRecording())
+                break;
+            const auto clip = engine.stopMidiRecording();
+            auto clips = engine.midiClips();
+            AudioEngine::MidiTimelineClip midi;
+            midi.track = clip.track;
+            midi.startBar = clip.startBar;
+            midi.lengthBars = clip.lengthBars;
+            midi.name = juce::String (clip.name);
+            midi.notes = clip.notes;
+            midi.ccs = clip.ccs;
+            midi.bends = clip.bends;
+            clips.push_back (std::move (midi));
+            engine.setMidiClips (std::move (clips));
+            arrange.refresh();
+            setStatus ("MIDI TAKE PLACED / " + juce::String (static_cast<int> (clip.notes.size())) + " NOTES");
+            break;
+        }
+
         case 4005:
             engine.setTrackSolo (selectedTrack, ! engine.trackSolo (selectedTrack));
             setStatus ("Solo " + juce::String (engine.trackSolo (selectedTrack) ? "on" : "off")
@@ -1338,6 +1478,7 @@ void MainComponent::openMasterInsertMenu()
     menu.addItem (2201, "Load Master Plugin...", engine.scannedPluginCount() > 0);
     menu.addItem (2202, "Remove Master Plugin", engine.hasMasterPlugin());
     menu.addItem (2203, "Plugin Info", engine.hasMasterPlugin());
+    menu.addItem (2204, "Open Master Insert Editor", engine.masterInsertInstance() != nullptr);
 
     auto safe = juce::Component::SafePointer<MainComponent> (this);
     menu.showMenuAsync (juce::PopupMenu::Options().withMousePosition(),
@@ -1525,15 +1666,13 @@ void MainComponent::writeProject (const juce::File& file)
         state.startBar = clip.startBar;
         state.lengthBars = clip.lengthBars;
         state.notes = clip.notes;
+        state.ccs = clip.ccs;
+        state.bends = clip.bends;
         document.clips.push_back (std::move (state));
     }
 
-    if (engine.hasMasterPlugin())
-    {
-        document.masterInsert.identifier = engine.masterPluginIdentifier().toStdString();
-        document.masterInsert.format = "VST3";
-        document.masterInsert.stateBase64 = engine.masterPluginStateBase64().toStdString();
-    }
+    if (engine.hasMasterPlugin() || engine.masterInsertIsMissing())
+        document.masterInsert = engine.masterInsertState();
 
     document.mixRack = engine.mixRackStateJson().toStdString();
 
@@ -1577,15 +1716,17 @@ void MainComponent::readProject (const juce::File& file)
             midi.lengthBars = clip.lengthBars;
             midi.name = juce::String (clip.name);
             midi.notes = clip.notes;
+            midi.ccs = clip.ccs;
+            midi.bends = clip.bends;
             midiClips.push_back (std::move (midi));
         }
         engine.setMidiClips (std::move (midiClips));
     }
 
-    // A project can carry track inserts before the browser has been opened.
-    // Registry rows alone are not loadable, so scan when nothing is linked yet.
-    if (engine.scannedPluginCount() == 0)
-        engine.pluginCatalog().scanSync();
+    // Restore runs off descriptionXml (saved per slot), so no catalog scan
+    // is required on open. The legacy scanSync() blocked the message thread
+    // here; scanning is now only triggered from the browser's RESCAN button
+    // via scanAsync().
 
     auto missingInserts = 0;
     juce::String missingInsertNames;
@@ -1645,8 +1786,10 @@ void MainComponent::readProject (const juce::File& file)
         engine.restoreMixRackStateJson (juce::String (document->mixRack));
 
     if (! document->masterInsert.isEmpty())
-        insertRestored = engine.restoreMasterPlugin (juce::String (document->masterInsert.identifier),
-                                                     juce::String (document->masterInsert.stateBase64));
+    {
+        juce::String masterError;
+        insertRestored = engine.restoreMasterInsert (document->masterInsert, masterError);
+    }
 
     auto missing = 0;
     const auto restored = arrange.readClipsFromDocument (*document, file, missing);

@@ -71,6 +71,7 @@ public:
     void removeMaster();
     void markMissing (int track, int slot, const engine::PluginSlotState&, juce::String displayName);
     void markInstrumentMissing (int track, const engine::PluginSlotState&, juce::String displayName);
+    void markMasterMissing (const engine::PluginSlotState&, juce::String displayName);
     void collectGarbage();
 
     void setBypassed (int track, int slot, bool);

@@ -281,3 +281,53 @@ TEST_CASE ("a move outside the rack is refused and changes nothing", "[inserts]"
     REQUIRE (rack.slot (0, 0).active.load() != nullptr);
     REQUIRE (rack.slotState (0, 0).identifier == juce::String ("stay"));
 }
+
+TEST_CASE ("master slot installs, bypasses, reports latency and clears", "[inserts]")
+{
+    nc::TrackInsertRack rack;
+    rack.prepare (48000.0, 256, 1);
+
+    juce::String error;
+    REQUIRE (rack.installMaster (std::make_unique<FakeInsert> (32), stateFor ("master"), error));
+    REQUIRE (rack.masterName() == "Fake Insert");
+    REQUIRE (rack.masterLatency() == 32);
+    REQUIRE_FALSE (rack.isMasterMissing());
+    REQUIRE (rack.masterState().identifier == juce::String ("master"));
+
+    rack.setMasterBypassed (true);
+    REQUIRE (rack.masterLatency() == 0);
+
+    rack.removeMaster();
+    rack.collectGarbage();
+    REQUIRE (rack.masterState().isEmpty());
+    REQUIRE (rack.masterLatency() == 0);
+}
+
+TEST_CASE ("master missing keeps saved state for replace", "[inserts]")
+{
+    nc::TrackInsertRack rack;
+    rack.prepare (48000.0, 256, 1);
+
+    rack.markMasterMissing (stateFor ("gone-master"), "Gone Master");
+    REQUIRE (rack.isMasterMissing());
+    REQUIRE (rack.masterName() == "Gone Master");
+    REQUIRE (rack.masterState().identifier == juce::String ("gone-master"));
+    REQUIRE (rack.masterLatency() == 0);
+}
+
+TEST_CASE ("master NaN output is contained", "[inserts]")
+{
+    nc::TrackInsertRack rack;
+    rack.prepare (48000.0, 256, 1);
+
+    juce::String error;
+    REQUIRE (rack.installMaster (std::make_unique<FakeInsert> (0, true), stateFor ("bad-master"), error));
+
+    juce::AudioBuffer<float> buffer (2, 256);
+    buffer.clear();
+    rack.processMaster (buffer, {});
+
+    for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
+        for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
+            REQUIRE (std::isfinite (buffer.getSample (channel, sample)));
+}

@@ -51,6 +51,9 @@ public:
     // Loads the file through the engine and places it on the selected track.
     bool importAudioFile (const juce::File& file);
 
+    // Places a recorded take on its armed track at the record-start bar.
+    bool placeRecordedTake (const juce::File& file, int track, double startBar);
+
     // AudioSuite-style offline editing of the selected clip.
     bool applyAudioSuite (const nc::engine::audiosuite::Process& process);
     bool repeatSelected (int times);
@@ -89,6 +92,8 @@ private:
         int assetId = -1;
         double sourceOffsetSeconds = 0.0;
         std::vector<nc::engine::MidiNote> notes; // MIDI clips: clip-relative beats
+        std::vector<nc::engine::MidiCC> ccs;
+        std::vector<nc::engine::MidiBend> bends;
     };
 
     enum class DragMode { none, move, trimLeft, trimRight, fadeIn, fadeOut, gain };

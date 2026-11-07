@@ -2,6 +2,7 @@
 
 #include <nc/engine/Markers.hpp>
 #include <nc/engine/MidiClip.hpp>
+#include <nc/engine/PitchStack.hpp>
 #include <nc/engine/ProjectLimits.hpp>
 #include <nc/engine/TempoMap.hpp>
 
@@ -19,8 +20,11 @@ namespace nc::engine
     instrument slots and MIDI clips (ClipState::isMidi + notes). v4 adds
     the tempo map and user markers; v3 and earlier files have no
     "tempoMap"/"markers" fields and load as a constant map from `bpm`
-    with no markers, which is exactly the v3 behaviour. */
-inline constexpr int projectSchemaVersion = 4;
+    with no markers, which is exactly the v3 behaviour. v5 adds MIDI
+    controller/pitch-bend events ("ccs"/"bends" on MIDI clips); older
+    files load with empty lists. v6 adds pitch ("pitch" global + "pitch" /
+    "instrumentPitch" per track); older files load with defaults (0/0/440). */
+inline constexpr int projectSchemaVersion = 6;
 
 /** Per-slot cap for opaque plugin data. A hostile or truncated project must not
     make the loader hold an unbounded XML/state string. */
@@ -39,6 +43,8 @@ struct ClipState
     double fadeOutBars = 0.0;
     bool isMidi = false;     // true: notes below, no audio backing
     std::vector<MidiNote> notes; // clip-relative beats; MIDI clips only
+    std::vector<MidiCC> ccs;     // controller events; MIDI clips only
+    std::vector<MidiBend> bends; // pitch-bend events; MIDI clips only
 };
 
 struct PluginSlotState
@@ -59,6 +65,10 @@ struct TrackState
     double pan = 0.0;
     bool muted = false;
     bool soloed = false;
+
+    // Pitch scopes (v6, ported from ChordStudio PitchStack).
+    PitchStack pitch;
+    PitchStack instrumentPitch;
 
     // Four user insert slots. Slot 0 in the UI is the baked native strip; these
     // are the four slots the browser can load into.
@@ -82,6 +92,7 @@ struct ProjectDocument
     // is kept in sync with the map's first point on save.
     TempoMap tempoMap;
     std::vector<Marker> markers;
+    PitchStack globalPitch; // v6
     int activeTrackCount = nc::limits::defaultActiveTracks;
     bool loopEnabled = false;
     double loopStartBar = 1.0;
@@ -149,6 +160,8 @@ inline bool isSafeRelativeAssetPath (const std::string& path) noexcept
     Idempotent: sanitising twice equals sanitising once. */
 inline ProjectDocument sanitize (ProjectDocument document)
 {
+    document.globalPitch.clamp();
+
     if (! std::isfinite (document.bpm))
         document.bpm = 120.0;
 
@@ -214,6 +227,8 @@ inline ProjectDocument sanitize (ProjectDocument document)
         {
             clip.assetPath.clear();
             sanitizeNotes (clip.notes, clipLengthBeats (clip.lengthBars));
+            sanitizeMidiCCs (clip.ccs, clipLengthBeats (clip.lengthBars));
+            sanitizeMidiBends (clip.bends, clipLengthBeats (clip.lengthBars));
 
             while (totalMidiNotes + static_cast<int64_t> (clip.notes.size()) > nc::limits::maxMidiNotesTotal
                    && ! clip.notes.empty())
@@ -224,6 +239,8 @@ inline ProjectDocument sanitize (ProjectDocument document)
         else
         {
             clip.notes.clear();
+            clip.ccs.clear();
+            clip.bends.clear();
         }
 
         kept.push_back (std::move (clip));
@@ -236,6 +253,8 @@ inline ProjectDocument sanitize (ProjectDocument document)
 
     for (auto& track : document.tracks)
     {
+        track.pitch.clamp();
+        track.instrumentPitch.clamp();
         for (auto& slot : track.inserts)
         {
             if (slot.descriptionXml.size() > maxPluginBlobBytes)

@@ -1513,6 +1513,8 @@ void ArrangeView::publishTimeline()
             next.lengthBars = static_cast<double> (clip.lengthBars);
             next.name = clip.name;
             next.notes = clip.notes;
+            next.ccs = clip.ccs;
+            next.bends = clip.bends;
             midiSchedule.push_back (std::move (next));
             continue;
         }
@@ -1539,6 +1541,38 @@ void ArrangeView::publishTimeline()
         onStatus (juce::String (dropped) + " CLIP" + juce::String (dropped == 1 ? "" : "S")
                       + " BEYOND THE 1024-CLIP TIMELINE " + juce::String (dropped == 1 ? "WAS" : "WERE")
                       + " DROPPED / SPLIT THE PROJECT TO KEEP EVERYTHING");
+}
+
+bool ArrangeView::placeRecordedTake (const juce::File& file, int track, double startBar)
+{
+    const auto assetId = engine.loadAudioFile (file);
+
+    if (assetId < 0)
+        return false;
+
+    const auto secondsPerBar = 240.0 / juce::jmax (1.0, engine.getBpm());
+    const auto duration = engine.assetDurationSeconds (assetId);
+    const auto lengthBars = juce::jlimit (1, 1024,
+                                          static_cast<int> (std::ceil (duration / secondsPerBar)));
+
+    pushUndo();
+
+    Clip clip;
+    clip.track = juce::jlimit (0, juce::jmax (0, engine.getActiveTrackCount() - 1), track);
+    clip.startBar = juce::jlimit (1, 1024, static_cast<int> (startBar));
+    clip.lengthBars = lengthBars;
+    clip.name = file.getFileNameWithoutExtension().toUpperCase();
+    clip.kind = 1;
+    clip.assetId = assetId;
+    clip.sourceOffsetSeconds = 0.0;
+    clip.fadeInBars = 0.0f;
+    clip.fadeOutBars = 0.0f;
+    clip.seed = static_cast<juce::uint32> (juce::Time::getMillisecondCounter()) * 2654435761u;
+
+    clips.push_back (clip);
+    publishTimeline();
+    refresh();
+    return true;
 }
 
 bool ArrangeView::importAudioFile (const juce::File& file)
@@ -1844,6 +1878,8 @@ void ArrangeView::writeClipsToDocument (nc::engine::ProjectDocument& document, c
             state.fadeInBars = static_cast<double> (clip.fadeInBars);
             state.fadeOutBars = static_cast<double> (clip.fadeOutBars);
             state.notes = clip.notes;
+            state.ccs = clip.ccs;
+            state.bends = clip.bends;
             document.clips.push_back (std::move (state));
             continue;
         }
@@ -1898,6 +1934,8 @@ int ArrangeView::readClipsFromDocument (const nc::engine::ProjectDocument& docum
             clip.fadeInBars = static_cast<float> (state.fadeInBars);
             clip.fadeOutBars = static_cast<float> (state.fadeOutBars);
             clip.notes = state.notes;
+            clip.ccs = state.ccs;
+            clip.bends = state.bends;
             clip.seed = static_cast<juce::uint32> (std::hash<std::string> {} (state.name));
             clips.push_back (clip);
             ++restored;

@@ -9,13 +9,27 @@ namespace nc
 inline constexpr const char* builtinSynthIdentifier = "builtin-polysynth";
 
 /** The built-in fallback instrument so MIDI clips make sound with no VST3
-    installed. A JUCE Synthesiser with 8 voices; the waveform (sine /
-    triangle / saw) is the only parameter and is stored as the slot state,
-    so a project reopens silently without a scanner. */
+    installed. A JUCE Synthesiser with 16 voices; waveform, filter and ADSR
+    come from a preset (Bass / Keys / Pad) stored in the slot state, so a
+    project reopens silently without a scanner. Legacy state (a bare wave
+    int) still loads. */
 class BuiltinSynth final : public InsertProcessor
 {
 public:
     enum class Wave : int { sine = 0, triangle = 1, saw = 2 };
+
+    struct Preset
+    {
+        Wave wave = Wave::saw;
+        float cutoffHz = 4000.0f;    // lowpass, key-tracked from note pitch
+        float attackMs = 5.0f;
+        float decayMs = 120.0f;
+        float sustain = 0.7f;        // 0..1 of peak
+        float releaseMs = 180.0f;
+        float level = 0.22f;
+    };
+
+    enum class PresetId : int { bass = 0, keys = 1, pad = 2 };
 
     BuiltinSynth();
 
@@ -30,8 +44,13 @@ public:
     bool getState (nc::engine::PluginSlotState&) const override;
     bool setState (const nc::engine::PluginSlotState&) override;
 
-    void setWave (Wave newWave) { wave = newWave; }
-    Wave getWave() const { return wave; }
+    void setPreset (PresetId id);
+    void setWave (Wave newWave) { preset.wave = newWave; applyPresetToVoices(); }
+    Wave getWave() const { return preset.wave; }
+    Preset getPreset() const { return preset; }
+    void setPresetParams (const Preset& params) { preset = params; applyPresetToVoices(); }
+
+    static Preset presetFor (PresetId id);
 
 private:
     struct Sound final : public juce::SynthesiserSound
@@ -42,24 +61,30 @@ private:
 
     struct Voice final : public juce::SynthesiserVoice
     {
-        Wave wave = Wave::sine;
+        Preset preset;
         double phase = 0.0;
-        double frequency = 440.0;
-        float level = 0.0f;      // current envelope value
-        float targetLevel = 0.0f;
-        bool releasing = false;
+        double baseFrequency = 440.0;
+        double bendSemitones = 0.0;
+        float envLevel = 0.0f;
+        float filterState = 0.0f;
+        int envStage = 0; // 0 attack, 1 decay, 2 sustain, 3 release
+        bool noteHeld = false;
 
-        bool canPlaySound (juce::SynthesiserSound*) override { return true; }
+        bool canPlaySound (juce::SynthesiserSound* sound) override;
         void startNote (int midiNoteNumber, float velocity,
-                        juce::SynthesiserSound*, int) override;
-        void stopNote (float, bool) override { releasing = true; }
-        void pitchWheelMoved (int) override {}
-        void controllerMoved (int, int) override {}
-        void renderNextBlock (juce::AudioBuffer<float>&, int startSample, int numSamples) override;
+                        juce::SynthesiserSound* sound, int currentPitchWheelPosition) override;
+        void stopNote (float velocity, bool allowTailOff) override;
+        void pitchWheelMoved (int newPitchWheelValue) override;
+        void controllerMoved (int controllerNumber, int newControllerValue) override;
+        void renderNextBlock (juce::AudioBuffer<float>& outputBuffer, int startSample,
+                              int numSamples) override;
     };
 
+    void applyPresetToVoices();
+
     juce::Synthesiser synth;
-    Wave wave = Wave::sine;
+    Preset preset;
+    PresetId presetId = PresetId::bass;
     bool bypassed = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (BuiltinSynth)

@@ -11,14 +11,21 @@
 namespace nc::engine
 {
 /** One scheduled MIDI event inside a single audio block. `sampleOffset`
-    is relative to the block start; events are sorted by it, note-offs
-    after note-ons at the same offset so a re-triggered pitch never sticks. */
+    is relative to the block start; events are sorted by it. At the same
+    offset controllers and bends come first (they apply to what follows),
+    then note-offs before note-ons so a same-pitch retrigger sounds
+    instead of being killed by the previous note's off. */
 struct MidiEvent
 {
+    enum class Kind { cc, bend, noteOff, noteOn };
+
     int sampleOffset = 0;
     int pitch = 60;
     int velocity = 0;   // 0 == note-off
     int channel = 0;
+    Kind kind = Kind::noteOn;
+    int controller = 0; // cc only
+    int value = 0;      // cc value, or pitch-bend 0..16383
 };
 
 /** Events for one MIDI clip inside the PPQ window
@@ -76,11 +83,25 @@ inline void scheduleMidiClip (const std::vector<MidiNote>& notes,
         if (startsInBlock || soundingAtStart)
         {
             const auto offset = soundingAtStart ? 0 : offsetForPpq (noteStartPpq);
-            out.push_back ({ offset, note.pitch, note.velocity, note.channel });
+            MidiEvent event;
+            event.sampleOffset = offset;
+            event.pitch = note.pitch;
+            event.velocity = note.velocity;
+            event.channel = note.channel;
+            event.kind = MidiEvent::Kind::noteOn;
+            out.push_back (event);
         }
 
         if (endsInBlock)
-            out.push_back ({ offsetForPpq (noteEndPpq), note.pitch, 0, note.channel });
+        {
+            MidiEvent event;
+            event.sampleOffset = offsetForPpq (noteEndPpq);
+            event.pitch = note.pitch;
+            event.velocity = 0;
+            event.channel = note.channel;
+            event.kind = MidiEvent::Kind::noteOff;
+            out.push_back (event);
+        }
     }
 
     std::sort (out.begin(), out.end(), [] (const MidiEvent& a, const MidiEvent& b)
@@ -88,7 +109,7 @@ inline void scheduleMidiClip (const std::vector<MidiNote>& notes,
         if (a.sampleOffset != b.sampleOffset)
             return a.sampleOffset < b.sampleOffset;
 
-        return a.velocity < b.velocity; // note-off (0) before note-on so a same-pitch retrigger sounds
+        return static_cast<int> (a.kind) < static_cast<int> (b.kind);
     });
 }
 } // namespace nc::engine

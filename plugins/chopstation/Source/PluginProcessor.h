@@ -84,6 +84,15 @@ public:
     bool loadSample (const juce::File& file);
     juce::String getSampleName() const;
     int getSliceCount() const;
+    juce::String getSamplePath() const { return activePath; }
+
+    static constexpr int64_t maxSampleFrames = 3 * 44100 * 60; // 3 minutes-ish ceiling
+    static constexpr int maxSampleChannels = 2;
+
+    // Factory presets (index → name). Apply via APVTS so automation/host sees them.
+    static int numPresets() { return 3; }
+    static juce::String presetName (int index);
+    void applyPreset (int index);
 
     juce::AudioProcessorValueTreeState apvts;
 

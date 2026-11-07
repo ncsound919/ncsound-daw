@@ -172,6 +172,12 @@ void BrowserOverlay::setExternalPlugins (const std::vector<PluginInfo>& plugins)
         refresh();
 }
 
+void BrowserOverlay::setStatusLine (juce::String message)
+{
+    statusLine = std::move (message);
+    repaint (footerArea);
+}
+
 void BrowserOverlay::setScanState (bool isScanning, float progressValue)
 {
     scanning = isScanning;
@@ -461,7 +467,7 @@ void BrowserOverlay::paint (juce::Graphics& g)
     {
         g.setColour (theme::muted);
         g.setFont (theme::label (9.0f));
-        g.drawText ("VST3 HOSTING IS NOT WIRED IN THIS BUILD",
+        g.drawText (statusLine.isNotEmpty() ? statusLine : juce::String (filtered.size()) + " PLUG-INS / VST3 READY",
                     footerArea, juce::Justification::centred, false);
     }
 
