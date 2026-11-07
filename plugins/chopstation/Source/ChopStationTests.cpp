@@ -28,7 +28,7 @@ juce::File writeTestWav (juce::AudioBuffer<float>& buffer, double sampleRate)
 TEST_CASE ("Chop Station creates all 10 parameters", "[chopstation]")
 {
     nc::ChopStationProcessor processor;
-    REQUIRE (processor.apvts.getNumParameters() == 10);
+    REQUIRE (processor.getNumParameters() == 10);
     REQUIRE (processor.apvts.getParameter ("chops") != nullptr);
     REQUIRE (processor.apvts.getParameter ("pan") != nullptr);
 }

@@ -57,7 +57,7 @@ ChopStationEditor::ChopStationEditor (nc::ChopStationProcessor& p)
         control->nameLabel.setJustificationType (juce::Justification::centred);
         addAndMakeVisible (control->slider);
         addAndMakeVisible (control->nameLabel);
-        control->attachment = std::make_unique<juce::SliderAttachment>
+        control->attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>
             (processor.apvts, paramIds[i], control->slider);
         controls[static_cast<size_t> (i)] = std::move (control);
     }

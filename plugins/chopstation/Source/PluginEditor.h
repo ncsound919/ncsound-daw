@@ -28,7 +28,7 @@ private:
     {
         juce::Slider slider;
         juce::Label nameLabel;
-        std::unique_ptr<juce::SliderAttachment> attachment;
+        std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
 
         ParamControl (const juce::String& name) { nameLabel.setText (name, juce::dontSendNotification); }
     };

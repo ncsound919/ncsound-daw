@@ -373,15 +373,20 @@ void ChopStationProcessor::getStateInformation (juce::MemoryBlock& destData)
 
             if (auto* wavFormat = dynamic_cast<juce::WavAudioFormat*> (formats.findFormatForFileExtension ("wav")))
             {
-                juce::MemoryOutputStream stream (wav, false);
+                // The writer takes ownership of the stream (same contract as the
+                // FileOutputStream path). Heap-allocate so writer.reset() frees
+                // it instead of deleting a stack object.
+                auto stream = std::make_unique<juce::MemoryOutputStream> (wav, false);
 
-                if (auto writer = std::unique_ptr<juce::AudioFormatWriter>
-                    (wavFormat->createWriterFor (&stream, data->sourceRate > 0 ? data->sourceRate : 44100.0,
-                                                 data->buffer.getNumChannels(), 32, {}, 0)))
+                auto writer = std::unique_ptr<juce::AudioFormatWriter>
+                    (wavFormat->createWriterFor (stream.get(), data->sourceRate > 0 ? data->sourceRate : 44100.0,
+                                                 data->buffer.getNumChannels(), 32, {}, 0));
+                stream.release(); // writer now owns it; its dtor flushes into `wav`.
+
+                if (writer != nullptr)
                 {
                     writer->writeFromAudioSampleBuffer (data->buffer, 0, data->buffer.getNumSamples());
                     writer.reset();
-                    stream.flush();
                     state.setProperty ("sampleData", wav.toBase64Encoding(), nullptr);
                 }
             }
@@ -415,9 +420,9 @@ void ChopStationProcessor::setStateInformation (const void* data, int sizeInByte
 
         if (wav.fromBase64Encoding (embedded) && wav.getSize() > 0)
         {
-            juce::MemoryInputStream stream (wav, false);
+            auto input = std::make_unique<juce::MemoryInputStream> (wav, false);
 
-            if (auto* reader = formats.createReaderFor (stream))
+            if (auto* reader = formats.createReaderFor (std::move (input)))
             {
                 std::unique_ptr<juce::AudioFormatReader> ownedReader (reader);
 

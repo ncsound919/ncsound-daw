@@ -38,7 +38,8 @@ target_link_libraries(NCChopStation PRIVATE
 # capped load, embedded-sample round-trip, presets.
 add_executable(NCChopStationTests
     Source/ChopStationTests.cpp
-    Source/PluginProcessor.cpp)
+    Source/PluginProcessor.cpp
+    Source/PluginEditor.cpp)
 
 target_include_directories(NCChopStationTests PRIVATE Source)
 
