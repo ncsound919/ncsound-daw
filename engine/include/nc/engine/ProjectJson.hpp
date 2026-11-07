@@ -428,6 +428,12 @@ inline std::string toJson (const ProjectDocument& document)
         json::writeBool (out, track.muted);
         out += ",\"soloed\":";
         json::writeBool (out, track.soloed);
+        out += ",\"sendA\":";
+        json::writeNumber (out, track.sendA);
+        out += ",\"sendB\":";
+        json::writeNumber (out, track.sendB);
+        out += ",\"width\":";
+        json::writeNumber (out, track.width);
         out += ",\"pitch\":";
         writePitch (out, track.pitch);
         out += ",\"instrumentPitch\":";
@@ -674,6 +680,9 @@ inline std::optional<ProjectDocument> fromJson (const std::string& text)
             track.pan = detail::numberField (entry, "pan", 0.0);
             track.muted = detail::boolField (entry, "muted", false);
             track.soloed = detail::boolField (entry, "soloed", false);
+            track.sendA = detail::numberField (entry, "sendA", 0.0);
+            track.sendB = detail::numberField (entry, "sendB", 0.0);
+            track.width = detail::numberField (entry, "width", 0.5);
             track.pitch = detail::pitchField (entry, "pitch");
             track.instrumentPitch = detail::pitchField (entry, "instrumentPitch");
 

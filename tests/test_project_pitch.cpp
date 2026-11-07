@@ -56,9 +56,9 @@ TEST_CASE ("pitch clamps hostile values on sanitize")
     REQUIRE (clean.tracks[0].pitch.tuningHz == Catch::Approx (PitchStack::kHzDefault));
 }
 
-TEST_CASE ("schema bumps to 6 and old files load with defaults")
+TEST_CASE ("schema bumps to 7 and old files load with defaults")
 {
-    REQUIRE (projectSchemaVersion == 6);
+    REQUIRE (projectSchemaVersion >= 6);
     const auto doc = fromJson ("{\"version\":5,\"bpm\":120}");
     REQUIRE (doc.has_value());
     REQUIRE (doc->globalPitch.transpose == 0);

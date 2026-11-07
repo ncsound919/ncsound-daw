@@ -23,8 +23,10 @@ namespace nc::engine
     with no markers, which is exactly the v3 behaviour. v5 adds MIDI
     controller/pitch-bend events ("ccs"/"bends" on MIDI clips); older
     files load with empty lists. v6 adds pitch ("pitch" global + "pitch" /
-    "instrumentPitch" per track); older files load with defaults (0/0/440). */
-inline constexpr int projectSchemaVersion = 6;
+    "instrumentPitch" per track); older files load with defaults (0/0/440).
+    v7 adds per-track sends + width ("sendA"/"sendB"/"width"); older files
+    load with 0/0/0.5 (no reverb/delay send, neutral width). */
+inline constexpr int projectSchemaVersion = 7;
 
 /** Per-slot cap for opaque plugin data. A hostile or truncated project must not
     make the loader hold an unbounded XML/state string. */
@@ -65,6 +67,9 @@ struct TrackState
     double pan = 0.0;
     bool muted = false;
     bool soloed = false;
+    double sendA = 0.0;  // 0..1, reverb send (v7)
+    double sendB = 0.0;  // 0..1, delay send (v7)
+    double width = 0.5;  // 0..1, stereo imager (0.5 = unchanged) (v7)
 
     // Pitch scopes (v6, ported from ChordStudio PitchStack).
     PitchStack pitch;
@@ -255,6 +260,9 @@ inline ProjectDocument sanitize (ProjectDocument document)
     {
         track.pitch.clamp();
         track.instrumentPitch.clamp();
+        track.sendA = std::isfinite (track.sendA) ? std::clamp (track.sendA, 0.0, 1.0) : 0.0;
+        track.sendB = std::isfinite (track.sendB) ? std::clamp (track.sendB, 0.0, 1.0) : 0.0;
+        track.width = std::isfinite (track.width) ? std::clamp (track.width, 0.0, 1.0) : 0.5;
         for (auto& slot : track.inserts)
         {
             if (slot.descriptionXml.size() > maxPluginBlobBytes)

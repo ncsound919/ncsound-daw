@@ -45,10 +45,10 @@ private:
     HardwareButton muteButton { HardwareButton::Icon::none, "M" };
     HardwareButton soloButton { HardwareButton::Icon::none, "S" };
 
-    std::array<bool, 8> armed {};
-    std::array<float, 8> sendA { 0.18f, 0.06f, 0.30f, 0.22f, 0.10f, 0.16f, 0.0f, 0.0f };
-    std::array<float, 8> sendB { 0.08f, 0.0f, 0.12f, 0.18f, 0.0f, 0.08f, 0.0f, 0.0f };
-    std::array<float, 8> widths { 0.62f, 0.42f, 0.78f, 0.66f, 0.54f, 0.70f, 0.9f, 0.85f };
+    std::array<bool, AudioEngine::trackCount> armed {};
+    // Sends/width are owned by AudioEngine (see InspectorPanel.cpp). These
+    // members are legacy UI defaults from the pre-engine wiring; kept with
+    // full-size arrays so no index can go OOB. setTrack pulls from the engine.
 
     juce::Rectangle<int> headerArea, instrumentArea, insertsArea, sendsArea, channelArea, outputArea, gainLabelArea;
 

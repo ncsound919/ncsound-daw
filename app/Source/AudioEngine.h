@@ -3,6 +3,7 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 
+#include "AuxBus.h"
 #include "MixRack.h"
 #include "MidiRecorder.h"
 #include "PluginCatalog.h"
@@ -128,6 +129,12 @@ public:
     void setTrackGain (int track, float linearGain);
     float trackGain (int track) const;
     void setTrackPan (int track, float pan);
+    void setTrackSendA (int track, float send);
+    float trackSendA (int track) const;
+    void setTrackSendB (int track, float send);
+    float trackSendB (int track) const;
+    void setTrackWidth (int track, float width);
+    float trackWidth (int track) const;
 
     //==========================================================================
     // Automation. A non-empty lane drives the fader for as long as it exists;
@@ -449,6 +456,9 @@ private:
     {
         std::atomic<float> gain { 0.8f };
         std::atomic<float> pan { 0.0f };
+        std::atomic<float> sendA { 0.0f };
+        std::atomic<float> sendB { 0.0f };
+        std::atomic<float> width { 0.5f }; // 0..1, 0.5 = unchanged via mid/side x2
         std::atomic<float> peak { 0.0f };
         std::atomic<bool> muted { false };
         std::atomic<bool> soloed { false };
@@ -634,8 +644,18 @@ private:
     int clickBeat = 0;
     float smoothedGain[trackCount] {};
     float smoothedPan[trackCount] {};
+    float smoothedSendA[trackCount] {};
+    float smoothedSendB[trackCount] {};
+    float smoothedWidth[trackCount] {};
     float smoothedMaster = 0.8f;
     bool smoothingPrimed = false;
+
+    // Aux returns: send sums are accumulated here per block, processed by
+    // AuxBus (tail state), then added to the master mix. Sized in prepare().
+    juce::AudioBuffer<float> auxABuffer;
+    juce::AudioBuffer<float> auxBBuffer;
+    AuxBus auxReverb;
+    AuxBus auxDelay;
 
     JUCE_DECLARE_NON_COPYABLE (AudioEngine)
 };

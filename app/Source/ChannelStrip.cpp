@@ -65,8 +65,8 @@ ChannelStrip::ChannelStrip (AudioEngine& engineToUse, int trackIndex)
         panKnob.setValueText (theme::panString (engine.trackPan (index)));
     };
 
-    sendA = trackSpec.sendA;
-    sendB = trackSpec.sendB;
+    sendA = engine.trackSendA (index);
+    sendB = engine.trackSendB (index);
     sendAKnob.setValue (sendA);
     sendBKnob.setValue (sendB);
     sendAKnob.setShowValue (true);
@@ -76,12 +76,14 @@ ChannelStrip::ChannelStrip (AudioEngine& engineToUse, int trackIndex)
 
     sendAKnob.onChange = [this] (double value)
     {
+        engine.setTrackSendA (index, static_cast<float> (value));
         sendA = static_cast<float> (value);
         sendAKnob.setValueText (juce::String (juce::roundToInt (value * 100.0)) + "%");
     };
 
     sendBKnob.onChange = [this] (double value)
     {
+        engine.setTrackSendB (index, static_cast<float> (value));
         sendB = static_cast<float> (value);
         sendBKnob.setValueText (juce::String (juce::roundToInt (value * 100.0)) + "%");
     };
@@ -146,6 +148,12 @@ void ChannelStrip::syncFromEngine()
 {
     muteButton.setToggleState (engine.trackMuted (index), juce::dontSendNotification);
     soloButton.setToggleState (engine.trackSolo (index), juce::dontSendNotification);
+    sendA = engine.trackSendA (index);
+    sendB = engine.trackSendB (index);
+    sendAKnob.setValue (sendA);
+    sendAKnob.setValueText (juce::String (juce::roundToInt (sendA * 100.0f)) + "%");
+    sendBKnob.setValue (sendB);
+    sendBKnob.setValueText (juce::String (juce::roundToInt (sendB * 100.0f)) + "%");
 
     const auto& trackSpec = spec();
 

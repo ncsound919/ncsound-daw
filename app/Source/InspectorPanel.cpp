@@ -58,10 +58,9 @@ InspectorPanel::InspectorPanel (AudioEngine& engineToUse)
 
     sendAKnob.setShowValue (true);
     sendAKnob.setLabel ("REVERB");
-    sendAKnob.setValueText (juce::String (juce::roundToInt (sendA[static_cast<size_t> (trackIndex)] * 100.0f)) + "%");
     sendAKnob.onChange = [this] (double value)
     {
-        sendA[static_cast<size_t> (trackIndex)] = static_cast<float> (value);
+        engine.setTrackSendA (trackIndex, static_cast<float> (value));
         sendAKnob.setValueText (juce::String (juce::roundToInt (value * 100.0)) + "%");
     };
 
@@ -69,14 +68,14 @@ InspectorPanel::InspectorPanel (AudioEngine& engineToUse)
     sendBKnob.setLabel ("DELAY");
     sendBKnob.onChange = [this] (double value)
     {
-        sendB[static_cast<size_t> (trackIndex)] = static_cast<float> (value);
+        engine.setTrackSendB (trackIndex, static_cast<float> (value));
         sendBKnob.setValueText (juce::String (juce::roundToInt (value * 100.0)) + "%");
     };
 
     widthKnob.setShowValue (true);
     widthKnob.onChange = [this] (double value)
     {
-        widths[static_cast<size_t> (trackIndex)] = static_cast<float> (value);
+        engine.setTrackWidth (trackIndex, static_cast<float> (value));
         widthKnob.setValueText (juce::String (juce::roundToInt (value * 100.0)) + "%");
     };
 
@@ -158,14 +157,14 @@ void InspectorPanel::setTrack (int newTrack)
     panKnob.setValue ((engine.trackPan (trackIndex) + 1.0) * 0.5);
     panKnob.setValueText (theme::panString (engine.trackPan (trackIndex)));
 
-    sendAKnob.setValue (sendA[static_cast<size_t> (trackIndex)]);
-    sendAKnob.setValueText (juce::String (juce::roundToInt (sendA[static_cast<size_t> (trackIndex)] * 100.0f)) + "%");
+    sendAKnob.setValue (engine.trackSendA (trackIndex));
+    sendAKnob.setValueText (juce::String (juce::roundToInt (engine.trackSendA (trackIndex) * 100.0f)) + "%");
 
-    sendBKnob.setValue (sendB[static_cast<size_t> (trackIndex)]);
-    sendBKnob.setValueText (juce::String (juce::roundToInt (sendB[static_cast<size_t> (trackIndex)] * 100.0f)) + "%");
+    sendBKnob.setValue (engine.trackSendB (trackIndex));
+    sendBKnob.setValueText (juce::String (juce::roundToInt (engine.trackSendB (trackIndex) * 100.0f)) + "%");
 
-    widthKnob.setValue (widths[static_cast<size_t> (trackIndex)]);
-    widthKnob.setValueText (juce::String (juce::roundToInt (widths[static_cast<size_t> (trackIndex)] * 100.0f)) + "%");
+    widthKnob.setValue (engine.trackWidth (trackIndex));
+    widthKnob.setValueText (juce::String (juce::roundToInt (engine.trackWidth (trackIndex) * 100.0f)) + "%");
 
     gainFader.setValue (juce::jlimit (0.0, 1.0, engine.trackGain (trackIndex) / 1.2));
     recordButton.setToggleState (armed[static_cast<size_t> (trackIndex)], juce::dontSendNotification);
@@ -193,6 +192,12 @@ void InspectorPanel::syncFromEngine()
 
     muteButton.setToggleState (engine.trackMuted (trackIndex), juce::dontSendNotification);
     soloButton.setToggleState (engine.trackSolo (trackIndex), juce::dontSendNotification);
+    sendAKnob.setValue (engine.trackSendA (trackIndex));
+    sendAKnob.setValueText (juce::String (juce::roundToInt (engine.trackSendA (trackIndex) * 100.0f)) + "%");
+    sendBKnob.setValue (engine.trackSendB (trackIndex));
+    sendBKnob.setValueText (juce::String (juce::roundToInt (engine.trackSendB (trackIndex) * 100.0f)) + "%");
+    widthKnob.setValue (engine.trackWidth (trackIndex));
+    widthKnob.setValueText (juce::String (juce::roundToInt (engine.trackWidth (trackIndex) * 100.0f)) + "%");
 }
 
 void InspectorPanel::resized()

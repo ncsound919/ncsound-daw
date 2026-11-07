@@ -32,6 +32,18 @@ AudioEngine::AudioEngine()
     for (auto& monitor : trackMonitor)
         monitor.store (true, std::memory_order_relaxed);
 
+    {
+        const auto& specs = sessionTracks();
+        for (int track = 0; track < demoTrackCount; ++track)
+        {
+            const auto sendA = specs[static_cast<size_t> (track)].sendA;
+            const auto sendB = specs[static_cast<size_t> (track)].sendB;
+            setTrackSendA (track, sendA);
+            setTrackSendB (track, sendB);
+            setTrackWidth (track, 0.5f);
+        }
+    }
+
     tempoSlot.owned = std::make_unique<nc::engine::TempoMap> (nc::engine::constantTempoMap (120.0));
     tempoSlot.live.store (tempoSlot.owned.get(), std::memory_order_release);
     midiSlot.owned = std::make_unique<std::vector<MidiTimelineClip>> ();
@@ -505,6 +517,39 @@ void AudioEngine::setTrackPan (int track, float pan)
 float AudioEngine::trackPan (int track) const
 {
     return juce::isPositiveAndBelow (track, trackCount) ? tracks[static_cast<size_t> (track)].pan.load() : 0.0f;
+}
+
+void AudioEngine::setTrackSendA (int track, float send)
+{
+    if (juce::isPositiveAndBelow (track, trackCount))
+        tracks[static_cast<size_t> (track)].sendA.store (juce::jlimit (0.0f, 1.0f, send));
+}
+
+float AudioEngine::trackSendA (int track) const
+{
+    return juce::isPositiveAndBelow (track, trackCount) ? tracks[static_cast<size_t> (track)].sendA.load() : 0.0f;
+}
+
+void AudioEngine::setTrackSendB (int track, float send)
+{
+    if (juce::isPositiveAndBelow (track, trackCount))
+        tracks[static_cast<size_t> (track)].sendB.store (juce::jlimit (0.0f, 1.0f, send));
+}
+
+float AudioEngine::trackSendB (int track) const
+{
+    return juce::isPositiveAndBelow (track, trackCount) ? tracks[static_cast<size_t> (track)].sendB.load() : 0.0f;
+}
+
+void AudioEngine::setTrackWidth (int track, float width)
+{
+    if (juce::isPositiveAndBelow (track, trackCount))
+        tracks[static_cast<size_t> (track)].width.store (juce::jlimit (0.0f, 1.0f, width));
+}
+
+float AudioEngine::trackWidth (int track) const
+{
+    return juce::isPositiveAndBelow (track, trackCount) ? tracks[static_cast<size_t> (track)].width.load() : 0.5f;
 }
 
 void AudioEngine::setGlobalPitch (const nc::engine::PitchStack& stack)
@@ -1272,6 +1317,8 @@ void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
     mixBuffer.setSize (2, juce::jmax (bufferSize.load(), 4096), false, true, false);
     instrumentBlock.setSize (2, juce::jmax (bufferSize.load(), 4096), false, true, false);
     trackBlock.setSize (2 * trackCount, juce::jmax (bufferSize.load(), 16384), false, true, false);
+    auxABuffer.setSize (2, juce::jmax (bufferSize.load(), 4096), false, true, false);
+    auxBBuffer.setSize (2, juce::jmax (bufferSize.load(), 4096), false, true, false);
     midiEventScratch.clear();
     midiEventScratch.reserve (4096);
 
@@ -1284,6 +1331,8 @@ void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
     masterRack.prepare (sampleRate.load(), maxBlock);
     preparedRackCount.store (active);
     inserts.prepare (sampleRate.load(), maxBlock, active);
+    auxReverb.prepare (sampleRate.load(), maxBlock, AuxBus::Kind::reverb);
+    auxDelay.prepare (sampleRate.load(), maxBlock, AuxBus::Kind::delay);
 }
 
 void AudioEngine::audioDeviceStopped()
@@ -1375,6 +1424,9 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
         {
             smoothedGain[track] = tracks[static_cast<size_t> (track)].gain.load();
             smoothedPan[track] = tracks[static_cast<size_t> (track)].pan.load();
+            smoothedSendA[track] = tracks[static_cast<size_t> (track)].sendA.load();
+            smoothedSendB[track] = tracks[static_cast<size_t> (track)].sendB.load();
+            smoothedWidth[track] = tracks[static_cast<size_t> (track)].width.load();
         }
 
         smoothedMaster = masterGainValue.load();
@@ -1728,6 +1780,13 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
             automatedPan[trackIndex] = lane->valueAt (blockBeat);
     }
 
+    auxABuffer.clear (0, juce::jmin (numSamples, auxABuffer.getNumSamples()));
+    auxBBuffer.clear (0, juce::jmin (numSamples, auxBBuffer.getNumSamples()));
+    auto* auxALeft = auxABuffer.getNumSamples() >= numSamples ? auxABuffer.getWritePointer (0) : nullptr;
+    auto* auxARight = auxABuffer.getNumSamples() >= numSamples ? auxABuffer.getWritePointer (1) : nullptr;
+    auto* auxBLeft = auxBBuffer.getNumSamples() >= numSamples ? auxBBuffer.getWritePointer (0) : nullptr;
+    auto* auxBRight = auxBBuffer.getNumSamples() >= numSamples ? auxBBuffer.getWritePointer (1) : nullptr;
+
     // Pass 3: native strip, fader/pan, click and master gain.
     for (int sample = 0; sample < numSamples; ++sample)
     {
@@ -1743,6 +1802,9 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
 
                 smoothedGain[trackIndex] += (automatedGain[trackIndex] - smoothedGain[trackIndex]) * smoothingCoefficient;
                 smoothedPan[trackIndex] += (automatedPan[trackIndex] - smoothedPan[trackIndex]) * smoothingCoefficient;
+                smoothedSendA[trackIndex] += (track.sendA.load() - smoothedSendA[trackIndex]) * smoothingCoefficient;
+                smoothedSendB[trackIndex] += (track.sendB.load() - smoothedSendB[trackIndex]) * smoothingCoefficient;
+                smoothedWidth[trackIndex] += (track.width.load() - smoothedWidth[trackIndex]) * smoothingCoefficient;
 
                 const auto audible = ! track.muted.load() && (! anySolo || track.soloed.load());
                 const auto gain = audible ? smoothedGain[trackIndex] : 0.0f;
@@ -1761,6 +1823,36 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
                 // The channel strip is baked into every track. It runs after
                 // the inserts/PDC and before the bus sum.
                 mixRack[static_cast<size_t> (trackIndex)].processSample (trackLeft, trackRight);
+
+                // Stereo width: mid/side scaling (0.5 = unity). Applied on the
+                // post-strip track bus before the sum.
+                {
+                    const auto mid = 0.5f * (trackLeft + trackRight);
+                    const auto side = 0.5f * (trackLeft - trackRight) * (smoothedWidth[trackIndex] * 2.0f);
+                    trackLeft = mid + side;
+                    trackRight = mid - side;
+                }
+
+                // Sends are post-fader (post-strip) taps. They do not mute with
+                // the dry bus: audible already zeroes the dry path, so a muted
+                // track sends silence — the user hears the dry bus, not a ghost
+                // reverb. That is the intended test contract.
+                if (audible)
+                {
+                    if (auxALeft != nullptr && auxARight != nullptr)
+                    {
+                        const auto sendA = smoothedSendA[trackIndex];
+                        auxALeft[sample] += trackLeft * sendA;
+                        auxARight[sample] += trackRight * sendA;
+                    }
+
+                    if (auxBLeft != nullptr && auxBRight != nullptr)
+                    {
+                        const auto sendB = smoothedSendB[trackIndex];
+                        auxBLeft[sample] += trackLeft * sendB;
+                        auxBRight[sample] += trackRight * sendB;
+                    }
+                }
 
                 left += trackLeft;
                 right += trackRight;
@@ -1806,6 +1898,43 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
 
             if (numOutputChannels > 1 && outputChannelData[1] != nullptr)
                 outputChannelData[1][sample] = juce::jlimit (-1.0f, 1.0f, right);
+        }
+    }
+
+    {
+        const auto auxReady = auxALeft != nullptr && auxBLeft != nullptr
+                              && auxABuffer.getNumSamples() >= numSamples
+                              && auxBBuffer.getNumSamples() >= numSamples;
+
+        if (auxReady)
+        {
+            juce::AudioBuffer<float> sendABuf (auxABuffer.getArrayOfWritePointers(), 2, numSamples);
+            juce::AudioBuffer<float> sendBBuf (auxBBuffer.getArrayOfWritePointers(), 2, numSamples);
+            auxReverb.process (sendABuf, numSamples);
+            auxDelay.process (sendBBuf, numSamples);
+
+            // Add the wet returns. The mix path and the oversized-block
+            // fallback both get the return so a send is audible either way.
+            if (mixLeft != nullptr)
+            {
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    mixLeft[i] += sendABuf.getSample (0, i) + sendBBuf.getSample (0, i);
+                    mixRight[i] += sendABuf.getSample (1, i) + sendBBuf.getSample (1, i);
+                }
+            }
+            else
+            {
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    if (outputChannelData[0] != nullptr)
+                        outputChannelData[0][i] += juce::jlimit (-1.0f, 1.0f,
+                            sendABuf.getSample (0, i) + sendBBuf.getSample (0, i));
+                    if (numOutputChannels > 1 && outputChannelData[1] != nullptr)
+                        outputChannelData[1][i] += juce::jlimit (-1.0f, 1.0f,
+                            sendABuf.getSample (1, i) + sendBBuf.getSample (1, i));
+                }
+            }
         }
     }
 
@@ -2222,6 +2351,8 @@ void AudioEngine::prepareForRender (double rate, int maxBlock)
     mixBuffer.setSize (2, juce::jmax (block, 4096), false, true, false);
     instrumentBlock.setSize (2, juce::jmax (block, 4096), false, true, false);
     trackBlock.setSize (2 * trackCount, juce::jmax (block, 16384), false, true, false);
+    auxABuffer.setSize (2, juce::jmax (block, 4096), false, true, false);
+    auxBBuffer.setSize (2, juce::jmax (block, 4096), false, true, false);
     midiEventScratch.clear();
     midiEventScratch.reserve (4096);
 
@@ -2233,6 +2364,8 @@ void AudioEngine::prepareForRender (double rate, int maxBlock)
     masterRack.prepare (rate, block);
     preparedRackCount.store (active);
     inserts.prepare (rate, block, active);
+    auxReverb.prepare (rate, block, AuxBus::Kind::reverb);
+    auxDelay.prepare (rate, block, AuxBus::Kind::delay);
 }
 
 bool AudioEngine::renderToWav (const juce::File& destination,

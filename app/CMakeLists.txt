@@ -41,6 +41,7 @@ target_sources(NCMixRackTests PRIVATE
     Source/BuiltinSynth.cpp
     Source/MidiRecorder.cpp
     Source/TrackInsertRack.cpp
+    Source/AuxBus.cpp
     Source/Automation.cpp
     Source/MixPlan.cpp
     Source/PluginCatalog.cpp
@@ -52,6 +53,7 @@ target_sources(NCMixRackTests PRIVATE
     Source/ExportTests.cpp
     Source/RecordingTests.cpp
     Source/AutomationTests.cpp
+    Source/SendsTests.cpp
     Source/MixPlanTests.cpp)
 
 target_link_libraries(NCMixRackTests PRIVATE
@@ -150,6 +152,8 @@ target_sources(NCSoundHub PRIVATE
     Source/PianoRoll.cpp
     Source/PianoRoll.h
     Source/TrackInsertRack.cpp
+    Source/AuxBus.cpp
+    Source/AuxBus.h
     Source/Automation.cpp
     Source/MixPlan.cpp
     Source/MixPlan.h

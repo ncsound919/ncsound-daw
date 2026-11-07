@@ -1647,6 +1647,9 @@ void MainComponent::writeProject (const juce::File& file)
         state.pan = engine.trackPan (track);
         state.muted = engine.trackMuted (track);
         state.soloed = engine.trackSolo (track);
+        state.sendA = engine.trackSendA (track);
+        state.sendB = engine.trackSendB (track);
+        state.width = engine.trackWidth (track);
 
         for (int slot = 0; slot < 4; ++slot)
             state.inserts[static_cast<size_t> (slot)] = engine.trackInsertState (track, slot);
@@ -1778,6 +1781,9 @@ void MainComponent::readProject (const juce::File& file)
         engine.setTrackPan (track, static_cast<float> (state.pan));
         engine.setTrackMuted (track, state.muted);
         engine.setTrackSolo (track, state.soloed);
+        engine.setTrackSendA (track, static_cast<float> (state.sendA));
+        engine.setTrackSendB (track, static_cast<float> (state.sendB));
+        engine.setTrackWidth (track, static_cast<float> (state.width));
     }
 
     auto insertRestored = false;
