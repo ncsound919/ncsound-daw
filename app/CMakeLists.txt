@@ -107,6 +107,7 @@ set_target_properties(NCScannerProbe PROPERTIES EXCLUDE_FROM_ALL TRUE)
 juce_add_gui_app(NCSoundHub
     PRODUCT_NAME "NCSound Music Hub"
     COMPANY_NAME "Overlay365"
+    NEEDS_WEBVIEW2 TRUE
     BUNDLE_ID "com.overlay365.ncsoundhub")
 
 juce_add_binary_data(NCSoundFonts SOURCES
@@ -114,6 +115,24 @@ juce_add_binary_data(NCSoundFonts SOURCES
     ../assets/fonts/SpaceGrotesk-Regular.ttf
     ../assets/fonts/SpaceGrotesk-Bold.ttf
     ../assets/fonts/SpaceMono-Bold.ttf)
+
+# React pitch UI (VST DAW/ui, built with Vite) embedded via BinaryData and
+# served to the WebBrowserComponent through a ResourceProvider.
+# If ui/dist is stale, rebuild it:  cd ui; npm install; npm run build
+set(VSTDAW_WEBUI_DIST "${CMAKE_CURRENT_SOURCE_DIR}/../ui/dist")
+
+if(NOT EXISTS "${VSTDAW_WEBUI_DIST}/index.html")
+    message(FATAL_ERROR
+        "ui/dist/index.html not found. Run 'npm install && npm run build' in ${CMAKE_CURRENT_SOURCE_DIR}/../ui.")
+endif()
+
+file(GLOB_RECURSE VSTDAW_WEBUI_DIST_FILES CONFIGURE_DEPENDS "${VSTDAW_WEBUI_DIST}/*")
+list(FILTER VSTDAW_WEBUI_DIST_FILES EXCLUDE REGEX "\\.map$")
+
+juce_add_binary_data(VstawWebUI
+    NAMESPACE VstawWeb
+    HEADER_NAME VstawWeb.h
+    SOURCES ${VSTDAW_WEBUI_DIST_FILES})
 
 target_sources(NCSoundHub PRIVATE
     Source/Main.cpp
@@ -124,6 +143,7 @@ target_sources(NCSoundHub PRIVATE
     Source/MixRackEditor.h
     Source/MainComponent.cpp
     Source/MainComponent.h
+    Source/WebViewBridge.cpp
     Source/AudioEngine.cpp
     Source/AudioEngine.h
     Source/ArrangeView.cpp
@@ -154,6 +174,8 @@ target_sources(NCSoundHub PRIVATE
     Source/TrackInsertRack.cpp
     Source/AuxBus.cpp
     Source/AuxBus.h
+    Source/AutomationLaneView.cpp
+    Source/AutomationLaneView.h
     Source/Automation.cpp
     Source/MixPlan.cpp
     Source/MixPlan.h
@@ -171,9 +193,17 @@ target_sources(NCSoundHub PRIVATE
     Source/Widgets.h)
 
 target_compile_definitions(NCSoundHub PRIVATE
-    JUCE_WEB_BROWSER=0
+    JUCE_WEB_BROWSER=1
+    JUCE_USE_WIN_WEBVIEW2=1
+    JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING=1
     JUCE_USE_CURL=0
     JUCE_PLUGINHOST_VST3=1)
+
+# Windows: declare DPI awareness in the app manifest so the WebView content
+# is not bitmap-stretched on scaled displays.
+if(MSVC)
+    set_target_properties(NCSoundHub PROPERTIES VS_DPI_AWARE "PerMonitor")
+endif()
 
 # Source strings use UTF-8 punctuation (middle dot, en dash).
 if (MSVC)
@@ -182,6 +212,7 @@ endif()
 
 target_link_libraries(NCSoundHub PRIVATE
     NCSoundFonts
+    VstawWebUI
     nc_mixrack
     nc_engine
     juce::juce_audio_utils

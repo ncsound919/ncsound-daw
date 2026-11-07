@@ -565,6 +565,40 @@ inline std::string toJson (const ProjectDocument& document)
         out += '}';
     }
 
+    out += "],\"automation\":[";
+
+    for (size_t laneIndex = 0; laneIndex < document.automation.size(); ++laneIndex)
+    {
+        const auto& lane = document.automation[laneIndex];
+
+        if (laneIndex != 0)
+            out += ',';
+
+        out += "{\"track\":";
+        out += std::to_string (lane.track);
+        out += ",\"param\":";
+        json::writeString (out, lane.param);
+        out += ",\"points\":[";
+
+        for (size_t pointIndex = 0; pointIndex < lane.points.size(); ++pointIndex)
+        {
+            const auto& point = lane.points[pointIndex];
+
+            if (pointIndex != 0)
+                out += ',';
+
+            out += "{\"t\":";
+            json::writeNumber (out, point.beats);
+            out += ",\"v\":";
+            json::writeNumber (out, point.value);
+            out += ",\"curve\":";
+            json::writeString (out, point.curve);
+            out += '}';
+        }
+
+        out += "]}";
+    }
+
     out += "]}";
     return out;
 }
@@ -798,6 +832,38 @@ inline std::optional<ProjectDocument> fromJson (const std::string& text)
 
             if (clip.isMidi || ! clip.assetPath.empty())
                 document.clips.push_back (std::move (clip));
+        }
+    }
+
+    if (const auto* automation = root->find ("automation");
+        automation != nullptr && automation->type == json::Value::Type::array)
+    {
+        for (const auto& laneEntry : automation->array)
+        {
+            if (laneEntry.type != json::Value::Type::object)
+                continue;
+
+            AutomationLaneState lane;
+            lane.track = detail::intField (laneEntry, "track", 0);
+            lane.param = detail::stringField (laneEntry, "param", "volume");
+
+            if (const auto* points = laneEntry.find ("points");
+                points != nullptr && points->type == json::Value::Type::array)
+            {
+                for (const auto& pointEntry : points->array)
+                {
+                    if (pointEntry.type != json::Value::Type::object)
+                        continue;
+
+                    AutomationPointState point;
+                    point.beats = detail::numberField (pointEntry, "t", 0.0);
+                    point.value = detail::numberField (pointEntry, "v", 0.0);
+                    point.curve = detail::stringField (pointEntry, "curve", "linear");
+                    lane.points.push_back (point);
+                }
+            }
+
+            document.automation.push_back (std::move (lane));
         }
     }
 

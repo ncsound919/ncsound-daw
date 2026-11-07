@@ -4,6 +4,7 @@
 #include "Automation.h"
 
 #include <cmath>
+#include <string>
 #include <vector>
 
 using nc::AutomationLane;
@@ -85,6 +86,31 @@ TEST_CASE ("a point can be removed and the lane has a hard capacity", "[automati
 
     REQUIRE (full.numPoints() == AutomationLane::maxPoints);
     REQUIRE_FALSE (full.addPoint (AutomationLane::maxPoints + 1.0, 0.5f));
+}
+
+TEST_CASE ("step holds the previous value and smooth eases at both ends", "[automation]")
+{
+    AutomationLane stepLane;
+    REQUIRE (stepLane.addPoint (0.0, 0.2f, AutomationLane::Curve::step));
+    REQUIRE (stepLane.addPoint (4.0, 0.6f));
+    REQUIRE (stepLane.valueAt (2.0) == 0.2f);
+    REQUIRE (stepLane.valueAt (3.9) == 0.2f);
+    REQUIRE (stepLane.valueAt (4.0) == 0.6f);
+
+    AutomationLane smoothLane;
+    REQUIRE (smoothLane.addPoint (0.0, 0.0f, AutomationLane::Curve::smooth));
+    REQUIRE (smoothLane.addPoint (4.0, 1.0f));
+    REQUIRE (smoothLane.valueAt (0.0) == 0.0f);
+    REQUIRE (smoothLane.valueAt (4.0) == 1.0f);
+    REQUIRE (std::abs (smoothLane.valueAt (2.0) - 0.5f) < 1.0e-6f);
+    // Smoothstep is slower than linear early on.
+    REQUIRE (smoothLane.valueAt (1.0) < smoothLane.valueAt (2.0) - 0.1f);
+
+    REQUIRE (AutomationLane::curveFromName ("step") == AutomationLane::Curve::step);
+    REQUIRE (AutomationLane::curveFromName ("smooth") == AutomationLane::Curve::smooth);
+    REQUIRE (AutomationLane::curveFromName ("bogus") == AutomationLane::Curve::linear);
+    REQUIRE (AutomationLane::curveFromName (nullptr) == AutomationLane::Curve::linear);
+    REQUIRE (std::string (AutomationLane::curveName (AutomationLane::Curve::step)) == "step");
 }
 
 TEST_CASE ("setPoints sorts a caller's list and drops duplicates", "[automation]")

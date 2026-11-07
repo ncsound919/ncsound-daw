@@ -49,6 +49,16 @@ ProjectDocument richDocument()
     doc.masterInsert.identifier = "VST3-abc123";
     doc.masterInsert.format = "VST3";
     doc.masterInsert.stateBase64 = "AAECAwQ=";
+
+    AutomationLaneState lane;
+    lane.track = 1;
+    lane.param = "volume";
+    lane.points = { { 0.0, 0.25, "linear" }, { 8.0, 0.75, "step" }, { 16.0, 0.5, "smooth" } };
+    doc.automation = { lane };
+
+    doc.tracks[0].sendA = 0.3;
+    doc.tracks[0].sendB = 0.15;
+    doc.tracks[0].width = 0.7;
     return doc;
 }
 } // namespace
@@ -70,6 +80,16 @@ TEST_CASE ("a full project survives a write and read unchanged")
     REQUIRE (doc.tracks[1].name == "Drums");
     REQUIRE (doc.tracks[1].soloed);
     REQUIRE (std::abs (doc.tracks[0].pan - 0.25) < 1e-9);
+    REQUIRE (std::abs (doc.tracks[0].sendA - 0.3) < 1e-9);
+    REQUIRE (std::abs (doc.tracks[0].sendB - 0.15) < 1e-9);
+    REQUIRE (std::abs (doc.tracks[0].width - 0.7) < 1e-9);
+    REQUIRE (doc.automation.size() == 1);
+    REQUIRE (doc.automation[0].track == 1);
+    REQUIRE (doc.automation[0].param == "volume");
+    REQUIRE (doc.automation[0].points.size() == 3);
+    REQUIRE (doc.automation[0].points[1].curve == "step");
+    REQUIRE (doc.automation[0].points[2].curve == "smooth");
+    REQUIRE (std::abs (doc.automation[0].points[1].value - 0.75) < 1e-9);
     REQUIRE (doc.tracks[0].inserts[0].identifier == "VST3-track-one");
     REQUIRE (doc.tracks[0].inserts[0].descriptionXml == "<PLUGIN name=\"Lead EQ\" />");
     REQUIRE (doc.tracks[0].inserts[0].format == "VST3");

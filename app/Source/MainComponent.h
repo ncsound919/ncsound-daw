@@ -1,11 +1,15 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <juce_gui_extra/juce_gui_extra.h>
 
 #include <array>
+#include <optional>
+#include <memory>
 
 #include "ArrangeView.h"
 #include "AudioEngine.h"
+#include "AutomationLaneView.h"
 #include "BrowserOverlay.h"
 #include "MixerPanel.h"
 #include "PluginEditorWindow.h"
@@ -50,6 +54,12 @@ private:
     void writeProject (const juce::File& file);
     void readProject (const juce::File& file);
     void setStatus (juce::String message, bool alert = false, double seconds = 5.0);
+    void setPitchViewOpen (bool shouldOpen);
+    juce::WebBrowserComponent::Options buildWebOptions();
+    std::optional<juce::WebBrowserComponent::Resource> getWebResource (const juce::String& path);
+    juce::var buildState() const;
+    juce::var buildPitch() const;
+    void pushState();
     void paintHeader (juce::Graphics&);
     void paintStatus (juce::Graphics&);
     int menuAt (juce::Point<int>) const;
@@ -62,6 +72,8 @@ private:
     ArrangeView arrange;
     MixerPanel mixer;
     BrowserOverlay browser;
+    std::unique_ptr<juce::WebBrowserComponent> webView;
+    bool pitchOpen = false;
 
     HardwareButton newButton { HardwareButton::Icon::plus, "NEW" };
     HardwareButton settingsButton { HardwareButton::Icon::settings };

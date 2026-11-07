@@ -142,6 +142,7 @@ public:
     //==========================================================================
     void setTrackAutomation (int track, AutomationParam param, const AutomationLane& lane);
     void clearTrackAutomation (int track, AutomationParam param);
+    AutomationLane trackAutomation (int track, AutomationParam param) const;
     float automationValue (int track, AutomationParam param, double beats) const;
     float trackPan (int track) const;
     void setTrackMuted (int track, bool muted);

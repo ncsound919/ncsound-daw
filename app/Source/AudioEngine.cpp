@@ -2963,6 +2963,17 @@ void AudioEngine::clearTrackAutomation (int track, AutomationParam param)
     setTrackAutomation (track, param, {});
 }
 
+AutomationLane AudioEngine::trackAutomation (int track, AutomationParam param) const
+{
+    if (track < 0 || track >= trackCount)
+        return {};
+
+    const auto& slot = (param == AutomationParam::Pan ? panAutomation : volumeAutomation)
+                           [static_cast<size_t> (track)];
+    const auto* lane = slot.live.load (std::memory_order_acquire);
+    return lane != nullptr ? *lane : AutomationLane {};
+}
+
 float AudioEngine::automationValue (int track, AutomationParam param, double beats) const
 {
     if (track < 0 || track >= trackCount)

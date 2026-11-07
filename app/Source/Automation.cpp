@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace nc
 {
@@ -10,7 +11,31 @@ namespace
 constexpr double sameBeat = 1.0e-9;
 }
 
-bool AutomationLane::addPoint (double beats, float value)
+const char* AutomationLane::curveName (Curve curve)
+{
+    switch (curve)
+    {
+        case Curve::step: return "step";
+        case Curve::smooth: return "smooth";
+        default: return "linear";
+    }
+}
+
+AutomationLane::Curve AutomationLane::curveFromName (const char* name)
+{
+    if (name == nullptr)
+        return Curve::linear;
+
+    if (std::strcmp (name, "step") == 0)
+        return Curve::step;
+
+    if (std::strcmp (name, "smooth") == 0)
+        return Curve::smooth;
+
+    return Curve::linear;
+}
+
+bool AutomationLane::addPoint (double beats, float value, Curve curve)
 {
     if (! std::isfinite (beats) || ! std::isfinite (value) || beats < 0.0)
         return false;
@@ -20,6 +45,7 @@ bool AutomationLane::addPoint (double beats, float value)
         if (std::abs (points[i].beats - beats) <= sameBeat)
         {
             points[i].value = value;
+            points[i].curve = curve;
             return true;
         }
 
@@ -31,7 +57,9 @@ bool AutomationLane::addPoint (double beats, float value)
             for (int j = count; j > i; --j)
                 points[j] = points[j - 1];
 
-            points[i] = { beats, value };
+            points[i].beats = beats;
+            points[i].value = value;
+            points[i].curve = curve;
             ++count;
             return true;
         }
@@ -40,7 +68,10 @@ bool AutomationLane::addPoint (double beats, float value)
     if (count >= maxPoints)
         return false;
 
-    points[count++] = { beats, value };
+    points[count].beats = beats;
+    points[count].value = value;
+    points[count].curve = curve;
+    ++count;
     return true;
 }
 
@@ -133,8 +164,25 @@ float AutomationLane::valueAt (double beats) const
                 return points[i].value;
 
             const auto position = (beats - points[i - 1].beats) / span;
-            return points[i - 1].value
-                   + (points[i].value - points[i - 1].value) * static_cast<float> (position);
+
+            switch (points[i - 1].curve)
+            {
+                case Curve::step:
+                    return points[i - 1].value;
+
+                case Curve::smooth:
+                    {
+                        // Smoothstep (3t^2 - 2t^3): zero slope at both ends.
+                        const auto t = static_cast<float> (position);
+                        const auto eased = t * t * (3.0f - 2.0f * t);
+                        return points[i - 1].value
+                               + (points[i].value - points[i - 1].value) * eased;
+                    }
+
+                default:
+                    return points[i - 1].value
+                           + (points[i].value - points[i - 1].value) * static_cast<float> (position);
+            }
         }
     }
 

@@ -25,8 +25,10 @@ namespace nc::engine
     files load with empty lists. v6 adds pitch ("pitch" global + "pitch" /
     "instrumentPitch" per track); older files load with defaults (0/0/440).
     v7 adds per-track sends + width ("sendA"/"sendB"/"width"); older files
-    load with 0/0/0.5 (no reverb/delay send, neutral width). */
-inline constexpr int projectSchemaVersion = 7;
+    load with 0/0/0.5 (no reverb/delay send, neutral width). v8 adds
+    document-level automation lanes ("automation"); older files load with
+    no lanes (faders stay manual). */
+inline constexpr int projectSchemaVersion = 8;
 
 /** Per-slot cap for opaque plugin data. A hostile or truncated project must not
     make the loader hold an unbounded XML/state string. */
@@ -58,6 +60,20 @@ struct PluginSlotState
     bool bypassed = false;
 
     bool isEmpty() const noexcept { return identifier.empty() && descriptionXml.empty(); }
+};
+
+struct AutomationPointState
+{
+    double beats = 0.0;
+    double value = 0.0;
+    std::string curve = "linear"; // step | linear | smooth (v8)
+};
+
+struct AutomationLaneState
+{
+    int track = 0;
+    std::string param = "volume"; // volume | pan (v8)
+    std::vector<AutomationPointState> points;
 };
 
 struct TrackState
@@ -110,6 +126,7 @@ struct ProjectDocument
 
     std::vector<TrackState> tracks;
     std::vector<ClipState> clips;
+    std::vector<AutomationLaneState> automation; // v8; empty for older files
 };
 
 /** A project written by a newer build cannot be trusted to load. */
@@ -255,6 +272,53 @@ inline ProjectDocument sanitize (ProjectDocument document)
     }
 
     document.clips = std::move (kept);
+
+    {
+        std::vector<AutomationLaneState> lanes;
+        lanes.reserve (document.automation.size());
+
+        for (auto& lane : document.automation)
+        {
+            if (lane.track < 0 || lane.track >= nc::limits::maxTracks)
+                continue;
+
+            if (lane.param != "volume" && lane.param != "pan")
+                continue;
+
+            std::vector<AutomationPointState> points;
+            points.reserve (lane.points.size());
+
+            for (auto& point : lane.points)
+            {
+                if (! std::isfinite (point.beats) || point.beats < 0.0)
+                    continue;
+
+                if (! std::isfinite (point.value))
+                    continue;
+
+                point.beats = std::clamp (point.beats, 0.0, static_cast<double> (nc::limits::maxBars) * 4.0);
+
+                if (point.curve != "step" && point.curve != "linear" && point.curve != "smooth")
+                    point.curve = "linear";
+
+                points.push_back (point);
+
+                if (static_cast<int> (points.size()) >= 512)
+                    break;
+            }
+
+            if (points.empty())
+                continue;
+
+            lane.points = std::move (points);
+            lanes.push_back (std::move (lane));
+
+            if (static_cast<int> (lanes.size()) >= nc::limits::maxTracks * 2)
+                break;
+        }
+
+        document.automation = std::move (lanes);
+    }
 
     for (auto& track : document.tracks)
     {

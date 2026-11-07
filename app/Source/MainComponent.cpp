@@ -49,6 +49,13 @@ MainComponent::MainComponent (juce::File registryFile)
     addAndMakeVisible (newButton);
     addAndMakeVisible (settingsButton);
 
+    // React pitch UI (WebView2). Hidden until View > Pitch UI is chosen;
+    // it overlays the body like the plugin browser and talks to AudioEngine
+    // through the routes in WebViewBridge.cpp.
+    webView = std::make_unique<juce::WebBrowserComponent> (buildWebOptions());
+    addChildComponent (webView.get());
+    webView->setVisible (false);
+
     arrange.onTrackSelected = [this] (int track)
     {
         setSelectedTrack (track);
@@ -233,6 +240,8 @@ MainComponent::MainComponent (juce::File registryFile)
     statusMessage = defaultStatusText();
     setView (View::arrange);
     setSelectedTrack (0);
+    if (webView != nullptr)
+        webView->goToURL (juce::WebBrowserComponent::getResourceProviderRoot());
     startTimerHz (30);
 }
 
@@ -314,6 +323,8 @@ void MainComponent::setSelectedTrack (int track)
     selectedTrack = juce::jlimit (0, juce::jmax (0, engine.getActiveTrackCount() - 1), track);
     arrange.setSelectedTrack (selectedTrack);
     mixer.setSelectedTrack (selectedTrack);
+    if (pitchOpen)
+        pushState();
 }
 
 void MainComponent::setBrowserOpen (bool shouldOpen, int targetTrack, int targetSlot)
@@ -387,6 +398,8 @@ void MainComponent::resized()
     arrange.setBounds (bodyArea);
     mixer.setBounds (bodyArea);
     browser.setBounds (bodyArea);
+    if (webView != nullptr)
+        webView->setBounds (bodyArea);
 
     auto header = headerArea.reduced (16, 0);
     logoArea = header.removeFromLeft (216);
@@ -782,6 +795,7 @@ void MainComponent::openMenu (int menuIndex)
             menu.addSectionHeader ("MIDI");
             menu.addItem (2050, "Edit MIDI Clip (Piano Roll)", arrange.hasSelectedClip());
             menu.addItem (2051, "Import MIDI File...", true);
+            menu.addItem (2052, "Edit Automation Lanes...");
             menu.addSeparator();
             menu.addSectionHeader ("AUDIOSUITE");
             menu.addItem (2100, "LoFi", arrange.hasSelectedClip());
@@ -833,6 +847,7 @@ void MainComponent::openMenu (int menuIndex)
             menu.addItem (3002, "Mix", true, view == View::mix);
             menu.addSeparator();
             menu.addItem (3003, "Plug-in Browser", true, browserOpen);
+            menu.addItem (3006, "Pitch UI (React)", true, pitchOpen);
             menu.addSeparator();
             menu.addItem (3004, "Zoom In");
             menu.addItem (3005, "Zoom Out");
@@ -1247,6 +1262,7 @@ void MainComponent::handleMenuResult (int result)
         case 2006: arrange.duplicateSelected(); break;
         case 2007: arrange.deleteSelected(); break;
         case 2050: arrange.openPianoRollForSelected(); break;
+        case 2052: new AutomationLaneView (engine, selectedTrack); break;
         case 2051:
         {
             auto chooser = std::make_shared<juce::FileChooser> ("Import a MIDI file", juce::File::getSpecialLocation (juce::File::userHomeDirectory), "*.mid;*.midi");
@@ -1328,6 +1344,7 @@ void MainComponent::handleMenuResult (int result)
         case 3001: setView (View::arrange); break;
         case 3002: setView (View::mix); break;
         case 3003: setBrowserOpen (! browserOpen); break;
+        case 3006: setPitchViewOpen (! pitchOpen); break;
         case 3004: arrange.zoomIn(); break;
         case 3005: arrange.zoomOut(); break;
 
@@ -1637,6 +1654,7 @@ void MainComponent::writeProject (const juce::File& file)
     document.bpm = engine.getBpm();
     document.tempoMap = engine.tempoMap();
     document.markers = engine.markers();
+    document.globalPitch = engine.globalPitchStack();
     document.activeTrackCount = engine.getActiveTrackCount();
 
     for (auto track = 0; track < document.activeTrackCount; ++track)
@@ -1650,6 +1668,8 @@ void MainComponent::writeProject (const juce::File& file)
         state.sendA = engine.trackSendA (track);
         state.sendB = engine.trackSendB (track);
         state.width = engine.trackWidth (track);
+        state.pitch = engine.trackPitchStack (track);
+        state.instrumentPitch = engine.instrumentPitchStack (track);
 
         for (int slot = 0; slot < 4; ++slot)
             state.inserts[static_cast<size_t> (slot)] = engine.trackInsertState (track, slot);
@@ -1672,6 +1692,30 @@ void MainComponent::writeProject (const juce::File& file)
         state.ccs = clip.ccs;
         state.bends = clip.bends;
         document.clips.push_back (std::move (state));
+    }
+
+    for (auto track = 0; track < document.activeTrackCount; ++track)
+    {
+        for (const auto param : { AutomationParam::Volume, AutomationParam::Pan })
+        {
+            const auto lane = engine.trackAutomation (track, param);
+
+            if (lane.empty())
+                continue;
+
+            nc::engine::AutomationLaneState state;
+            state.track = track;
+            state.param = param == AutomationParam::Volume ? "volume" : "pan";
+
+            for (int pointIndex = 0; pointIndex < lane.numPoints(); ++pointIndex)
+            {
+                const auto point = lane.pointAt (pointIndex);
+                state.points.push_back ({ point.beats, static_cast<double> (point.value),
+                                          AutomationLane::curveName (point.curve) });
+            }
+
+            document.automation.push_back (std::move (state));
+        }
     }
 
     if (engine.hasMasterPlugin() || engine.masterInsertIsMissing())
@@ -1784,6 +1828,37 @@ void MainComponent::readProject (const juce::File& file)
         engine.setTrackSendA (track, static_cast<float> (state.sendA));
         engine.setTrackSendB (track, static_cast<float> (state.sendB));
         engine.setTrackWidth (track, static_cast<float> (state.width));
+        engine.setTrackPitch (track, state.pitch);
+        engine.setInstrumentPitch (track, state.instrumentPitch);
+    }
+
+    engine.setGlobalPitch (document->globalPitch);
+    if (pitchOpen)
+        pushState();
+
+    for (auto track = 0; track < AudioEngine::trackCount; ++track)
+    {
+        engine.clearTrackAutomation (track, AutomationParam::Volume);
+        engine.clearTrackAutomation (track, AutomationParam::Pan);
+    }
+
+    for (const auto& laneState : document->automation)
+    {
+        if (laneState.track < 0 || laneState.track >= AudioEngine::trackCount)
+            continue;
+
+        AutomationLane lane;
+
+        for (const auto& point : laneState.points)
+            lane.addPoint (point.beats, static_cast<float> (point.value),
+                           AutomationLane::curveFromName (point.curve.c_str()));
+
+        if (lane.empty())
+            continue;
+
+        engine.setTrackAutomation (laneState.track,
+                                   laneState.param == "pan" ? AutomationParam::Pan : AutomationParam::Volume,
+                                   lane);
     }
 
     auto insertRestored = false;
