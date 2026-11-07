@@ -2,6 +2,8 @@
 
 #include <juce_core/juce_core.h>
 
+#include <nc/engine/PluginPolicy.hpp>
+
 #include <vector>
 
 namespace nc
@@ -21,6 +23,11 @@ struct PluginInfo
     juce::String kind;
     juce::String source;
     juce::String note;
+
+    /** Product name the installed VST3 bundle reports. When set, the catalog
+        links this registry row to that scanned description, so one plugin shows
+        up once and loads by its stable registry id. */
+    juce::String vst3BundleName;
     PluginStatus status = PluginStatus::external;
 
     bool isInstrument() const { return kind == "instrument"; }
@@ -39,5 +46,8 @@ struct Registry
 Registry loadRegistry (const juce::File& jsonFile);
 
 juce::String statusName (PluginStatus status);
+
+/** Instantiation tier for a registry status, shared with the load path. */
+nc::engine::PluginTier pluginTier (PluginStatus status);
 
 } // namespace nc

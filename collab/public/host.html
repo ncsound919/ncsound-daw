@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b0b0b" />
+    <title>NCSound Session Host</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="host">
+    <div class="host-shell">
+      <header class="host-top">
+        <div class="host-brand">NCSOUND <span>SESSION HOST</span></div>
+        <div class="join-code">
+          <span class="k">SESSION CODE</span>
+          <strong id="code">········</strong>
+          <button id="copyCode" class="ghost small" type="button">COPY</button>
+          <button id="newCode" class="ghost small" type="button">NEW</button>
+          <span id="expiry" class="expiry">—</span>
+        </div>
+        <div class="host-status"><i id="statusDot"></i><span id="statusText">CONNECTING</span></div>
+      </header>
+
+      <main class="host-main">
+        <section class="console">
+          <div class="console-head">
+            <h2>MIX CONSOLE</h2>
+            <span id="trackCount" class="muted"></span>
+          </div>
+          <div id="strips" class="strips"></div>
+          <div class="transport">
+            <button id="playBtn" class="transport-btn" type="button" aria-label="Play">▶</button>
+            <button id="stopBtn" class="transport-btn" type="button" aria-label="Stop">■</button>
+            <button id="recBtn" class="transport-btn rec" type="button" aria-label="Record">●</button>
+            <b id="clockValue" class="clock-value">1.1.000</b>
+            <label class="tempo-field">TEMPO <input id="tempoInput" type="number" min="20" max="300" step="1" value="120" /> BPM</label>
+          </div>
+        </section>
+
+        <aside class="side">
+          <section class="panel">
+            <h3>GUESTS <span id="guestCount">0</span></h3>
+            <div id="guests" class="guest-list"><p class="muted">No one has joined yet.</p></div>
+          </section>
+          <section class="panel">
+            <h3>JOIN REQUESTS</h3>
+            <div id="requests" class="request-list"><p class="muted">Approvals appear here.</p></div>
+          </section>
+          <section class="panel">
+            <h3>PHONE REMOTE</h3>
+            <code id="phoneUrl" class="phone-url">—</code>
+            <p class="muted small">Same Wi-Fi network. Open the address, then enter the session code above.</p>
+          </section>
+          <button id="endBtn" class="danger" type="button">END SESSION</button>
+        </aside>
+      </main>
+    </div>
+
+    <div id="ended" class="ended" hidden>
+      <div class="join-card">
+        <div class="logo">NCSOUND<span>REMOTE</span></div>
+        <h2>SESSION ENDED</h2>
+        <p class="hint">Guests have been disconnected.</p>
+        <button id="reloadBtn" class="primary" type="button">START A NEW SESSION</button>
+      </div>
+    </div>
+
+    <script type="module" src="/host.js"></script>
+  </body>
+</html>

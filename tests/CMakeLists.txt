@@ -2,7 +2,7 @@ CPMAddPackage("gh:catchorg/Catch2@3.7.1")
 
 list(APPEND CMAKE_MODULE_PATH "${Catch2_SOURCE_DIR}/extras")
 
-add_executable(nc_tests test_smoke.cpp test_slice_planner.cpp)
+add_executable(nc_tests test_smoke.cpp test_slice_planner.cpp test_clip_timeline.cpp test_project_limits.cpp test_plugin_policy.cpp test_stream_window.cpp test_audiosuite.cpp test_sync_clock.cpp test_latency_comp.cpp test_project_state.cpp test_media_collect.cpp test_project_json.cpp test_midi_clip.cpp)
 target_link_libraries(nc_tests PRIVATE nc_engine Catch2::Catch2WithMain)
 
 include(CTest)

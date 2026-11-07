@@ -1,0 +1,8 @@
+JUCE 8.0.17-security
+origin:  https://github.com/juce-framework/JUCE.git
+tag:     8.0.17-security
+branch:  security-patches/v8
+commit:  dabd5ad13cd869cba41046947fffc8e5ce5cd662
+pinned:  2026-11-07
+why:     bounds JSON/ValueTree nesting depth, confines ZipFile symlinks,
+         hardens WAV/AIFF and XmlDocument parsing

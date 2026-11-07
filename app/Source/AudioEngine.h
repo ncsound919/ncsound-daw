@@ -1,16 +1,54 @@
 #pragma once
 
 #include <juce_audio_devices/juce_audio_devices.h>
+#include <juce_audio_formats/juce_audio_formats.h>
+
+#include "MixRack.h"
+#include "PluginHost.h"
+#include "PluginCatalog.h"
+#include "TrackInsertRack.h"
+#include "Automation.h"
+
+#include <nc/engine/AudioSuite.hpp>
+#include <nc/engine/ProjectLimits.hpp>
+#include <nc/engine/SyncClock.hpp>
 
 #include <array>
+#include <cstdint>
 #include <atomic>
+#include <functional>
+#include <memory>
+#include <vector>
 
 namespace nc
 {
 class AudioEngine final : private juce::AudioIODeviceCallback
 {
 public:
-    static constexpr int trackCount = 8;
+    // The engine allocates the full ceiling once; the session shows a subset
+    // the user grows with Track > Add. Nothing resizes on the audio thread.
+    static constexpr int trackCount = nc::limits::maxTracks;
+    static_assert (trackCount <= nc::limits::maxTracks,
+                   "track count must fit central limits");
+
+    // Only the shipped demo record generates assets; the remaining rows are
+    // empty until audio is imported, which keeps startup RAM bounded.
+    static constexpr int demoTrackCount = nc::limits::defaultActiveTracks;
+
+    /** A clip on the project timeline. Bars are 1-based; source starts at
+        sourceOffsetSeconds inside the referenced asset. The audio callback
+        never sees this message-thread object. */
+    struct TimelineClip
+    {
+        int assetId = -1;
+        int track = 0;
+        double startBar = 1.0;
+        double lengthBars = 1.0;
+        double sourceOffsetSeconds = 0.0;
+        float gainDb = 0.0f;
+        float fadeInBars = 0.0f;
+        float fadeOutBars = 0.0f;
+    };
 
     AudioEngine();
     ~AudioEngine() override;
@@ -24,9 +62,21 @@ public:
     void setBpm (double newBpm);
     double getBpm() const { return bpm.load(); }
 
+    /** Visible session rows, 1..trackCount. */
+    void setActiveTrackCount (int count);
+    int getActiveTrackCount() const { return activeTrackCount.load(); }
+
     void setTrackGain (int track, float linearGain);
     float trackGain (int track) const;
     void setTrackPan (int track, float pan);
+
+    //==========================================================================
+    // Automation. A non-empty lane drives the fader for as long as it exists;
+    // an empty lane hands the control back to the fader itself.
+    //==========================================================================
+    void setTrackAutomation (int track, AutomationParam param, const AutomationLane& lane);
+    void clearTrackAutomation (int track, AutomationParam param);
+    float automationValue (int track, AutomationParam param, double beats) const;
     float trackPan (int track) const;
     void setTrackMuted (int track, bool muted);
     bool trackMuted (int track) const;
@@ -36,15 +86,212 @@ public:
     void setMasterGain (float linearGain);
     float masterGain() const { return masterGainValue.load(); }
 
+    /** Monitor-only controls. They are applied after the master insert and
+        never alter the rendered project state. */
+    void setMasterDim (bool on) { masterDim.store (on); }
+    bool isMasterDimOn() const { return masterDim.load(); }
+    void setMasterMono (bool on) { masterMono.store (on); }
+    bool isMasterMonoOn() const { return masterMono.load(); }
+
     float trackPeak (int track) const;
     float masterPeak() const { return masterPeakValue.load(); }
+    float masterPeakLeft() const { return masterPeakLeftValue.load(); }
+    float masterPeakRight() const { return masterPeakRightValue.load(); }
 
     double positionSeconds() const;
+
+    /** Musical and transport context for the current position, in the shape a
+        hosted VST3 plugin expects. Message thread; reads atomics only. */
+    nc::engine::TransportBlock transportBlock (int blockSize = 0) const;
+
+    //==========================================================================
+    // Master insert hosting. Message thread; the callback consumes the slot.
+    //==========================================================================
+    int scanPlugins();
+    /** Loadable insert rows: scanned effect descriptions, including registry
+        rows that own one. Instruments and native rows are not insertable here. */
+    int scannedPluginCount() const;
+    juce::String scannedPluginName (int index) const;
+    bool loadMasterPlugin (int index);
+    void removeMasterPlugin();
+    bool hasMasterPlugin() const;
+    juce::String masterPluginName() const;
+
+    /** Latency the insert reports, in samples. 0 when nothing is loaded. */
+    int masterPluginLatency() const;
+
+    /** State of the master insert, ready for the project file. Empty when no
+        plugin is loaded. */
+    juce::String masterPluginIdentifier() const;
+    juce::String masterPluginStateBase64() const;
+
+    /** Re-loads the saved insert and applies its state. False when the plugin
+        is no longer installed or the state is unreadable. */
+    bool restoreMasterPlugin (const juce::String& identifier, const juce::String& stateBase64);
+
+    //==========================================================================
+    // Track insert hosting. The four user slots are effects-only in Phase 2.
+    //==========================================================================
+    PluginCatalog& pluginCatalog() { return catalog; }
+    const PluginCatalog& pluginCatalog() const { return catalog; }
+
+    bool loadTrackInsert (int track, int slot, const juce::PluginDescription&, juce::String& error);
+    bool loadTrackInsertFromId (int track, int slot, const juce::String& catalogId, juce::String& error);
+    bool restoreTrackInsert (int track, int slot, const nc::engine::PluginSlotState&, juce::String& error);
+    void unloadTrackInsert (int track, int slot);
+
+    /** Reorders a track's insert slots, keeping every plugin instance and its
+        state. Returns false for an out-of-range slot or a no-op move. */
+    bool moveTrackInsert (int track, int from, int to);
+    void setTrackInsertBypassed (int track, int slot, bool);
+    juce::String trackInsertName (int track, int slot) const;
+    bool trackInsertIsMissing (int track, int slot) const;
+    nc::engine::PluginSlotState trackInsertState (int track, int slot) const;
+    int trackInsertLatency (int track, int slot) const;
+    void pollRetiredInserts() { inserts.collectGarbage(); }
+
+    std::function<void (juce::String)> onPluginStatus;
+
+    //==========================================================================
+    // Baked mix rack. The channel strip exists on every track; the master rack
+    // always terminates the mix before the optional external master insert.
+    // Message thread for parameter/state access; process() stays on the audio
+    // callback.
+    //==========================================================================
+    MixRackChannel& mixChannel (int track);
+    const MixRackChannel& mixChannel (int track) const;
+    MasterRack& masterMix() { return masterRack; }
+    const MasterRack& masterMix() const { return masterRack; }
+
+    juce::String mixRackStateJson() const;
+    bool restoreMixRackStateJson (const juce::String& state);
     juce::String deviceDescription() const { return deviceInfo; }
 
+    // Facts the chrome reports. Nothing here is estimated.
+    double currentSampleRate() const { return sampleRate.load(); }
+    int currentBufferSize() const { return bufferSize.load(); }
+    bool isDeviceOpen() const { return deviceOpen.load(); }
+    float dspLoad() const { return dspLoadValue.load(); }
+
     void resetPosition();
+    void setPositionSeconds (double seconds);
+
+    //==========================================================================
+    // Project audio. These calls are message-thread only.
+    //==========================================================================
+    int loadAudioFile (const juce::File& file);
+    double assetDurationSeconds (int assetId) const;
+    juce::String assetName (int assetId) const;
+
+    /** Source file behind an asset; empty when the audio is generated. */
+    juce::File assetFile (int assetId) const;
+
+    /** Index of the generated demo asset for a track, or -1. */
+    int demoAssetId (int track) const;
+
+    /** Replaces the engine's entire schedule. The callback consumes the
+        commands at the next block boundary. */
+    /** Replaces the engine's entire schedule. Returns clips dropped as
+        invalid references or beyond the 1024-clip timeline so the UI can
+        report a truncated project instead of losing it silently. */
+    int setTimelineClips (std::vector<TimelineClip> clips);
+
+    /** AudioSuite: renders a processed copy of an asset into a new asset and
+        returns its id, or -1. The source asset is never modified. */
+    int processAsset (int sourceAssetId, const juce::String& nameSuffix,
+                      const nc::engine::audiosuite::Process& process);
+
+    /** First audible frame and length of a resident asset, for clip analysis. */
+    nc::engine::audiosuite::Trim assetTrim (int assetId, float threshold = 0.003f) const;
+
+    double assetSampleRate (int assetId) const;
+
+    /** Refills streamed read-ahead windows. Message thread only. */
+    void serviceStreaming();
+
+    void setLoopEnabled (bool on);
+    bool isLoopEnabled() const { return loopEnabled.load(); }
+    void setLoopBars (double startBar, double endBar);
+
+    /** Last bar any timeline clip reaches, so an export can cover the session
+        without guessing. Message thread. */
+    double contentEndBar() const { return contentEnd.load(); }
+
+    /** Renders the session mix between two bars (1-based) to a WAV file on this
+        thread, with no audio device involved. It runs the same block path as
+        playback, so the file matches what is heard; plugin delay compensation
+        is pre-rolled and dropped exactly as nc::engine::planRender() describes.
+        The metronome and loop are suspended for the render and restored after.
+        Leaves the transport and the device callback as it found them. */
+    bool renderToWav (const juce::File& destination,
+                      double startBar,
+                      double endBar,
+                      int bitDepth,
+                      juce::String& error);
+
+    //==========================================================================
+    // Recording. Capture is input-aligned (Ardour's disk-writer rule): the
+    // callback only appends to preallocated buffers, and the take is trimmed by
+    // the reported input latency when it is written, never during capture.
+    //==========================================================================
+    void setRecordArmed (int track, bool armed);
+    bool isRecordArmed (int track) const;
+
+    /** Opens a capture buffer per armed track. Fails when nothing is armed or
+        the engine has no usable rate yet. */
+    bool startRecording (juce::String& error);
+    bool isRecording() const { return recording.load(); }
+
+    /** Frames captured since startRecording, across all armed tracks. */
+    int64_t recordedFrames() const;
+
+    /** Input latency trimmed from the head of each take, in samples. */
+    void setRecordLatencySamples (int samples) { recordLatency.store (juce::jmax (0, samples)); }
+    int recordLatencySamples() const { return recordLatency.load(); }
+
+    /** Buffers that overflowed during the take (Ardour's x-run counter). */
+    int recordOverflows() const;
+
+    struct RecordedTake
+    {
+        int track = -1;
+        juce::File file;
+        int64_t startFrame = 0;   // transport frame the take starts at
+        int64_t frames = 0;       // frames written, after the latency trim
+    };
+
+    /** Writes each armed track's capture to its own WAV in `folder` and returns
+        the takes. Message thread; no device access. */
+    std::vector<RecordedTake> stopRecording (const juce::File& folder,
+                                             int bitDepth,
+                                             juce::String& error);
+
+    /** Drives one block through the same path the device callback uses, so the
+        recording and mix behaviour can be tested without hardware. */
+    void processBlockForTesting (const float* const* inputChannelData,
+                                 int numInputChannels,
+                                 float* const* outputChannelData,
+                                 int numOutputChannels,
+                                 int numSamples);
+
+    /** Detaches the device callback so a test owns the render path outright.
+        Real-device playback stops for this engine; capture and export still run. */
+    void suspendAudioCallbackForTesting();
 
 private:
+    PluginHost pluginHost;
+    PluginCatalog catalog;
+    TrackInsertRack inserts;
+    std::shared_ptr<std::atomic<bool>> engineAlive;
+    juce::AudioBuffer<float> mixBuffer;
+    juce::AudioBuffer<float> trackBlock;
+    std::array<MixRackChannel, trackCount> mixRack;
+    MasterRack masterRack;
+    std::atomic<int> preparedRackCount { 0 };
+
+    /** Re-applies the baked vocal role to every channel. Message thread only. */
+    void applyVocalRoles();
+
     void audioDeviceIOCallbackWithContext (const float* const* inputChannelData,
                                            int numInputChannels,
                                            float* const* outputChannelData,
@@ -53,6 +300,48 @@ private:
                                            const juce::AudioIODeviceCallbackContext& context) override;
     void audioDeviceAboutToStart (juce::AudioIODevice*) override;
     void audioDeviceStopped() override;
+
+    struct AudioAsset
+    {
+        juce::AudioBuffer<float> buffer;
+        double sampleRate = 48000.0;
+        juce::String name;
+        juce::File file;   // empty for generated demo assets
+
+        // Long imports stream: the reader stays open and only a bounded
+        // read-ahead window is resident, so a long take costs seconds of RAM.
+        // The window is published with an atomic slot flip; the callback never
+        // reads the disk and never waits on the message thread.
+        bool streamed = false;
+        int64_t totalFrames = 0;
+        int64_t cacheFrames = 0;
+        std::unique_ptr<juce::AudioFormatReader> reader;
+        std::array<std::vector<float>, 2> cacheA;
+        std::array<std::vector<float>, 2> cacheB;
+        std::array<std::atomic<int64_t>, 2> slotStart {};
+        std::array<std::atomic<int64_t>, 2> slotLength {};
+        std::atomic<int> activeCache { 0 };
+    };
+
+    struct PlaybackClip
+    {
+        const AudioAsset* asset = nullptr;
+        int track = 0;
+        double startBar = 1.0;
+        double lengthBars = 1.0;
+        double sourceOffsetSeconds = 0.0;
+        float gainDb = 0.0f;
+        float fadeInBars = 0.0f;
+        float fadeOutBars = 0.0f;
+    };
+
+    enum class CommandType : juce::uint8 { clear, add };
+
+    struct Command
+    {
+        CommandType type = CommandType::clear;
+        PlaybackClip clip;
+    };
 
     struct Track
     {
@@ -63,20 +352,126 @@ private:
         std::atomic<bool> soloed { false };
     };
 
+    // Render scratch for the audio callback: preallocated once with the engine
+    // so the 1024-clip timeline never touches the callback stack or heap.
+    struct RenderClip
+    {
+        const AudioAsset* asset = nullptr;
+        int track = 0;
+        int64_t startSample = 0;
+        int64_t endSample = 0;
+        double sourceOffsetSeconds = 0.0;
+        double lengthSeconds = 0.0;
+        double fadeInSeconds = 0.0;
+        double fadeOutSeconds = 0.0;
+        float gain = 1.0f;
+    };
+
+    static constexpr int maxClips = nc::limits::maxClips;
+    static_assert (maxClips <= nc::limits::maxClips,
+                   "preview clip cap must fit central limits");
+    static constexpr int commandCapacity = nc::limits::commandCapacity;
+    static_assert (commandCapacity >= maxClips + 16,
+                   "command rail must fit clear plus a full timeline");
+
+    int addAsset (std::unique_ptr<AudioAsset> asset);
+    int64_t assetFrameCount (const AudioAsset& asset) const;
+    float sampleAt (const AudioAsset& asset, int64_t frame, int channel) const;
+    void createDemoAssets();
+    bool pushCommand (const Command& command);
+    void processCommands();
+
+    /** The one mix block, shared by the device callback and renderToWav(). */
+    void renderBlock (const float* const* inputChannelData, int numInputChannels,
+                      float* const* outputChannelData, int numOutputChannels, int numSamples);
+    void captureInputBlock (const float* const* inputChannelData, int numInputChannels,
+                            int numSamples, int64_t position);
+
+    /** Allocates the render scratch and prepares every rack at this rate.
+        Only legal while no audio callback is attached. */
+    void prepareForRender (double rate, int maxBlock);
+
+    /** One armed track's capture: preallocated, appended without allocating. */
+    struct RecordBuffer
+    {
+        juce::AudioBuffer<float> storage;
+        int64_t written = 0;
+        bool overflowed = false;
+
+        void prepare (int64_t capacityFrames);
+        void push (const float* left, const float* right, int numSamples) noexcept;
+        void reset() noexcept;
+    };
+
+    /** A published lane: the audio thread reads `live`, the message thread owns
+        `owned`. Replaced lanes are retired and freed only when the device stops. */
+    struct AutomationSlot
+    {
+        std::unique_ptr<AutomationLane> owned;
+        std::atomic<const AutomationLane*> live { nullptr };
+    };
+
+    std::array<AutomationSlot, trackCount> volumeAutomation;
+    std::array<AutomationSlot, trackCount> panAutomation;
+    std::vector<std::unique_ptr<AutomationLane>> automationRetired;
+
+    std::atomic<bool> captureAvailable { false };
+    std::array<RecordBuffer, trackCount> recordBuffers;
+    std::array<std::atomic<bool>, trackCount> recordArmed {};
+    std::atomic<bool> recording { false };
+    std::atomic<int> recordLatency { 0 };
+    std::atomic<int> overflowCount { 0 };
+    std::atomic<int64_t> recordStartFrame { 0 };
+    int64_t recordFramesWritten = 0;
+
     std::array<Track, trackCount> tracks;
     std::atomic<bool> playing { false };
-    std::atomic<bool> metronome { true };
+
+    /** True while renderToWav() owns the engine: the device callback renders
+        silence instead of a second, interleaved pass. */
+    std::atomic<bool> offlineRender { false };
+    std::atomic<bool> metronome { false };
     std::atomic<bool> resetRequested { false };
+    std::atomic<bool> seekRequested { false };
     std::atomic<double> bpm { 120.0 };
     std::atomic<double> sampleRate { 48000.0 };
     std::atomic<int64_t> positionSamples { 0 };
     std::atomic<float> masterGainValue { 0.8f };
+    std::atomic<bool> masterDim { false };
+    std::atomic<bool> masterMono { false };
     std::atomic<float> masterPeakValue { 0.0f };
+    std::atomic<float> masterPeakLeftValue { 0.0f };
+    std::atomic<float> masterPeakRightValue { 0.0f };
+    std::atomic<int> activeTrackCount { nc::limits::defaultActiveTracks };
+    std::atomic<int> bufferSize { 0 };
+    std::atomic<bool> deviceOpen { false };
+    std::atomic<float> dspLoadValue { 0.0f };
+
+    void setPluginStatus (juce::String message);
+    std::vector<CatalogEntry> loadablePluginEntries() const;
+
+    std::atomic<double> contentEnd { 1.0 };
+    std::atomic<bool> loopEnabled { true };
+    std::atomic<double> loopStartBar { 1.0 };
+    std::atomic<double> loopEndBar { 17.0 };
 
     juce::AudioDeviceManager deviceManager;
+    juce::AudioFormatManager formats;
     juce::String deviceInfo;
 
-    // Audio-thread only.
+    std::vector<std::unique_ptr<AudioAsset>> assets;
+    std::array<int, trackCount> demoAssets { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+
+    // SPSC command rail: message thread writes, audio callback drains.
+    std::array<Command, commandCapacity> commandQueue {};
+    std::atomic<juce::uint32> commandWrite { 0 };
+    std::atomic<juce::uint32> commandRead { 0 };
+
+    // Audio-thread only. renderScratch is reused every block: the prep loop
+    // invalidates each slot it skips so stale clips can never replay.
+    std::array<PlaybackClip, maxClips> playbackClips {};
+    std::array<RenderClip, maxClips> renderScratch {};
+    int playbackClipCount = 0;
     double clickPhase = 0.0;
     double clickEnvelope = 0.0;
     double clickOscillator = 0.0;

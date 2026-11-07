@@ -1,5 +1,7 @@
 #include "PluginRegistry.h"
 
+#include <nc/engine/ProjectLimits.hpp>
+
 namespace nc
 {
 namespace
@@ -52,6 +54,10 @@ Registry loadRegistry (const juce::File& jsonFile)
     if (! jsonFile.existsAsFile())
         return registry;
 
+    // A corrupt or runaway registry must not stall startup parsing megabytes.
+    if (! nc::limits::registrySizeAcceptable (jsonFile.getSize()))
+        return registry;
+
     juce::var parsed;
     const auto result = juce::JSON::parse (jsonFile.loadFileAsString(), parsed);
 
@@ -81,6 +87,7 @@ Registry loadRegistry (const juce::File& jsonFile)
         plugin.kind = property (*object, "kind");
         plugin.source = property (*object, "source");
         plugin.note = property (*object, "note");
+        plugin.vst3BundleName = property (*object, "vst3");
         plugin.status = parseStatus (property (*object, "status"));
 
         if (plugin.id.isNotEmpty() && plugin.name.isNotEmpty())
@@ -88,6 +95,19 @@ Registry loadRegistry (const juce::File& jsonFile)
     }
 
     return registry;
+}
+
+nc::engine::PluginTier pluginTier (PluginStatus status)
+{
+    switch (status)
+    {
+        case PluginStatus::native:   return nc::engine::PluginTier::native;
+        case PluginStatus::port:     return nc::engine::PluginTier::port;
+        case PluginStatus::archived: return nc::engine::PluginTier::archived;
+        case PluginStatus::external: break;
+    }
+
+    return nc::engine::PluginTier::external;
 }
 
 juce::String statusName (PluginStatus status)

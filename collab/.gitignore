@@ -1,0 +1,4 @@
+node_modules/
+public/phone.js
+public/host.js
+*.log
