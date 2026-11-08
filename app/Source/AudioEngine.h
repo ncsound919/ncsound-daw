@@ -238,7 +238,22 @@ public:
     bool trackInsertIsMissing (int track, int slot) const;
     nc::engine::PluginSlotState trackInsertState (int track, int slot) const;
     int trackInsertLatency (int track, int slot) const;
-    void pollRetiredInserts() { inserts.collectGarbage(); }
+    void pollRetiredInserts()
+    {
+        inserts.collectGarbage();
+        reclaimRetiredSnapshots();
+    }
+
+    /** Frees replaced tempo/MIDI/automation snapshots once no audio callback
+        can still be holding a pointer to them. Message thread only. */
+    void reclaimRetiredSnapshots();
+
+    /** Diagnostics and tests: how many replaced snapshots are still retained. */
+    int retainedSnapshotCount() const noexcept
+    {
+        return static_cast<int> (automationRetired.size() + tempoRetired.size()
+                                 + midiRetired.size());
+    }
 
     std::function<void (juce::String)> onPluginStatus;
 
@@ -614,9 +629,28 @@ private:
         std::atomic<const AutomationLane*> live { nullptr };
     };
 
+    /** A replaced snapshot, stamped with the audio-block counter at the moment
+        it stopped being live. reclaimRetiredSnapshots() frees it once no
+        callback can still be reading it. */
+    template <typename T>
+    struct RetiredSnapshot
+    {
+        std::unique_ptr<T> owned;
+        uint64_t retiredAtBlock = 0;
+    };
+
+    template <typename T>
+    static void retireSnapshot (std::vector<RetiredSnapshot<T>>& list,
+                                std::unique_ptr<T>& owned,
+                                uint64_t blockNow)
+    {
+        if (owned != nullptr)
+            list.push_back ({ std::move (owned), blockNow });
+    }
+
     std::array<AutomationSlot, trackCount> volumeAutomation;
     std::array<AutomationSlot, trackCount> panAutomation;
-    std::vector<std::unique_ptr<AutomationLane>> automationRetired;
+    std::vector<RetiredSnapshot<AutomationLane>> automationRetired;
 
     struct TempoSlot
     {
@@ -640,8 +674,8 @@ private:
     // Reset whenever the snapshot pointer changes (setMidiClips).
     std::vector<nc::engine::MidiCursor> midiCursors;
     const std::vector<MidiTimelineClip>* midiCursorsFor = nullptr;
-    std::vector<std::unique_ptr<nc::engine::TempoMap>> tempoRetired;
-    std::vector<std::unique_ptr<std::vector<MidiTimelineClip>>> midiRetired;
+    std::vector<RetiredSnapshot<nc::engine::TempoMap>> tempoRetired;
+    std::vector<RetiredSnapshot<std::vector<MidiTimelineClip>>> midiRetired;
     nc::engine::TempoMap fallbackTempo = nc::engine::constantTempoMap (120.0);
     std::vector<nc::engine::Marker> markers_;
 
@@ -695,6 +729,7 @@ private:
     std::atomic<int> activeTrackCount { nc::limits::defaultActiveTracks };
     std::atomic<int> bufferSize { 0 };
     std::atomic<bool> deviceOpen { false };
+    std::atomic<uint64_t> audioBlockCount { 0 };
     std::atomic<float> dspLoadValue { 0.0f };
     std::atomic<bool> lowLatency { false };
     mutable juce::String voiceError;

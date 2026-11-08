@@ -241,8 +241,8 @@ void AudioEngine::setTempoMap (nc::engine::TempoMap map)
     nc::engine::sanitizeTempoMap (map);
     auto fresh = std::make_unique<nc::engine::TempoMap> (std::move (map));
 
-    if (tempoSlot.owned != nullptr)
-        tempoRetired.push_back (std::move (tempoSlot.owned));
+    retireSnapshot (tempoRetired, tempoSlot.owned,
+                    audioBlockCount.load (std::memory_order_acquire));
 
     tempoSlot.owned = std::move (fresh);
     tempoSlot.live.store (tempoSlot.owned.get(), std::memory_order_release);
@@ -279,8 +279,8 @@ void AudioEngine::setMidiClips (std::vector<MidiTimelineClip> clips)
 
     auto fresh = std::make_unique<std::vector<MidiTimelineClip>> (std::move (clips));
 
-    if (midiSlot.owned != nullptr)
-        midiRetired.push_back (std::move (midiSlot.owned));
+    retireSnapshot (midiRetired, midiSlot.owned,
+                    audioBlockCount.load (std::memory_order_acquire));
 
     midiSlot.owned = std::move (fresh);
     midiSlot.live.store (midiSlot.owned.get(), std::memory_order_release);
@@ -1631,6 +1631,32 @@ void AudioEngine::audioDeviceStopped()
     inserts.collectGarbage();
 }
 
+void AudioEngine::reclaimRetiredSnapshots()
+{
+    // Called from the message thread, by the same poll that collects retired
+    // inserts. With no device open there is no callback, so every retired
+    // snapshot is safe to free. Otherwise a block runs only after the previous
+    // one returned, so once a later block has started, any block that loaded an
+    // old pointer before the swap has finished with it.
+    const bool callbackRunning = deviceOpen.load (std::memory_order_acquire);
+    const auto now = audioBlockCount.load (std::memory_order_acquire);
+
+    auto sweep = [callbackRunning, now] (auto& list)
+    {
+        list.erase (std::remove_if (list.begin(), list.end(),
+                                    [callbackRunning, now] (const auto& entry)
+                                    {
+                                        return ! callbackRunning
+                                               || entry.retiredAtBlock + 2 <= now;
+                                    }),
+                    list.end());
+    };
+
+    sweep (automationRetired);
+    sweep (tempoRetired);
+    sweep (midiRetired);
+}
+
 void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputChannelData,
                                                     int numInputChannels,
                                                     float* const* outputChannelData,
@@ -1638,6 +1664,9 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                                     int numSamples,
                                                     const juce::AudioIODeviceCallbackContext&)
 {
+    // One tick per callback. Retired snapshots are stamped with this value at
+    // the swap and freed only after a later callback has started.
+    audioBlockCount.fetch_add (1, std::memory_order_acq_rel);
     // An offline mixdown owns the engine. Render silence rather than run a
     // second pass into the device, and touch no shared state while doing it.
     if (offlineRender.load (std::memory_order_acquire))
@@ -3555,9 +3584,10 @@ void AudioEngine::setTrackAutomation (int track, AutomationParam param, const Au
     auto next = std::make_unique<AutomationLane> (lane);
 
     // Retired lanes are never freed while a block may still hold the pointer;
-    // audioDeviceStopped() clears them once the callback is gone.
-    if (slot.owned != nullptr)
-        automationRetired.push_back (std::move (slot.owned));
+    // reclaimRetiredSnapshots() frees them once the callback that could have
+    // loaded the old pointer has finished, or when the device closes.
+    retireSnapshot (automationRetired, slot.owned,
+                    audioBlockCount.load (std::memory_order_acquire));
 
     slot.owned = std::move (next);
     slot.live.store (slot.owned.get(), std::memory_order_release);

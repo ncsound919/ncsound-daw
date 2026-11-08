@@ -59,7 +59,8 @@ target_sources(NCMixRackTests PRIVATE
     Source/RecordingTests.cpp
     Source/AutomationTests.cpp
     Source/SendsTests.cpp
-    Source/MixPlanTests.cpp)
+    Source/MixPlanTests.cpp
+    Source/SnapshotReclaimTests.cpp)
 
 target_link_libraries(NCMixRackTests PRIVATE
     nc_mixrack
