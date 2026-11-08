@@ -1,0 +1,18 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* The WebView shell gives #root a window-sized box; without this the workspace
+   collapses to its content and every surface stops at the bottom of its own
+   markup instead of reaching the status bar. */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: #131211;
+}
+
+body {
+  overflow: hidden;
+}
