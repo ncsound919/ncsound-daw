@@ -2,3 +2,5 @@ node_modules/
 public/phone.js
 public/host.js
 *.log
+# relay state: holds live host and guest tokens
+sessions.json

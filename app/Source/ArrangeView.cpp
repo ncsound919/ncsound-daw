@@ -2357,6 +2357,31 @@ void ArrangeView::applyMidiNotes (int clipIndex, std::vector<nc::engine::MidiNot
     repaint();
 }
 
+namespace
+{
+/** The piano roll is a pop-up, and DocumentWindow's default closeButtonPressed()
+    only asserts - so without this override the window can never be closed and
+    each open would leak the window and its editor. */
+class PianoRollWindow final : public juce::DocumentWindow
+{
+public:
+    PianoRollWindow (const juce::String& title, std::unique_ptr<PianoRoll> roll)
+        : juce::DocumentWindow (title, juce::Colours::black, juce::DocumentWindow::closeButton)
+    {
+        setResizable (true, true);
+        setUsingNativeTitleBar (false);
+        setContentOwned (roll.release(), true);
+        centreWithSize (760, 420);
+        setVisible (true);
+    }
+
+    void closeButtonPressed() override { delete this; }
+
+private:
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PianoRollWindow)
+};
+}
+
 bool ArrangeView::openPianoRollForSelected()
 {
     return openPianoRollForClip (selectedClip);
@@ -2383,21 +2408,19 @@ bool ArrangeView::openPianoRollForClip (int clipIndex)
     }
 
     auto editor = std::make_unique<PianoRoll> (clip.name, static_cast<double> (clip.lengthBars), clip.notes,
-                                               [this, clipIndex] (const std::vector<nc::engine::MidiNote>& notes)
+                                               [safe = juce::Component::SafePointer<ArrangeView> (this), clipIndex]
+                                               (const std::vector<nc::engine::MidiNote>& notes)
                                                {
-                                                   applyMidiNotes (clipIndex, notes);
+                                                   // The window can outlive this view.
+                                                   if (safe != nullptr)
+                                                       safe->applyMidiNotes (clipIndex, notes);
                                                });
     editor->setSize (760, 420);
     selectedClip = clipIndex;
     selectedTrack = clip.track;
     inspector.setTrack (selectedTrack);
 
-    auto* window = new juce::DocumentWindow (clip.name + " / Piano Roll", juce::Colours::black, juce::DocumentWindow::closeButton);
-    window->setResizable (true, true);
-    window->setUsingNativeTitleBar (false);
-    window->centreWithSize (760, 420);
-    window->setContentComponent (editor.release());
-    window->setVisible (true);
+    new PianoRollWindow (clip.name + " / Piano Roll", std::move (editor));
 
     if (onStatus)
         onStatus ("PIANO ROLL / " + clip.name + " / double-click a MIDI clip to edit it");

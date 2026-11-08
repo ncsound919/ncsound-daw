@@ -436,3 +436,47 @@ build, msvc, configure, build, test.
 Not verified: any of this on a GitHub runner - no runner here, and a clean-tree
 compile would mean a full JUCE + app build. The first CI execution is the real
 test of the job, and the two jobs should be watched on the next push.
+
+
+
+## Audit fixes - 8 November 2026
+
+A static review of the app turned up three lifetime bugs, two medium issues and
+some smaller ones. Four are fixed here; the rest are recorded at the end.
+
+The piano roll was opened as a bare `juce::DocumentWindow` with no owner and no
+close path, so it outlived the arrangement view that opened it and leaked on
+every open. It is now a `PianoRollWindow` that deletes itself when its close
+button is used, and the commit callback holds a `SafePointer` to the view
+instead of a raw `this`.
+
+A hosted plugin's editor window kept a raw `AudioProcessor*` and was only closed
+when its rack row happened to be rebuilt, so unloading or replacing a plugin
+could leave the window pointing at a destroyed processor. The window now watches
+an inline registry (`PluginEditorRegistry.h`, header-only so the CMake source
+list is untouched), and `TrackInsertRack::collectGarbage()` closes the editors of
+each retire batch before destroying the inserts - one choke point rather than
+eight call sites. The destructor also calls `editorBeingDeleted()` with the
+`AudioProcessorEditor` it actually created; the first version passed the generic
+content component and failed to compile (C2664), which is what the build was
+stuck on.
+
+`ProjectFile` renamed its temporary into place without syncing, so a crash right
+after a save could leave a zero-length project. The temporary is now flushed
+before the rename and the final file flushed after it. `collab/.gitignore` now
+ignores `sessions.json`, which holds live session tokens.
+
+Verified: `NCSoundHub` and `NCMixRackTests` build clean (124/124 steps, no
+warnings in the touched files) and `ctest -R mix_rack` passes 1/1 in 223.5 s.
+The first build failure was not a code defect: `cmake --build` invoked straight
+from bash has no MSVC `INCLUDE`, so every translation unit failed with C1083 on
+`<algorithm>`; builds now run through a `vcvars64` wrapper.
+
+Not verified: nothing exercises window close or editor lifetime - the registry
+and the piano-roll teardown are reviewed, not tested. There is no sanitizer or
+Application Verifier build here, so the use-after-free fix rests on the identity
+checks rather than a runtime detector.
+
+Still open from the audit: the retired tempo/midi/automation snapshots grow
+without bound (that needs a reclamation design, not a patch), and the export
+path still sleeps on the message thread between blocks.

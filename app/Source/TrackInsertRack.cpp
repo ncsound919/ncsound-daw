@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include "HostedInsert.h"
+#include "PluginEditorRegistry.h"
 
 namespace nc
 {
@@ -410,12 +412,31 @@ void TrackInsertRack::collectGarbage()
     if (audioInCallback.load (std::memory_order_acquire))
         return;
 
+    // An editor window built from a retired plug-in holds the raw processor the
+    // clear() below destroys. Close those windows first: closing deletes the
+    // window and detaches the editor, exactly as its close button does.
     for (auto& track : tracks)
         for (auto& insert : track)
+        {
+            for (auto& retired : insert.retiredOwned)
+                if (auto* hosted = dynamic_cast<HostedInsert*> (retired.get()))
+                    pluginEditors::closeWindowsFor (hosted->instance());
+
             insert.retiredOwned.clear();
+        }
 
     for (auto& instrument : instruments)
+    {
+        for (auto& retired : instrument.retiredOwned)
+            if (auto* hosted = dynamic_cast<HostedInsert*> (retired.get()))
+                pluginEditors::closeWindowsFor (hosted->instance());
+
         instrument.retiredOwned.clear();
+    }
+
+    for (auto& retired : master.retiredOwned)
+        if (auto* hosted = dynamic_cast<HostedInsert*> (retired.get()))
+            pluginEditors::closeWindowsFor (hosted->instance());
 
     master.retiredOwned.clear();
 }

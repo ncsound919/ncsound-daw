@@ -83,6 +83,11 @@ bool saveProjectDocument (const juce::File& file, const nc::engine::ProjectDocum
         return false;
     }
 
+    // Sync the new contents before the rename. Afterwards the target is a
+    // different file, so syncing that alone can leave the rename durable and the
+    // data still in the page cache - the opposite of what syncFileToDisk is for.
+    syncFileToDisk (temporary);
+
     if (! temporary.replaceFileIn (file))
     {
         error = "Could not replace " + file.getFullPathName();

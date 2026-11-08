@@ -132,6 +132,18 @@ deliberately broken render; release artifact is produced by CI, not by hand.
 
 ---
 
+### Status - 8 November 2026
+
+Audit fixes landed: piano-roll window lifetime, plugin editor teardown at the
+rack choke point, `editorBeingDeleted()` on the editor that was actually
+created, project-file fsync around the rename, and `sessions.json` ignored.
+The build and `mix_rack` are green.
+
+Still needed for this phase: a test that opens and closes an editor window with
+a live and with a gone processor, reclamation of the retired tempo/midi/
+automation snapshots, an export path that does not sleep on the message thread,
+and a sanitizer or Application Verifier run on Windows.
+
 ## 4. Phase 3 — Legal and IP (owner gates, agent implements)
 
 **Decisions needed before any public distribution:**
