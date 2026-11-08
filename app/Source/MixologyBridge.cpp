@@ -55,41 +55,46 @@ bool isVocalBus (BusTarget bus)
 
 std::vector<mixology::SelectedModuleInstance> instancesForPreset (int preset)
 {
+    // Technique module ids only — no engineer names. Preset names are
+    // generic sonic goals (808 Weight, Vocal Presence, Subtractive, etc.).
+    // Mapping: lowend_harmonic_stack (808), vocal_clarity_chain (presence),
+    // vocal_emotion_chain (emotion), subtractive_foundation (subtractive),
+    // master_contour (master).
     switch (juce::jlimit (0, 4, preset))
     {
         case 1:
             return {
-                { "jaycen_808_weight", 0.90, true, false, BusTarget::bass808 },
-                { "young_guru_subtractive_foundation", 0.65, true, false, BusTarget::master }
+                { "lowend_harmonic_stack", 0.90, true, false, BusTarget::bass808 },
+                { "subtractive_foundation", 0.65, true, false, BusTarget::master }
             };
 
         case 2:
             return {
-                { "leslie_vocal_presence", 0.85, true, false, BusTarget::lead_vocal },
-                { "jaycen_master_contour", 0.50, true, false, BusTarget::master }
+                { "vocal_clarity_chain", 0.85, true, false, BusTarget::lead_vocal },
+                { "master_contour", 0.50, true, false, BusTarget::master }
             };
 
         case 3:
             return {
-                { "young_guru_subtractive_foundation", 0.90, true, false, BusTarget::master },
-                { "lu_diaz_vocal_emotion", 0.55, true, false, BusTarget::lead_vocal }
+                { "subtractive_foundation", 0.90, true, false, BusTarget::master },
+                { "vocal_emotion_chain", 0.55, true, false, BusTarget::lead_vocal }
             };
 
         case 4:
             return {
-                { "lu_diaz_vocal_emotion", 0.80, true, false, BusTarget::lead_vocal },
-                { "leslie_vocal_presence", 0.70, true, false, BusTarget::lead_vocal },
-                { "jaycen_808_weight", 0.85, true, false, BusTarget::bass808 },
-                { "young_guru_subtractive_foundation", 0.75, true, false, BusTarget::master },
-                { "jaycen_master_contour", 0.55, true, false, BusTarget::master }
+                { "vocal_emotion_chain", 0.80, true, false, BusTarget::lead_vocal },
+                { "vocal_clarity_chain", 0.70, true, false, BusTarget::lead_vocal },
+                { "lowend_harmonic_stack", 0.85, true, false, BusTarget::bass808 },
+                { "subtractive_foundation", 0.75, true, false, BusTarget::master },
+                { "master_contour", 0.55, true, false, BusTarget::master }
             };
 
         case 0:
         default:
             return {
-                { "lu_diaz_vocal_emotion", 0.85, true, false, BusTarget::lead_vocal },
-                { "young_guru_subtractive_foundation", 0.70, true, false, BusTarget::lead_vocal },
-                { "jaycen_master_contour", 0.55, true, false, BusTarget::master }
+                { "vocal_emotion_chain", 0.85, true, false, BusTarget::lead_vocal },
+                { "subtractive_foundation", 0.70, true, false, BusTarget::lead_vocal },
+                { "master_contour", 0.55, true, false, BusTarget::master }
             };
     }
 }

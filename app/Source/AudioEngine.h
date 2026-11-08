@@ -5,6 +5,7 @@
 
 #include "AuxBus.h"
 #include "MixRack.h"
+#include "MidiLearnManager.h"
 #include "MidiRecorder.h"
 #include "PluginCatalog.h"
 #include "TrackInsertRack.h"
@@ -12,6 +13,7 @@
 
 #include <nc/engine/AudioSuite.hpp>
 #include <nc/engine/Export.hpp>
+#include <nc/engine/Markers.hpp>
 #include <nc/engine/MidiClip.hpp>
 #include <nc/engine/MidiPitch.hpp>
 #include <nc/engine/MidiSchedule.hpp>
@@ -80,7 +82,7 @@ public:
     //==========================================================================
     void setTempoMap (nc::engine::TempoMap map);
     nc::engine::TempoMap tempoMap() const;
-    void setMarkers (std::vector<nc::engine::Marker> markers) { markers_ = std::move (markers); }
+    void setMarkers (std::vector<nc::engine::Marker> markers);
     const std::vector<nc::engine::Marker>& markers() const { return markers_; }
 
     struct MidiTimelineClip
@@ -258,6 +260,16 @@ public:
         device, rate and buffer changes live; the engine re-prepares on the
         audio-device callbacks. Message thread. */
     juce::AudioDeviceManager& audioDeviceManager() { return deviceManager; }
+    MidiLearnManager& getMidiLearn() { return midiLearn; }
+    const MidiLearnManager& getMidiLearn() const { return midiLearn; }
+
+    // Audio interface persistence (JUCE ApplicationProperties, XML blob).
+    // Restores preferred device/rate/buffer/midi on next launch; falls back
+    // to OS default if the stored device is unplugged. Message thread.
+    void saveAudioSettings();
+    void restoreAudioSettings();
+    void clearAudioSettings();
+    juce::String audioSettingsSummary() const;
 
     /** Swaps which engine an aux return runs. Aux 0 is the reverb send and aux
         1 the delay send; each hosts the stock Overlay engine or its swap target
@@ -275,6 +287,22 @@ public:
     int currentBufferSize() const { return bufferSize.load(); }
     bool isDeviceOpen() const { return deviceOpen.load(); }
     float dspLoad() const { return dspLoadValue.load(); }
+
+    // Low latency: buffer latency + worst-track PDC + master lookahead limiter.
+    // All values are measured (device getter + HostedInsert::latencySamples
+    // poll), never estimated. Used by the chrome latency readout.
+    double bufferLatencyMs() const;
+    double worstTrackLatencyMs() const;
+    double masterLatencyMs() const;
+    double totalLatencyMs() const { return bufferLatencyMs() + worstTrackLatencyMs() + masterLatencyMs(); }
+    void setLowLatencyMode (bool shouldLow);
+    bool isLowLatencyMode() const { return lowLatency.load(); }
+
+    // Voice-to-MIDI (offline): runs YIN note tracking over an audio file and
+    // returns an importable MIDI clip (monophonic, same path as MidiRecorder).
+    nc::engine::ClipState voiceToMidiClip (const juce::File& file, int track, double bpm);
+    juce::String lastVoiceError() const { return voiceError; }
+    int addMidiClip (nc::engine::ClipState clip);
 
     void resetPosition();
     void setPositionSeconds (double seconds);
@@ -668,6 +696,8 @@ private:
     std::atomic<int> bufferSize { 0 };
     std::atomic<bool> deviceOpen { false };
     std::atomic<float> dspLoadValue { 0.0f };
+    std::atomic<bool> lowLatency { false };
+    mutable juce::String voiceError;
 
     void setPluginStatus (juce::String message);
     std::vector<CatalogEntry> loadablePluginEntries() const;
@@ -683,6 +713,7 @@ private:
     juce::AudioDeviceManager deviceManager;
     juce::AudioFormatManager formats;
     juce::String deviceInfo;
+    MidiLearnManager midiLearn;
 
     std::vector<std::unique_ptr<AudioAsset>> assets;
     std::array<int, trackCount> demoAssets { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };

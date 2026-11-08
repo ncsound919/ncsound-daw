@@ -67,14 +67,40 @@ public:
     bool duplicateSelected();
     bool deleteSelected();
 
-    // Web workspace write path. Indices address the *audio* schedule (the
-    // order publishTimeline() hands to AudioEngine), so MIDI clips in between
-    // cannot shift them. Each edit is undoable and republishes immediately.
-    bool webEditClip (int scheduleIndex, const juce::var& patch);
-    bool webSplitClip (int scheduleIndex, double bar);
-    bool webDuplicateClip (int scheduleIndex);
-    bool webDeleteClip (int scheduleIndex);
+    // Web workspace write path. Indices address the arrangement list -- the
+    // exact order buildState() publishes, audio and MIDI together -- so a web
+    // index always addresses the clip the UI drew. Each edit is undoable and
+    // republishes immediately.
+    bool webEditClip (int clipIndex, const juce::var& patch);
+    bool webSplitClip (int clipIndex, double bar);
+    bool webDuplicateClip (int clipIndex);
+    bool webDeleteClip (int clipIndex);
     void webSetLoopRange (double startBar, double endBar);
+
+    /** One arrangement row as the web projection sees it. `notes` points into
+        the live clip and is null for audio clips. */
+    struct WebClipView
+    {
+        int track = 0;
+        int startBar = 1;
+        int lengthBars = 1;
+        juce::String name;
+        int kind = 1;
+        float gainDb = 0.0f;
+        float fadeInBars = 0.0f;
+        float fadeOutBars = 0.0f;
+        float crossfadeBars = 0.0f;
+        int compTake = 0;
+        int assetId = -1;
+        double sourceOffsetSeconds = 0.0;
+        const std::vector<nc::engine::MidiNote>* notes = nullptr;
+    };
+
+    int webClipCount() const { return static_cast<int> (clips.size()); }
+    bool webClipAt (int index, WebClipView& out) const;
+    /** Replaces a MIDI clip's notes through applyMidiNotes(), so the engine's
+        sanitizer (bounds, sorting, 0..127, clip length) always runs. */
+    bool webSetNotes (int clipIndex, const std::vector<nc::engine::MidiNote>& notes);
     bool hasSelectedClip() const { return selectedClip >= 0; }
     int clipCount() const { return static_cast<int> (clips.size()); }
 
@@ -155,6 +181,8 @@ private:
 
     int trackAt (juce::Point<int>) const;
     int clipAt (juce::Point<int>) const;
+    int markerAt (juce::Point<int>) const;
+    void renameMarker (int markerIndex);
     int toolAt (juce::Point<int>) const;
     int functionAt (juce::Point<int>) const;
     int fadeHandleAt (const Clip&, juce::Point<int>) const;
@@ -200,6 +228,10 @@ private:
     DragMode dragMode = DragMode::none;
     int loopDragMode = 0;
     int dragClipIndex = -1;
+    int markerDragIndex = -1;
+    int markerDragOriginX = 0;
+    double markerDragOriginPpq = 0.0;
+    std::vector<nc::engine::Marker> markerDragState;
     int dragOriginBar = 1;
     int dragOriginStart = 1;
     int dragOriginLength = 4;

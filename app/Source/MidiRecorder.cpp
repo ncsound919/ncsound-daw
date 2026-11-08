@@ -30,12 +30,14 @@ bool MidiRecorder::openDevice (const juce::String& deviceIdentifier, juce::Strin
         return false;
     }
 
+    activeDeviceIdentifier = deviceIdentifier;
     input->start();
     return true;
 }
 
 void MidiRecorder::closeDevice()
 {
+    activeDeviceIdentifier.clear();
     if (input != nullptr)
     {
         input->stop();

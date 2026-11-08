@@ -419,6 +419,66 @@ int ArrangeView::clipAt (juce::Point<int> position) const
     return -1;
 }
 
+int ArrangeView::markerAt (juce::Point<int> position) const
+{
+    const auto markerRow = rulerArea.toFloat().withHeight (15.0f).withTrimmedTop (2.0f);
+
+    if (position.x < laneArea.getX() || position.x > laneArea.getRight()
+        || ! markerRow.contains (position.toFloat()))
+        return -1;
+
+    const auto& markers = engine.markers();
+
+    for (int i = 0; i < static_cast<int> (markers.size()); ++i)
+    {
+        const auto x = static_cast<float> (barToX (1.0 + markers[static_cast<size_t> (i)].ppq / 4.0));
+
+        if (std::abs (static_cast<float> (position.x) - x) <= 8.0f
+            || (position.x >= x + 8.0f && position.x <= x + 76.0f))
+            return i;
+    }
+
+    return -1;
+}
+
+void ArrangeView::renameMarker (int markerIndex)
+{
+    const auto& markers = engine.markers();
+
+    if (! juce::isPositiveAndBelow (markerIndex, static_cast<int> (markers.size())))
+        return;
+
+    auto safe = juce::Component::SafePointer<ArrangeView> (this);
+    auto* editor = new juce::AlertWindow ("Rename marker", "Marker name",
+                                          juce::MessageBoxIconType::NoIcon);
+    editor->addTextEditor ("name", juce::String (markers[static_cast<size_t> (markerIndex)].name), "Name");
+    editor->addButton ("Rename", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    editor->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    editor->enterModalState (true, juce::ModalCallbackFunction::create (
+        [safe, editor, markerIndex] (int result)
+        {
+            if (safe == nullptr || result != 1)
+                return;
+
+            const auto name = editor->getTextEditorContents ("name").trim();
+
+            if (name.isEmpty())
+                return;
+
+            auto updated = safe->engine.markers();
+
+            if (! juce::isPositiveAndBelow (markerIndex, static_cast<int> (updated.size())))
+                return;
+
+            updated[static_cast<size_t> (markerIndex)].name = name.toStdString();
+            safe->engine.setMarkers (std::move (updated));
+            safe->repaint (safe->rulerArea);
+
+            if (safe->onStatus)
+                safe->onStatus ("MARKER RENAMED / " + name);
+        }), true);
+}
+
 int ArrangeView::toolAt (juce::Point<int> position) const
 {
     for (int i = 0; i < static_cast<int> (toolRects.size()); ++i)
@@ -1170,15 +1230,16 @@ void ArrangeView::paintRuler (juce::Graphics& g)
         g.restoreState();
     }
 
-    // Section markers.
-    struct Marker { int bar; const char* name; };
-    const Marker markers[] { { 1, "INTRO" }, { 5, "VERSE" }, { 9, "HOOK" }, { 13, "OUTRO" } };
+    // Section markers come from the project (engine), not a decorative set:
+    // a saved marker must survive save/load and appear at its real PPQ.
+    const auto& markers = engine.markers();
     auto markerRow = rulerArea.toFloat().withHeight (15.0f).withTrimmedTop (2.0f);
     auto lastLabelRight = static_cast<float> (laneArea.getX()) - 20.0f;
 
     for (const auto& marker : markers)
     {
-        const auto x = static_cast<float> (barToX (marker.bar));
+        const auto bar = 1.0 + marker.ppq / nc::engine::beatsPerBarMidi;
+        const auto x = static_cast<float> (barToX (bar));
 
         if (x < laneArea.getX() - 1 || x > laneArea.getRight())
             continue;
@@ -1198,7 +1259,7 @@ void ArrangeView::paintRuler (juce::Graphics& g)
             const auto labelArea = juce::Rectangle<float> (x + 10.0f, markerRow.getY(),
                                                            juce::jmin (70.0f, laneArea.getRight() - x - 10.0f),
                                                            markerRow.getHeight()).toNearestInt();
-            g.drawText (marker.name, labelArea, juce::Justification::centredLeft, true);
+            g.drawText (juce::String (marker.name), labelArea, juce::Justification::centredLeft, true);
             lastLabelRight = x + 58.0f;
         }
     }
@@ -1306,38 +1367,12 @@ void ArrangeView::toggleArm (int track)
     repaint (laneBounds (index));
 }
 
-namespace
+bool ArrangeView::webEditClip (int clipIndex, const juce::var& patch)
 {
-int audioScheduleToNative (const std::vector<int>& kinds, int scheduleIndex)
-{
-    int seen = 0;
-
-    for (int i = 0; i < static_cast<int> (kinds.size()); ++i)
-    {
-        if (kinds[static_cast<size_t> (i)] == 0)
-            continue;
-
-        if (seen == scheduleIndex)
-            return i;
-
-        ++seen;
-    }
-
-    return -1;
-}
-} // namespace
-
-bool ArrangeView::webEditClip (int scheduleIndex, const juce::var& patch)
-{
-    std::vector<int> kinds;
-    kinds.reserve (clips.size());
-    for (const auto& clip : clips)
-        kinds.push_back (clip.kind);
-
-    const auto index = audioScheduleToNative (kinds, scheduleIndex);
+    const auto index = clipIndex;
     auto* obj = patch.getDynamicObject();
 
-    if (index < 0 || obj == nullptr)
+    if (index < 0 || index >= static_cast<int> (clips.size()) || obj == nullptr)
         return false;
 
     pushUndo();
@@ -1369,15 +1404,11 @@ bool ArrangeView::webEditClip (int scheduleIndex, const juce::var& patch)
     return true;
 }
 
-bool ArrangeView::webSplitClip (int scheduleIndex, double bar)
+bool ArrangeView::webSplitClip (int clipIndex, double bar)
 {
-    std::vector<int> kinds;
-    kinds.reserve (clips.size());
-    for (const auto& clip : clips)
-        kinds.push_back (clip.kind);
+    const auto index = clipIndex;
 
-    const auto index = audioScheduleToNative (kinds, scheduleIndex);
-    if (index < 0)
+    if (index < 0 || index >= static_cast<int> (clips.size()))
         return false;
 
     splitClip (index, juce::jmax (1, (int) std::round (bar)));
@@ -1386,34 +1417,60 @@ bool ArrangeView::webSplitClip (int scheduleIndex, double bar)
     return true;
 }
 
-bool ArrangeView::webDuplicateClip (int scheduleIndex)
+bool ArrangeView::webDuplicateClip (int clipIndex)
 {
-    std::vector<int> kinds;
-    kinds.reserve (clips.size());
-    for (const auto& clip : clips)
-        kinds.push_back (clip.kind);
+    const auto index = clipIndex;
 
-    const auto index = audioScheduleToNative (kinds, scheduleIndex);
-    if (index < 0)
+    if (index < 0 || index >= static_cast<int> (clips.size()))
         return false;
 
     selectedClip = index;
     return duplicateSelected();
 }
 
-bool ArrangeView::webDeleteClip (int scheduleIndex)
+bool ArrangeView::webDeleteClip (int clipIndex)
 {
-    std::vector<int> kinds;
-    kinds.reserve (clips.size());
-    for (const auto& clip : clips)
-        kinds.push_back (clip.kind);
+    const auto index = clipIndex;
 
-    const auto index = audioScheduleToNative (kinds, scheduleIndex);
-    if (index < 0)
+    if (index < 0 || index >= static_cast<int> (clips.size()))
         return false;
 
     selectedClip = index;
     return deleteSelected();
+}
+
+bool ArrangeView::webClipAt (int index, WebClipView& out) const
+{
+    if (index < 0 || index >= static_cast<int> (clips.size()))
+        return false;
+
+    const auto& clip = clips[static_cast<size_t> (index)];
+    out.track = clip.track;
+    out.startBar = clip.startBar;
+    out.lengthBars = clip.lengthBars;
+    out.name = clip.name;
+    out.kind = clip.kind;
+    out.gainDb = clip.gainDb;
+    out.fadeInBars = clip.fadeInBars;
+    out.fadeOutBars = clip.fadeOutBars;
+    out.crossfadeBars = clip.crossfadeBars;
+    out.compTake = clip.compTake;
+    out.assetId = clip.assetId;
+    out.sourceOffsetSeconds = clip.sourceOffsetSeconds;
+    out.notes = clip.kind == 0 ? &clip.notes : nullptr;
+    return true;
+}
+
+bool ArrangeView::webSetNotes (int clipIndex, const std::vector<nc::engine::MidiNote>& notes)
+{
+    if (clipIndex < 0 || clipIndex >= static_cast<int> (clips.size()))
+        return false;
+
+    if (clips[static_cast<size_t> (clipIndex)].kind != 0)
+        return false;
+
+    applyMidiNotes (clipIndex, notes);
+    return true;
 }
 
 void ArrangeView::webSetLoopRange (double startBar, double endBar)
@@ -2437,6 +2494,16 @@ void ArrangeView::mouseDown (const juce::MouseEvent& event)
 
     if (position.x >= laneArea.getX() && position.y < rulerArea.getBottom())
     {
+        if (const auto markerIndex = markerAt (position); markerIndex >= 0)
+        {
+            markerDragState = engine.markers();
+            markerDragIndex = markerIndex;
+            markerDragOriginX = position.x;
+            markerDragOriginPpq = markerDragState[static_cast<size_t> (markerIndex)].ppq;
+            setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
+            return;
+        }
+
         if (loopArea.contains (position))
         {
             const auto x = static_cast<double> (position.x);
@@ -2584,6 +2651,24 @@ void ArrangeView::mouseDown (const juce::MouseEvent& event)
 
 void ArrangeView::mouseDrag (const juce::MouseEvent& event)
 {
+    if (markerDragIndex >= 0 && markerDragIndex < static_cast<int> (markerDragState.size()))
+    {
+        const auto deltaBars = xToBar (static_cast<double> (event.getPosition().x))
+                             - xToBar (static_cast<double> (markerDragOriginX));
+        auto ppq = markerDragOriginPpq + deltaBars * 4.0;
+
+        if (snap)
+        {
+            const auto bar = std::round (1.0 + ppq / 4.0);
+            ppq = (bar - 1.0) * 4.0;
+        }
+
+        markerDragState[static_cast<size_t> (markerDragIndex)].ppq = juce::jmax (0.0, ppq);
+        engine.setMarkers (markerDragState);
+        repaint (rulerArea);
+        return;
+    }
+
     if (draggingPlayhead)
     {
         seekToX (event.getPosition().x);
@@ -2690,6 +2775,27 @@ void ArrangeView::mouseDrag (const juce::MouseEvent& event)
 
 void ArrangeView::mouseUp (const juce::MouseEvent&)
 {
+    if (markerDragIndex >= 0)
+    {
+        if (markerDragIndex < static_cast<int> (markerDragState.size()))
+        {
+            const auto& marker = markerDragState[static_cast<size_t> (markerDragIndex)];
+            engine.setMarkers (markerDragState);
+
+            if (onStatus)
+                onStatus ("MARKER MOVED / " + juce::String (marker.name) + " / BAR "
+                          + juce::String (1.0 + marker.ppq / 4.0, 2));
+        }
+
+        markerDragIndex = -1;
+        markerDragOriginX = 0;
+        markerDragOriginPpq = 0.0;
+        markerDragState.clear();
+        setMouseCursor (juce::MouseCursor::NormalCursor);
+        repaint (rulerArea);
+        return;
+    }
+
     if (dragClipIndex >= 0 && dragClipIndex < static_cast<int> (clips.size())
         && dragMode != DragMode::none)
     {
@@ -2727,6 +2833,12 @@ void ArrangeView::mouseUp (const juce::MouseEvent&)
 void ArrangeView::mouseDoubleClick (const juce::MouseEvent& event)
 {
     const auto position = event.getPosition();
+
+    if (const auto markerIndex = markerAt (position); markerIndex >= 0)
+    {
+        renameMarker (markerIndex);
+        return;
+    }
 
     if (loopArea.contains (position))
     {
@@ -2802,6 +2914,12 @@ void ArrangeView::mouseMove (const juce::MouseEvent& event)
     {
         hoverTrack = -1;
         hoverClip = -1;
+
+        if (markerAt (position) >= 0)
+        {
+            setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
+            return;
+        }
 
         if (loopArea.contains (position))
         {

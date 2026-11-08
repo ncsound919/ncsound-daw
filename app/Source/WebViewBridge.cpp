@@ -1,18 +1,14 @@
-// WebViewBridge: JUCE WebView2 host for the React pitch UI (VST DAW/ui).
+// WebViewBridge: JUCE WebView2 host for the React workspace (VST DAW/ui).
 //
 // buildWebOptions() registers every native function the React UI can call.
 // Each call is one row in the routing table below; the entries forward to
-// AudioEngine and the MainComponent pitch setters. See
-// ui/scripts/gen-native-routes.mjs which extracts this table into
+// AudioEngine, ArrangeView and the MainComponent setters. See
+// ui/scripts/gen-native-routes.mjs, which extracts this table into
 // ui/src/lib/nativeRoutes.generated.ts.
 //
-// Native functions (see ui/src/lib/bridge.ts):
-//   getState()                     -> AppState (bpm + pitch + tracks)
-//   getPitch()                     -> { globalPitch, tracks[] pitch }
-//   setGlobalPitch(patch)          -> AppState
-//   setTrackPitch(track, patch)    -> AppState
-//   setInstrumentPitch(track, patch) -> AppState
-// Projections: getState/getPitch are read-only (non-mutating).
+// Every route answers with the full state snapshot (`done (buildState())`),
+// except the read-only transport/pitch projections. Routes run on the message
+// thread; they never wait for a scan or a plug-in load to finish.
 #include "MainComponent.h"
 
 #include <VstawWeb.h>
@@ -93,6 +89,108 @@ juce::var pitchToVar (const nc::engine::PitchStack& p)
     o->setProperty ("tuningHz", (double) p.tuningHz);
     return juce::var (o);
 }
+
+juce::var noteToVar (const nc::engine::MidiNote& n)
+{
+    auto* o = new juce::DynamicObject();
+    o->setProperty ("startBeat", n.startBeat);
+    o->setProperty ("lengthBeats", n.lengthBeats);
+    o->setProperty ("pitch", n.pitch);
+    o->setProperty ("velocity", n.velocity);
+    o->setProperty ("channel", n.channel);
+    return juce::var (o);
+}
+
+std::vector<nc::engine::MidiNote> notesFromVar (const juce::var& value)
+{
+    std::vector<nc::engine::MidiNote> notes;
+    const auto* array = value.getArray();
+
+    if (array == nullptr)
+        return notes;
+
+    notes.reserve (static_cast<size_t> (array->size()));
+
+    for (const auto& item : *array)
+    {
+        auto* obj = item.getDynamicObject();
+
+        if (obj == nullptr)
+            continue;
+
+        nc::engine::MidiNote note;
+        note.startBeat = finiteOr (obj->getProperty ("startBeat"), 0.0);
+        note.lengthBeats = finiteOr (obj->getProperty ("lengthBeats"), 0.0);
+        note.pitch = static_cast<int> (std::round (finiteOr (obj->getProperty ("pitch"), 60.0)));
+        note.velocity = static_cast<int> (std::round (finiteOr (obj->getProperty ("velocity"), 100.0)));
+        note.channel = static_cast<int> (std::round (finiteOr (obj->getProperty ("channel"), 0.0)));
+        notes.push_back (note);
+    }
+
+    return notes;
+}
+
+AutomationLane::Curve curveFromVar (const juce::var& value)
+{
+    const auto name = value.toString();
+
+    if (name == "step") return AutomationLane::Curve::step;
+    if (name == "smooth") return AutomationLane::Curve::smooth;
+    return AutomationLane::Curve::linear;
+}
+
+// UI 0..1 normalised <-> engine units: volume is linear gain 0..1, pan -1..1.
+float uiToEngineValue (bool isPan, double uiValue)
+{
+    if (! std::isfinite (uiValue))
+        return isPan ? 0.0f : 1.0f;
+
+    return isPan ? (float) juce::jlimit (-1.0, 1.0, uiValue * 2.0 - 1.0)
+                 : (float) juce::jlimit (0.0, 1.0, uiValue);
+}
+
+double engineToUiValue (bool isPan, float engineValue)
+{
+    if (! std::isfinite (static_cast<double> (engineValue)))
+        return isPan ? 0.5 : 1.0;
+
+    return isPan ? (static_cast<double> (engineValue) + 1.0) * 0.5
+                 : static_cast<double> (juce::jlimit (0.0f, 1.0f, engineValue));
+}
+
+// The web lane owns one curve; the engine stores one per point. Echo the
+// dominant curve so a read/write round-trip does not silently switch modes.
+juce::var automationLaneToVar (int track, AutomationParam param, const AutomationLane& lane)
+{
+    const auto isPan = param == AutomationParam::Pan;
+    auto* o = new juce::DynamicObject();
+    o->setProperty ("track", track);
+    o->setProperty ("param", isPan ? "pan" : "volume");
+
+    int curves[3] { 0, 0, 0 };
+    for (int i = 0; i < lane.numPoints(); ++i)
+        ++curves[static_cast<int> (lane.pointAt (i).curve)];
+
+    int dominant = 0;
+    for (int i = 1; i < 3; ++i)
+        if (curves[i] > curves[dominant])
+            dominant = i;
+
+    o->setProperty ("curve", AutomationLane::curveName (
+                                 static_cast<AutomationLane::Curve> (dominant)));
+
+    juce::Array<juce::var> points;
+    for (int i = 0; i < lane.numPoints(); ++i)
+    {
+        const auto point = lane.pointAt (i);
+        auto* p = new juce::DynamicObject();
+        p->setProperty ("beat", point.beats);
+        p->setProperty ("value", engineToUiValue (isPan, point.value));
+        points.add (juce::var (p));
+    }
+    o->setProperty ("points", points);
+    return juce::var (o);
+}
 } // namespace
 
 juce::var MainComponent::buildPitch() const
@@ -148,35 +246,64 @@ juce::var MainComponent::buildState() const
     o->setProperty ("selectedTrack", selectedTrack);
     o->setProperty ("globalPitch", pitchToVar (engine.globalPitchStack()));
     o->setProperty ("projectDirty", false);
+    o->setProperty ("undoDepth", static_cast<int> (arrange.undoDepth()));
+    o->setProperty ("redoDepth", static_cast<int> (arrange.redoDepth()));
     o->setProperty ("transport", buildTransport());
 
     juce::Array<juce::var> clips;
     const auto secondsPerBar = 240.0 / juce::jmax (1.0, engine.getBpm());
 
-    for (const auto& clip : engine.timelineClips())
+    // Arrangement order, audio and MIDI together. The UI indexes this list
+    // directly, so the clip the user clicked is always the clip a route edits.
+    for (int index = 0; index < arrange.webClipCount(); ++index)
     {
-        auto* c = new juce::DynamicObject();
-        c->setProperty ("track", clip.track);
-        c->setProperty ("startBar", clip.startBar);
-        c->setProperty ("lengthBars", clip.lengthBars);
-        c->setProperty ("assetId", clip.assetId);
-        c->setProperty ("gainDb", (double) clip.gainDb);
-        c->setProperty ("name", engine.assetName (clip.assetId));
-        c->setProperty ("fadeInBars", (double) clip.fadeInBars);
-        c->setProperty ("fadeOutBars", (double) clip.fadeOutBars);
+        ArrangeView::WebClipView source;
 
-        // The waveform covers what the clip plays, not the whole asset: a clip
-        // trimmed into the middle of a take must show that middle.
-        juce::Array<juce::var> envelope;
-        const auto peaks = engine.assetPeakEnvelope (clip.assetId, clip.sourceOffsetSeconds,
-                                                    clip.lengthBars * secondsPerBar, 96);
-        for (const auto peak : peaks)
-            envelope.add ((double) peak);
-        c->setProperty ("peaks", envelope);
+        if (! arrange.webClipAt (index, source))
+            continue;
+
+        auto* c = new juce::DynamicObject();
+        c->setProperty ("index", index);
+        c->setProperty ("track", source.track);
+        c->setProperty ("kind", source.kind == 0 ? "midi" : "audio");
+        c->setProperty ("startBar", source.startBar);
+        c->setProperty ("lengthBars", source.lengthBars);
+        c->setProperty ("assetId", source.assetId);
+        c->setProperty ("gainDb", (double) source.gainDb);
+        c->setProperty ("name", source.name.isNotEmpty() ? source.name
+                                                         : engine.assetName (source.assetId));
+        c->setProperty ("fadeInBars", (double) source.fadeInBars);
+        c->setProperty ("fadeOutBars", (double) source.fadeOutBars);
+        c->setProperty ("crossfadeBars", (double) source.crossfadeBars);
+        c->setProperty ("compTake", source.compTake);
+
+        if (source.kind == 0)
+        {
+            juce::Array<juce::var> notes;
+
+            if (source.notes != nullptr)
+                for (const auto& note : *source.notes)
+                    notes.add (noteToVar (note));
+
+            c->setProperty ("notes", notes);
+        }
+        else
+        {
+            // The waveform covers what the clip plays, not the whole asset: a
+            // clip trimmed into the middle of a take must show that middle.
+            juce::Array<juce::var> envelope;
+            const auto peaks = engine.assetPeakEnvelope (source.assetId,
+                                                        source.sourceOffsetSeconds,
+                                                        source.lengthBars * secondsPerBar, 96);
+            for (const auto peak : peaks)
+                envelope.add ((double) peak);
+            c->setProperty ("peaks", envelope);
+        }
 
         clips.add (juce::var (c));
     }
     o->setProperty ("clips", clips);
+
     juce::Array<juce::var> tracks;
     const auto active = engine.getActiveTrackCount();
     for (int i = 0; i < active; ++i)
@@ -214,6 +341,46 @@ juce::var MainComponent::buildState() const
         tracks.add (juce::var (t));
     }
     o->setProperty ("tracks", tracks);
+
+    // Full catalogue projection: the registry id is the load key, so registry
+    // rows must be present even before a folder scan has linked them.
+    juce::Array<juce::var> plugins;
+    for (const auto& entry : engine.pluginCatalog().snapshot())
+    {
+        auto* p = new juce::DynamicObject();
+        p->setProperty ("id", entry.id);
+        p->setProperty ("name", entry.name);
+        p->setProperty ("vendor", entry.manufacturer);
+        p->setProperty ("category", entry.isInstrument ? "instrument" : "effect");
+        p->setProperty ("format", entry.description.pluginFormatName);
+        p->setProperty ("path", entry.description.fileOrIdentifier);
+        p->setProperty ("missing", entry.external && ! entry.scanned);
+        p->setProperty ("scanned", entry.scanned);
+        p->setProperty ("registryRow", entry.registryRow);
+        plugins.add (juce::var (p));
+    }
+    o->setProperty ("plugins", plugins);
+
+    auto* scan = new juce::DynamicObject();
+    scan->setProperty ("scanning", engine.pluginCatalog().isScanning());
+    scan->setProperty ("progress", (double) engine.pluginCatalog().scanProgress());
+    scan->setProperty ("status", engine.pluginCatalog().lastScanStatus());
+    o->setProperty ("pluginScan", juce::var (scan));
+
+    juce::Array<juce::var> automation;
+    for (int i = 0; i < active; ++i)
+        for (const auto param : { AutomationParam::Volume, AutomationParam::Pan })
+        {
+            const auto lane = engine.trackAutomation (i, param);
+
+            if (! lane.empty())
+                automation.add (automationLaneToVar (i, param, lane));
+        }
+    o->setProperty ("automation", automation);
+
+    if (active > 0 && selectedTrack >= 0 && selectedTrack < active)
+        o->setProperty ("channel", engine.mixChannel (selectedTrack).toVar());
+
     return juce::var (o);
 }
 
@@ -246,7 +413,7 @@ juce::WebBrowserComponent::Options MainComponent::buildWebOptions()
 
     // Native-function routing table. Adding a call the UI can make is adding
     // one row here. The order matches ui/src/lib/nativeRoutes.generated.ts.
-    // getState/getPitch are read-only; the rest mutate the engine and echo state.
+    // getState/getPitch/getTransport are read-only; the rest mutate and echo state.
     const std::pair<const char*, NativeFunction> routes[] =
     {
         { "getState", [this] (const Args&, Completion done)
@@ -365,6 +532,16 @@ juce::WebBrowserComponent::Options MainComponent::buildWebOptions()
               }
               done (buildState());
           } },
+        { "midiLearn", [this] (const Args& a, Completion done)
+          {
+              if (! a.isEmpty())
+              {
+                  const auto target = a[0].toString().toStdString();
+                  engine.getMidiLearn().armLearn (target, nc::MidiLearnManager::Mode::absolute);
+                  setStatus ("MIDI LEARN ARMED / " + juce::String (target) + " — turn a knob", false, 4.0);
+              }
+              done (buildState());
+          } },
         { "setSelectedTrack", [this] (const Args& a, Completion done)
           {
               if (! a.isEmpty())
@@ -445,6 +622,166 @@ juce::WebBrowserComponent::Options MainComponent::buildWebOptions()
           {
               if (a.size() >= 2)
                   arrange.webSetLoopRange (finiteOr (a[0], 1.0), finiteOr (a[1], 17.0));
+              pushState();
+              done (buildState());
+          } },
+        { "setClipNotes", [this] (const Args& a, Completion done)
+          {
+              // A malformed payload must not erase a clip: only replace notes
+              // when the caller actually sent an array.
+              if (a.size() >= 2 && a[1].isArray())
+                  arrange.webSetNotes ((int) std::round (finiteOr (a[0], -1.0)),
+                                       notesFromVar (a[1]));
+              pushState();
+              done (buildState());
+          } },
+        { "setAutomationLane", [this] (const Args& a, Completion done)
+          {
+              if (a.size() >= 2)
+              {
+                  auto* obj = a[1].getDynamicObject();
+                  const auto track = (int) std::round (finiteOr (a[0], -1.0));
+                  const auto paramName = obj != nullptr ? obj->getProperty ("param").toString()
+                                                        : juce::String();
+                  const auto* array = obj != nullptr ? obj->getProperty ("points").getArray()
+                                                     : nullptr;
+
+                  if (obj != nullptr && array != nullptr
+                      && track >= 0 && track < engine.getActiveTrackCount()
+                      && (paramName == "pan" || paramName == "volume"))
+                  {
+                      const auto param = paramName == "pan" ? AutomationParam::Pan
+                                                            : AutomationParam::Volume;
+                      const auto curve = curveFromVar (obj->getProperty ("curve"));
+                      std::vector<AutomationLane::Point> points;
+                      points.reserve (static_cast<size_t> (array->size()));
+
+                      for (const auto& item : *array)
+                      {
+                          auto* point = item.getDynamicObject();
+
+                          if (point == nullptr)
+                              continue;
+
+                          points.push_back ({ finiteOr (point->getProperty ("beat"), 0.0),
+                                              uiToEngineValue (param == AutomationParam::Pan,
+                                                               finiteOr (point->getProperty ("value"), 0.0)),
+                                              curve });
+                      }
+
+                      // setPoints sorts, bounds to 512 points and drops
+                      // non-finite entries; the bridge never hand-clamps.
+                      AutomationLane lane;
+                      lane.setPoints (points);
+
+                      if (lane.empty())
+                          engine.clearTrackAutomation (track, param);
+                      else
+                          engine.setTrackAutomation (track, param, lane);
+                  }
+              }
+              pushState();
+              done (buildState());
+          } },
+        { "loadPlugin", [this] (const Args& a, Completion done)
+          {
+              bool ok = false;
+              juce::String message = "Unknown plug-in";
+
+              if (a.size() >= 3)
+              {
+                  const auto track = (int) std::round (finiteOr (a[0], -1.0));
+                  const auto slot = (int) std::round (finiteOr (a[1], -1.0));
+                  const auto id = a[2].toString();
+                  const auto entry = engine.pluginCatalog().find (id);
+
+                  if (track < 0 || track >= engine.getActiveTrackCount() || id.isEmpty())
+                      message = "Track out of range";
+                  else if (! entry.has_value())
+                      message = "Unknown plug-in id";
+                  else if (entry->isInstrument)
+                  {
+                      juce::String error;
+                      ok = engine.loadTrackInstrumentFromId (track, id, error);
+                      message = ok ? "LOADING " + entry->name : error;
+                  }
+                  else if (slot < 0 || slot > 3)
+                      message = "Choose a user insert slot (1-4)";
+                  else
+                  {
+                      juce::String error;
+                      ok = engine.loadTrackInsertFromId (track, slot, id, error);
+                      message = ok ? "LOADING " + entry->name + " / INS " + juce::String (slot + 1)
+                                   : error;
+                  }
+              }
+
+              setStatus (message, ! ok);
+              pushState();
+              done (buildState());
+          } },
+        { "loadMasterPlugin", [this] (const Args& a, Completion done)
+          {
+              bool ok = false;
+              juce::String message = "Unknown plug-in";
+
+              if (! a.isEmpty() && a[0].toString().isNotEmpty())
+              {
+                  const auto description = engine.pluginCatalog().findDescription (a[0].toString());
+
+                  if (description.has_value())
+                  {
+                      juce::String error;
+                      ok = engine.loadMasterInsert (*description, error);
+                      message = ok ? "MASTER INSERT / " + description->name
+                                   : (error.isNotEmpty() ? error : "PLUGIN REFUSED TO LOAD");
+                  }
+              }
+
+              setStatus (message, ! ok);
+              pushState();
+              done (buildState());
+          } },
+        { "setChannelParam", [this] (const Args& a, Completion done)
+          {
+              if (a.size() >= 3)
+              {
+                  const auto track = (int) std::round (finiteOr (a[0], -1.0));
+                  const auto id = a[1].toString();
+                  const auto value = finiteOr (a[2], 0.0);
+
+                  if (track >= 0 && track < engine.getActiveTrackCount()
+                      && id.isNotEmpty() && std::isfinite (value))
+                      engine.mixChannel (track).setParam (id, (float) value);
+              }
+              pushState();
+              done (buildState());
+          } },
+        { "scanPlugins", [this] (const Args&, Completion done)
+          {
+              // Start the folder scan and answer immediately; the worker pushes
+              // fresh state when it finishes, so the message thread never waits.
+              engine.pluginCatalog().scanAsync (
+                  [safe = juce::Component::SafePointer<MainComponent> (this)]
+                  (bool success, juce::String message)
+                  {
+                      if (safe == nullptr)
+                          return;
+
+                      safe->setStatus ("SCAN / " + message, ! success);
+                      safe->pushState();
+                  });
+              done (buildState());
+          } },
+        { "undo", [this] (const Args&, Completion done)
+          {
+              arrange.undo();
+              pushState();
+              done (buildState());
+          } },
+        { "redo", [this] (const Args&, Completion done)
+          {
+              arrange.redo();
               pushState();
               done (buildState());
           } },

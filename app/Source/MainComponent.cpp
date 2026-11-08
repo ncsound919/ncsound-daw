@@ -5,6 +5,8 @@
 #include "MixPlan.h"
 #include "SettingsWindow.h"
 
+#include <algorithm>
+#include <cmath>
 #include <thread>
 #include "ProjectFile.h"
 
@@ -543,7 +545,8 @@ void MainComponent::paintHeader (juce::Graphics& g)
         g.setColour (theme::accentHot);
         g.setFont (theme::clock (12.0f));
         g.drawText (juce::String (engine.currentSampleRate() / 1000.0, 1) + " kHz / "
-                        + juce::String (engine.currentBufferSize()) + " smp",
+                        + juce::String (engine.currentBufferSize()) + " smp / "
+                        + juce::String (engine.totalLatencyMs(), 1) + " ms",
                     top.toNearestInt(), juce::Justification::centredRight, false);
 
         auto device = engine.deviceDescription();
@@ -892,6 +895,8 @@ void MainComponent::discardToEmptySession()
     engine.setPlaying (false);
     engine.resetPosition();
     engine.setLoopBars (1.0, 17.0);
+    engine.setBpm (120.0);
+    engine.setMarkers ({});
 
     arrange.clearSession();
     engine.setTimelineClips ({});
@@ -1154,7 +1159,17 @@ void MainComponent::openMenu (int menuIndex)
             menu.addSectionHeader ("MIDI");
             menu.addItem (2050, "Edit MIDI Clip (Piano Roll)", arrange.hasSelectedClip());
             menu.addItem (2051, "Import MIDI File...", true);
+            menu.addItem (2053, "Export Selected Track MIDI...", true);
+            menu.addSeparator();
+            menu.addItem (2061, "Learn MIDI (assign next knob)...", true);
+            menu.addItem (2062, "Voice to MIDI (import audio)...", true);
             menu.addItem (2052, "Edit Automation Lanes...");
+            menu.addSeparator();
+            menu.addSectionHeader ("MARKERS");
+            menu.addItem (2060, "Add Marker at Playhead");
+            menu.addItem (2061, "Next Marker");
+            menu.addItem (2062, "Previous Marker");
+            menu.addItem (2063, "Delete Marker at Playhead", ! engine.markers().empty());
             menu.addSeparator();
             menu.addSectionHeader ("AUDIOSUITE");
             menu.addItem (2100, "LoFi", arrange.hasSelectedClip());
@@ -1710,6 +1725,76 @@ void MainComponent::handleMenuResult (int result)
                                   });
             break;
         }
+        case 2053:
+        {
+            auto chooser = std::make_shared<juce::FileChooser> (
+                "Export selected track MIDI",
+                juce::File::getSpecialLocation (juce::File::userMusicDirectory)
+                    .getChildFile (trackName (selectedTrack) + ".mid"),
+                "*.mid");
+
+            chooser->launchAsync (juce::FileBrowserComponent::saveMode
+                                      | juce::FileBrowserComponent::canSelectFiles
+                                      | juce::FileBrowserComponent::warnAboutOverwriting,
+                                  [safe = juce::Component::SafePointer<MainComponent> (this), chooser] (const juce::FileChooser& chosen)
+                                  {
+                                      if (safe == nullptr)
+                                          return;
+
+                                      auto file = chosen.getResult();
+
+                                      if (file == juce::File())
+                                          return;
+
+                                      if (! file.hasFileExtension ("mid") && ! file.hasFileExtension ("midi"))
+                                          file = file.withFileExtension ("mid");
+
+                                      const auto ok = safe->engine.exportMidiFile (file, safe->selectedTrack);
+                                      safe->setStatus (ok ? "MIDI EXPORTED / " + file.getFileName()
+                                                          : "MIDI EXPORT FAILED / NO MIDI ON " + safe->trackName (safe->selectedTrack),
+                                                       ! ok, 6.0);
+                                  });
+            break;
+        }
+
+        case 2060: addMarkerAtPlayhead(); break;
+        case 2061: jumpToMarker (true); break;
+        case 2062: jumpToMarker (false); break;
+        case 2063: deleteMarkerAtPlayhead(); break;
+        case 2064:
+        case 2065:
+        case 2066:
+        {
+            // MIDI Learn placeholder — next CC/Note binds to the selected
+            // track's first filter knob (wire a knob's Learn button here).
+            engine.getMidiLearn().armLearn (("track." + juce::String (selectedTrack) + ".filterCutoff").toStdString(), nc::MidiLearnManager::Mode::absolute);
+            setStatus ("MIDI LEARN ARMED / turn a knob on your controller", false, 4.0);
+            break;
+        }
+        case 2067:
+        {
+            auto chooser = std::make_shared<juce::FileChooser> ("Voice to MIDI — pick a vocal WAV",
+                                                                  juce::File::getSpecialLocation (juce::File::userHomeDirectory),
+                                                                  "*.wav;*.aif;*.aiff");
+            chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                                  [safe = juce::Component::SafePointer<MainComponent> (this), chooser] (const juce::FileChooser& chosen)
+                                  {
+                                      if (safe == nullptr || chosen.getResult() == juce::File())
+                                          return;
+                                      auto clip = safe->engine.voiceToMidiClip (chosen.getResult(), safe->selectedTrack, safe->engine.getBpm());
+                                      if (clip.notes.empty())
+                                      {
+                                          safe->setStatus ("VOICE TO MIDI FAILED / " + safe->engine.lastVoiceError(), true, 6.0);
+                                          return;
+                                      }
+                                      const auto index = safe->engine.addMidiClip (clip);
+                                      (void) index;
+                                      safe->arrange.refresh();
+                                      safe->setStatus ("VOICE TO MIDI / " + juce::String (clip.notes.size()) + " NOTES FROM " + chosen.getResult().getFileName(), false, 6.0);
+                                  });
+            break;
+        }
+
         case 2004: setStatus ("All clips already visible in this preview session"); break;
         case 2005: openSettings(); break;
 
@@ -1920,6 +2005,92 @@ void MainComponent::handleMenuResult (int result)
     }
 }
 
+void MainComponent::addMarkerAtPlayhead()
+{
+    const auto map = engine.tempoMap();
+    const auto ppq = nc::engine::secondsToPpq (map, engine.positionSeconds());
+    auto markers = engine.markers();
+
+    for (const auto& marker : markers)
+    {
+        if (std::abs (marker.ppq - ppq) < 0.001)
+        {
+            setStatus ("MARKER ALREADY AT PLAYHEAD / " + juce::String (marker.name), true);
+            return;
+        }
+    }
+
+    const auto name = "MARKER " + juce::String (static_cast<int> (markers.size()) + 1);
+    markers.push_back ({ ppq, name.toStdString() });
+    engine.setMarkers (std::move (markers));
+    arrange.refresh();
+    setStatus ("MARKER ADDED / " + name + " / BAR "
+               + juce::String (1.0 + ppq / nc::engine::beatsPerBarMidi, 2));
+}
+
+void MainComponent::deleteMarkerAtPlayhead()
+{
+    const auto map = engine.tempoMap();
+    const auto ppq = nc::engine::secondsToPpq (map, engine.positionSeconds());
+    auto markers = engine.markers();
+
+    const auto found = std::find_if (markers.begin(), markers.end(), [ppq] (const auto& marker)
+    {
+        return std::abs (marker.ppq - ppq) < 0.001;
+    });
+
+    if (found == markers.end())
+    {
+        setStatus ("NO MARKER AT PLAYHEAD", true);
+        return;
+    }
+
+    const auto name = juce::String (found->name);
+    markers.erase (found);
+    engine.setMarkers (std::move (markers));
+    arrange.refresh();
+    setStatus ("MARKER DELETED / " + name);
+}
+
+void MainComponent::jumpToMarker (bool next)
+{
+    const auto map = engine.tempoMap();
+    const auto ppq = nc::engine::secondsToPpq (map, engine.positionSeconds());
+    const auto& markers = engine.markers();
+    const nc::engine::Marker* target = nullptr;
+
+    if (next)
+    {
+        for (const auto& marker : markers)
+        {
+            if (marker.ppq > ppq + 0.001)
+            {
+                target = &marker;
+                break;
+            }
+        }
+    }
+    else
+    {
+        for (const auto& marker : markers)
+        {
+            if (marker.ppq < ppq - 0.001)
+                target = &marker;
+        }
+    }
+
+    if (target == nullptr)
+    {
+        setStatus (next ? "NO NEXT MARKER" : "NO PREVIOUS MARKER", true);
+        return;
+    }
+
+    engine.setPositionSeconds (nc::engine::ppqToSeconds (map, target->ppq));
+    arrange.refresh();
+    setStatus ("MARKER / " + juce::String (target->name) + " / BAR "
+               + juce::String (1.0 + target->ppq / nc::engine::beatsPerBarMidi, 2));
+}
+
 void MainComponent::openMasterInsertMenu()
 {
     juce::PopupMenu menu;
@@ -1980,6 +2151,28 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     if (key.getModifiers().isCommandDown())
     {
         const auto commandCharacter = juce::CharacterFunctions::toLowerCase (key.getTextCharacter());
+
+        if (code == juce::KeyPress::rightKey)
+        {
+            jumpToMarker (true);
+            return true;
+        }
+
+        if (code == juce::KeyPress::leftKey)
+        {
+            jumpToMarker (false);
+            return true;
+        }
+
+        if (commandCharacter == 'm')
+        {
+            if (key.getModifiers().isShiftDown())
+                deleteMarkerAtPlayhead();
+            else
+                addMarkerAtPlayhead();
+
+            return true;
+        }
 
         if (commandCharacter == 'z' && ! key.getModifiers().isShiftDown())
         {

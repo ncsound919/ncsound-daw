@@ -40,6 +40,8 @@ target_sources(NCMixRackTests PRIVATE
     Source/HostedInsert.cpp
     Source/BuiltinSynth.cpp
     Source/MidiRecorder.cpp
+    Source/MidiLearnManager.cpp
+    Source/MidiLearnManager.h
     Source/TrackInsertRack.cpp
     Source/AuxBus.cpp
     Source/Automation.cpp
@@ -136,6 +138,8 @@ juce_add_binary_data(VstawWebUI
 
 target_sources(NCSoundHub PRIVATE
     Source/Main.cpp
+    Source/MidiLearnManager.cpp
+    Source/MidiLearnManager.h
     Source/MixRack.h
     Source/MixologyBridge.cpp
     Source/MixologyBridge.h
@@ -199,6 +203,7 @@ target_compile_definitions(NCSoundHub PRIVATE
     JUCE_USE_WIN_WEBVIEW2=1
     JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING=1
     JUCE_USE_CURL=0
+    JUCE_USE_ASIO=1
     JUCE_PLUGINHOST_VST3=1)
 
 # Windows: declare DPI awareness in the app manifest so the WebView content

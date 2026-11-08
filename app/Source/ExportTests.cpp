@@ -206,6 +206,134 @@ TEST_CASE ("stems export writes one file per active track", "[export]")
         REQUIRE (stem.existsAsFile());
 }
 
+TEST_CASE ("silent stems keep the requested format and tempo-map length", "[export]")
+{
+    nc::AudioEngine engine;
+
+    nc::engine::TempoMap map;
+    map.points.push_back ({ 0.0, 120.0 });
+    map.points.push_back ({ 4.0, 60.0 }); // bar 2 drops to 60 BPM
+    engine.setTempoMap (map);
+
+    REQUIRE (scheduleDemoClip (engine, 2.0));
+
+    const auto folder = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                            .getChildFile ("nc-stems-silent-format");
+    folder.deleteRecursively();
+
+    nc::engine::export_::ExportOptions options;
+    options.format = nc::engine::export_::Format::flac;
+    options.bitDepth = 24;
+    options.sampleRate = static_cast<int> (engine.currentSampleRate());
+
+    std::vector<juce::File> written;
+    juce::String error;
+    const auto count = engine.exportStems (folder, 1.0, 3.0, options, written, error);
+
+    REQUIRE (count == nc::AudioEngine::demoTrackCount);
+    REQUIRE (written.size() == static_cast<size_t> (count));
+
+    // Track 0 has the demo clip; every other track takes the silent fast path.
+    const auto& silentStem = written[1];
+    REQUIRE (silentStem.existsAsFile());
+    REQUIRE (silentStem.hasFileExtension ("flac"));
+
+    const auto silent = readWav (silentStem);
+    REQUIRE (silent.isReadable());
+
+    // 0..4 PPQ at 120 = 2 s, 4..8 PPQ at 60 = 4 s; the silent stem must match
+    // the audible export's tempo-map length, not a constant-BPM approximation.
+    const auto expected = nc::engine::ppqToSeconds (map, 8.0) * silent.sampleRate;
+    REQUIRE (static_cast<double> (silent.audio.getNumSamples()) == Catch::Approx (expected).margin (2.0));
+}
+
+TEST_CASE ("MIDI export writes the selected track and refuses an empty one", "[export]")
+{
+    nc::AudioEngine engine;
+
+    nc::AudioEngine::MidiTimelineClip clip;
+    clip.track = 0;
+    clip.startBar = 1.0;
+    clip.lengthBars = 2.0;
+    clip.name = "EXPORT TEST";
+    clip.notes = { { 0.0, 1.0, 60, 100, 0 }, { 2.0, 1.0, 64, 90, 0 } };
+    engine.setMidiClips ({ clip });
+
+    const auto file = tempWav ("nc-midi-export.mid");
+    REQUIRE (engine.exportMidiFile (file, 0));
+    REQUIRE (file.existsAsFile());
+
+    juce::MidiFile midi;
+    juce::FileInputStream input (file);
+    REQUIRE (input.openedOk());
+    REQUIRE (midi.readFrom (input));
+    REQUIRE (midi.getNumTracks() > 0);
+    REQUIRE (midi.getTrack (0)->getNumEvents() >= 4);
+
+    // The track is chosen explicitly; exporting a track with no MIDI must not
+    // silently produce an empty file.
+    REQUIRE_FALSE (engine.exportMidiFile (file, 1));
+}
+
+TEST_CASE ("MIDI export carries the tempo map and section markers", "[export]")
+{
+    nc::AudioEngine engine;
+
+    nc::engine::TempoMap map;
+    map.points.push_back ({ 0.0, 120.0 });
+    map.points.push_back ({ 4.0, 60.0 }); // bar 2
+    engine.setTempoMap (map);
+    engine.setMarkers ({ { 0.0, "INTRO" }, { 4.0, "VERSE" } });
+
+    nc::AudioEngine::MidiTimelineClip clip;
+    clip.track = 0;
+    clip.startBar = 1.0;
+    clip.lengthBars = 2.0;
+    clip.notes = { { 0.0, 1.0, 60, 100, 0 }, { 4.0, 1.0, 64, 90, 0 } };
+    engine.setMidiClips ({ clip });
+
+    const auto file = tempWav ("nc-midi-export-tempo.mid");
+    REQUIRE (engine.exportMidiFile (file, 0));
+
+    juce::MidiFile midi;
+    juce::FileInputStream input (file);
+    REQUIRE (input.openedOk());
+    REQUIRE (midi.readFrom (input));
+
+    std::vector<double> tempoSecondsPerQuarter;
+    std::vector<double> markerTicks;
+    bool hasTimeSignature = false;
+
+    for (int trackIndex = 0; trackIndex < midi.getNumTracks(); ++trackIndex)
+    {
+        const auto* sequence = midi.getTrack (trackIndex);
+        REQUIRE (sequence != nullptr);
+
+        for (int eventIndex = 0; eventIndex < sequence->getNumEvents(); ++eventIndex)
+        {
+            const auto& message = sequence->getEventPointer (eventIndex)->message;
+
+            if (message.isTempoMetaEvent())
+                tempoSecondsPerQuarter.push_back (message.getTempoSecondsPerQuarterNote());
+
+            if (message.isTimeSignatureMetaEvent())
+                hasTimeSignature = true;
+
+            if (message.isTextMetaEvent() && message.getTextFromTextMetaEvent() == "VERSE")
+                markerTicks.push_back (sequence->getEventTime (eventIndex));
+        }
+    }
+
+    // A DAW opening this file must see 120 then 60 BPM, not a default 120
+    // tempo with the notes at the wrong wall-clock positions.
+    REQUIRE (tempoSecondsPerQuarter.size() == 2);
+    REQUIRE (tempoSecondsPerQuarter[0] == Catch::Approx (0.5).margin (0.0001));
+    REQUIRE (tempoSecondsPerQuarter[1] == Catch::Approx (1.0).margin (0.0001));
+    REQUIRE (hasTimeSignature);
+    REQUIRE (markerTicks.size() == 1);
+    REQUIRE (markerTicks[0] == Catch::Approx (4.0 * 480.0).margin (0.01));
+}
+
 TEST_CASE ("export restores the session sample rate it borrowed", "[export]")
 {
     nc::AudioEngine engine;

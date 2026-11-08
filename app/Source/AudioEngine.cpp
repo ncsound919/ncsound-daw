@@ -7,6 +7,7 @@
 #include <nc/engine/MidiSchedule.hpp>
 #include <nc/engine/ProjectLimits.hpp>
 #include <nc/engine/StreamWindow.hpp>
+#include <nc/engine/VoiceToMidi.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -49,14 +50,15 @@ AudioEngine::AudioEngine()
     midiSlot.owned = std::make_unique<std::vector<MidiTimelineClip>> ();
     midiSlot.live.store (midiSlot.owned.get(), std::memory_order_release);
 
-    // Ask for capture channels so recording has something to record, but never
-    // lose playback on a machine without an input: fall back to output-only.
+    // Restore the stored interface (device/rate/buffer/midi). Falls back to
+    // OS defaults when the stored device is gone — playback never dies.
     auto error = deviceManager.initialiseWithDefaultDevices (2, 2);
 
     if (error.isNotEmpty())
         error = deviceManager.initialiseWithDefaultDevices (0, 2);
 
     deviceInfo = error.isNotEmpty() ? "no audio device" : deviceManager.getCurrentAudioDeviceType();
+    restoreAudioSettings();
     deviceManager.addAudioCallback (this);
 
     // The shipped project is a demo record. These assets make Play audible and
@@ -77,8 +79,148 @@ AudioEngine::AudioEngine()
     applyVocalRoles();
 }
 
+// ----------------------------------------------------------------------
+// Audio interface persistence (JUCE ApplicationProperties).
+// ----------------------------------------------------------------------
+static juce::File audioSettingsFile()
+{
+    return juce::File::getSpecialLocation (juce::File::commonApplicationDataDirectory)
+        .getChildFile ("NCSound Music Hub").getChildFile ("audio-settings.xml");
+}
+
+static juce::PropertiesFile::Options audioPropsOptions()
+{
+    juce::PropertiesFile::Options o;
+    o.applicationName = "NCSound Music Hub";
+    o.filenameSuffix = "settings";
+    o.folderName = "NCSound Music Hub";
+    return o;
+}
+
+void AudioEngine::saveAudioSettings()
+{
+    juce::ApplicationProperties props;
+    props.setStorageParameters (audioPropsOptions());
+    auto xml = deviceManager.createStateXml();
+    if (xml != nullptr)
+    {
+        xml->setAttribute ("midiInput", midiRecorder.activeDeviceId());
+        props.getUserSettings()->setValue ("audioDeviceSetup", xml.get());
+        props.saveIfNeeded();
+    }
+}
+
+void AudioEngine::restoreAudioSettings()
+{
+    juce::ApplicationProperties props;
+    props.setStorageParameters (audioPropsOptions());
+    auto stored = props.getUserSettings()->getXmlValue ("audioDeviceSetup");
+    if (stored == nullptr)
+        return;
+    auto error = deviceManager.initialise (2, 2, stored.get(), true);
+    if (error.isNotEmpty())
+        error = deviceManager.initialiseWithDefaultDevices (2, 2);
+    if (error.isEmpty())
+    {
+        auto midiId = stored->getStringAttribute ("midiInput");
+        if (midiId.isNotEmpty())
+        {
+            juce::String ignored;
+            openMidiDevice (midiId, ignored);
+        }
+    }
+}
+
+void AudioEngine::clearAudioSettings()
+{
+    juce::ApplicationProperties props;
+    props.setStorageParameters (audioPropsOptions());
+    props.getUserSettings()->removeValue ("audioDeviceSetup");
+    props.saveIfNeeded();
+}
+
+juce::String AudioEngine::audioSettingsSummary() const
+{
+    return deviceInfo + "@" + juce::String (currentSampleRate(), 0) + "Hz," + juce::String (currentBufferSize()) + "smp";
+}
+
+double AudioEngine::bufferLatencyMs() const
+{
+    const double rate = currentSampleRate();
+    return rate > 0.0 ? (double) currentBufferSize() * 1000.0 / rate : 0.0;
+}
+
+double AudioEngine::worstTrackLatencyMs() const
+{
+    const double rate = currentSampleRate();
+    const int worst = inserts.worstTrackLatency(); // samples, capped at 16384 in TrackInsertRack
+    return rate > 0.0 ? (double) worst * 1000.0 / rate : 0.0;
+}
+
+double AudioEngine::masterLatencyMs() const
+{
+    const double rate = currentSampleRate();
+    const int lat = masterRack.latencySamples() + inserts.masterLatency();
+    return rate > 0.0 ? (double) lat * 1000.0 / rate : 0.0;
+}
+
+void AudioEngine::setLowLatencyMode (bool shouldLow)
+{
+    lowLatency.store (shouldLow);
+    if (! shouldLow)
+        return;
+    auto setup = deviceManager.getAudioDeviceSetup();
+    setup.bufferSize = 64;
+    setup.sampleRate = 48000.0;
+    deviceManager.setAudioDeviceSetup (setup, true);
+    saveAudioSettings();
+}
+
+nc::engine::ClipState AudioEngine::voiceToMidiClip (const juce::File& file, int track, double bpm)
+{
+    voiceError.clear();
+    std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
+    if (reader == nullptr)
+    {
+        voiceError = "Could not open " + file.getFileName();
+        return {};
+    }
+    const auto frames = (std::size_t) juce::jmin<juce::int64> (reader->lengthInSamples, 4800000); // cap ~100s
+    juce::AudioBuffer<float> buf ((int) juce::jmax<juce::int64> (1, reader->numChannels), (int) frames);
+    reader->read (&buf, 0, (int) frames, 0, true, true);
+    // Mono mix.
+    juce::AudioBuffer<float> mono (1, buf.getNumSamples());
+    mono.clear();
+    for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+        mono.addFrom (0, 0, buf, ch, 0, buf.getNumSamples());
+    if (buf.getNumChannels() > 1)
+        mono.applyGain (1.0f / (float) buf.getNumChannels());
+
+    nc::engine::V2MConfig cfg;
+    cfg.sampleRate = (int) reader->sampleRate;
+    cfg.bpm = bpm > 1.0 ? bpm : 120.0;
+    auto notes = nc::engine::voiceToMidi (mono.getReadPointer (0), (std::size_t) mono.getNumSamples(), cfg);
+    if (notes.empty())
+    {
+        voiceError = "No voiced notes found (too quiet, or not melodic)";
+        return {};
+    }
+
+    nc::engine::ClipState clip;
+    clip.isMidi = true;
+    clip.name = "VOICE TO MIDI";
+    clip.track = track;
+    clip.startBar = 1.0;
+    clip.lengthBars = 1.0 + (notes.back().startBeat + notes.back().lengthBeats) / nc::engine::beatsPerBarMidi;
+    for (auto& n : notes)
+        clip.notes.push_back ({n.startBeat, n.lengthBeats, n.midiNote, n.velocity, 1});
+    nc::engine::sanitizeNotes (clip.notes, nc::engine::clipLengthBeats (clip.lengthBars));
+    return clip;
+}
+
 AudioEngine::~AudioEngine()
 {
+    saveAudioSettings();
     engineAlive->store (false, std::memory_order_release);
     deviceManager.removeAudioCallback (this);
     inserts.collectGarbage();
@@ -113,6 +255,14 @@ nc::engine::TempoMap AudioEngine::tempoMap() const
         return *live;
 
     return fallbackTempo;
+}
+
+void AudioEngine::setMarkers (std::vector<nc::engine::Marker> markers)
+{
+    // Project files can contain any JSON; the engine is the last boundary that
+    // can reject non-finite PPQ, oversized names and absurd counts.
+    nc::engine::sanitizeMarkers (markers);
+    markers_ = std::move (markers);
 }
 
 void AudioEngine::setMidiClips (std::vector<MidiTimelineClip> clips)
@@ -219,6 +369,23 @@ int AudioEngine::importMidiFile (const juce::File& file, int track, double start
     return index;
 }
 
+int AudioEngine::addMidiClip (nc::engine::ClipState clip)
+{
+    auto clips = midiClips();
+    MidiTimelineClip timeline;
+    timeline.track = clip.track;
+    timeline.startBar = clip.startBar;
+    timeline.lengthBars = clip.lengthBars;
+    timeline.name = clip.name;
+    timeline.notes = clip.notes;
+    timeline.ccs = clip.ccs;
+    timeline.bends = clip.bends;
+    clips.push_back (std::move (timeline));
+    const auto index = static_cast<int> (clips.size()) - 1;
+    setMidiClips (std::move (clips));
+    return index;
+}
+
 bool AudioEngine::exportMidiFile (const juce::File& file, int track) const
 {
     juce::MidiFile midiFile;
@@ -226,6 +393,30 @@ bool AudioEngine::exportMidiFile (const juce::File& file, int track) const
 
     juce::MidiMessageSequence sequence;
     bool any = false;
+
+    // A MIDI file has to carry the session's musical timebase. Without these
+    // events, a tempo change is lost and every consumer plays the notes at
+    // 120 BPM. Markers are written as standard marker meta events so sections
+    // survive a round-trip through another DAW.
+    const auto map = tempoMap();
+
+    for (const auto& point : map.points)
+    {
+        const auto microseconds = juce::jlimit (1, 0x7fffffff,
+                                                juce::roundToInt (60000000.0 /
+                                                                      juce::jmax (1.0, point.bpm)));
+        sequence.addEvent (juce::MidiMessage::tempoMetaEvent (microseconds),
+                           juce::jmax (0.0, point.ppq) * 480.0);
+    }
+
+    sequence.addEvent (juce::MidiMessage::timeSignatureMetaEvent (4, 4), 0.0);
+
+    for (const auto& marker : markers_)
+    {
+        if (! marker.name.empty())
+            sequence.addEvent (juce::MidiMessage::textMetaEvent (6, juce::String (marker.name)),
+                               juce::jmax (0.0, marker.ppq) * 480.0);
+    }
 
     for (const auto& clip : midiClips())
     {
@@ -2424,8 +2615,25 @@ void AudioEngine::applyVocalRoles()
     const auto& tracks = sessionTracks();
 
     for (int track = 0; track < trackCount; ++track)
+    {
         mixRack[static_cast<size_t> (track)]
             .setVocal (isVocalTrackName (tracks[static_cast<size_t> (track)].name));
+        // Channel Strip is baked into every mixer track (never Aux or Master).
+        // stripOn defaults to true; we re-assert it so a fresh track is never
+        // silently un-stripped.
+        mixRack[static_cast<size_t> (track)].setParam ("stripOn", 1.0f);
+    }
+
+    // Overlay Master is baked into the master channel (MasterRack).
+    // Mixology is its default master shape (VOCAL FOCUS): eq on, one
+    // subtractive low/mid cut, maximizer ceiling -1 dB.
+    masterRack.setParam ("eqOn", 1.0f);
+    masterRack.setParam ("lowFreq", 100.0f);
+    masterRack.setParam ("lowGain", -1.5f);
+    masterRack.setParam ("midFreq", 1000.0f);
+    masterRack.setParam ("midGain", -1.0f);
+    masterRack.setParam ("maxOn", 1.0f);
+    masterRack.setParam ("ceiling", -1.0f);
 }
 
 //==============================================================================
@@ -2816,11 +3024,15 @@ int AudioEngine::exportStems (const juce::File& folder,
         {
             const auto rate = options.sampleRate > 0 ? static_cast<double> (options.sampleRate)
                                                      : (sampleRate.load() > 0.0 ? sampleRate.load() : 48000.0);
-            const auto tempo = bpm.load();
-            const auto frames = static_cast<int64_t> (std::llround (
-                (engine::barToSeconds (endBar, tempo) - engine::barToSeconds (startBar, tempo)) * rate));
+            // The musical range must follow the tempo map exactly like the
+            // audible stem path; a constant-BPM calculation writes the wrong
+            // length for any project with a tempo change.
+            const auto map = tempoMap();
+            const auto startSeconds = engine::ppqToSeconds (map, engine::clipStartBeat (startBar));
+            const auto endSeconds = engine::ppqToSeconds (map, engine::clipStartBeat (endBar));
+            const auto frames = static_cast<int64_t> (std::llround ((endSeconds - startSeconds) * rate));
 
-            if (frames < 0)
+            if (frames <= 0)
             {
                 ++failures;
                 error = stem.getFileName() + ": export range is empty.";
@@ -2836,14 +3048,27 @@ int AudioEngine::exportStems (const juce::File& folder,
                 continue;
             }
 
-            juce::WavAudioFormat wav;
-            auto writer = std::unique_ptr<juce::AudioFormatWriter> (
-                wav.createWriterFor (stream.get(), rate, 2, options.bitDepth, {}, 0));
+            // A silent stem is still a file the user asked to be FLAC/MP3/AIFF,
+            // not WAV data behind a foreign extension. Use the same format
+            // factory as the audible path.
+            std::unique_ptr<juce::AudioFormatWriter> writer;
+
+            if (options.format == nc::engine::export_::Format::wav)
+            {
+                juce::WavAudioFormat wav;
+                writer.reset (wav.createWriterFor (stream.get(), rate, 2, options.bitDepth, {}, 0));
+            }
+            else if (auto* format = formats.findFormatForFileExtension (
+                         juce::String (nc::engine::export_::formatExtension (options.format))))
+            {
+                writer.reset (format->createWriterFor (stream.get(), rate, 2, options.bitDepth, {}, 0));
+            }
 
             if (writer == nullptr)
             {
                 ++failures;
-                error = stem.getFileName() + ": could not be written.";
+                error = stem.getFileName() + ": could not be written in "
+                        + juce::String (nc::engine::export_::formatName (options.format)) + ".";
                 continue;
             }
 

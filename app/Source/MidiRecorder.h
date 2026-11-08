@@ -30,6 +30,7 @@ public:
     static juce::Array<juce::MidiDeviceInfo> availableDevices();
     bool openDevice (const juce::String& deviceIdentifier, juce::String& error);
     void closeDevice();
+    juce::String activeDeviceId() const { return activeDeviceIdentifier; }
 
     // Recording session (message thread)
     void startRecording (int track, double startPpq, const nc::engine::TempoMap& tempoMap);
@@ -49,6 +50,7 @@ private:
     void handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& message) override;
 
     std::unique_ptr<juce::MidiInput> input;
+    juce::String activeDeviceIdentifier;
     nc::engine::SpscQueue<juce::MidiMessage> queue { 8192 };
     std::atomic<bool> recording { false };
     std::atomic<int> dropped { 0 };

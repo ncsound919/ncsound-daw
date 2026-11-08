@@ -72,6 +72,9 @@ private:
     bool saveAutosaveSibling();
     void setStatus (juce::String message, bool alert = false, double seconds = 5.0);
     void setPitchViewOpen (bool shouldOpen);
+    void addMarkerAtPlayhead();
+    void deleteMarkerAtPlayhead();
+    void jumpToMarker (bool next);
     juce::WebBrowserComponent::Options buildWebOptions();
     std::optional<juce::WebBrowserComponent::Resource> getWebResource (const juce::String& path);
     juce::var buildState() const;
