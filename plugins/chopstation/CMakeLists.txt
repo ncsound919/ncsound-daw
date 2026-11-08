@@ -57,4 +57,6 @@ target_compile_definitions(NCChopStationTests PRIVATE
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0)
 
-add_test(NAME NCChopStationTests COMMAND NCChopStationTests)
+# $<TARGET_FILE> resolves the real per-config binary; a bare target
+# name made ctest look in the build root and report "Not Run".
+add_test(NAME NCChopStationTests COMMAND $<TARGET_FILE:NCChopStationTests>)
