@@ -235,3 +235,22 @@ Still unproven, and not claimed: an interactive session against a real project,
 audio output on real hardware, 150 % DPI, clean-VM install, an 8-hour soak, and
 survival of a third-party plugin crash. There is still no installer in the tree,
 and the app build depends on an unpinned out-of-repo `../../ChordStudio-master`.
+
+## Lint and formatting gate - 8 November 2026
+
+`ui/` had no linter or formatter, so the defects below were invisible to CI.
+Added ESLint 9 (flat config: typescript-eslint, react-hooks, react-refresh,
+eslint-config-prettier) and Prettier, wired as `npm run lint` and
+`npm run format:check` in the `ui` CI job ahead of the typecheck.
+
+- Lint reports 0 errors / 69 warnings; Prettier is clean tree-wide.
+- The five `(store as any)` casts in `PLearn` are now a typed `LearnStore`.
+- `no-unused-expressions` is off for `src/console-ui/renderers` only, because
+  the `x ? lineTo : moveTo` polyline idiom is deliberate there.
+- Open defect, tracked rather than hidden: 31 `react-hooks/rules-of-hooks`
+  violations in `ChannelStripPanel`, `MasterPanel` and `ModulatorPanel`. The
+  `useValue` / `useHas` / `useNum` / `useOption` / `useLabel` accessors are real
+  hooks (they consume the panel context) being called from conditionals, loops
+  and callbacks, which can throw "Rendered more hooks than during the previous
+  render" when a panel toggles. Downgraded to warnings so the gate can land and
+  block new violations; hoisting the accessors is the follow-up.
