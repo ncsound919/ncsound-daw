@@ -47,6 +47,9 @@ import {
   useValue,
   type PanelProps,
   type Schema,
+  panelHas,
+  panelValue,
+  usePanelContext,
 } from "./controls";
 import { Overlay, PluginFrame } from "./PluginFrame";
 import { StereoMeter } from "./StereoMeter";
@@ -1000,8 +1003,15 @@ const CLASSIC = [
 ] as const;
 
 function ClassicChain() {
-  const onShapers = SHAPERS.map((s) => useValue(`${s.prefix}On`) >= 0.5).filter(Boolean).length;
-  const states = CLASSIC.map((c) => ({ t: c.title, on: useValue(c.on) >= 0.5, has: useHas(c.on) }));
+  const p = usePanelContext();
+  const onShapers = SHAPERS.map((s) => panelValue(p, `${s.prefix}On`) >= 0.5).filter(
+    Boolean,
+  ).length;
+  const states = CLASSIC.map((c) => ({
+    t: c.title,
+    on: panelValue(p, c.on) >= 0.5,
+    has: panelHas(p, c.on),
+  }));
   return (
     <div
       className="cs-lcd"

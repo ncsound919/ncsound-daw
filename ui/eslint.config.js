@@ -33,19 +33,5 @@ export default tseslint.config(
     files: ["src/console-ui/renderers/**/*.ts"],
     rules: { "@typescript-eslint/no-unused-expressions": "off" },
   },
-  {
-    // Known debt, tracked rather than hidden: these panels call the panel DSL
-    // accessors (useValue/useHas/useNum/useOption/useLabel), which are real hooks
-    // because they consume the panel context, from conditionals, loops and
-    // callbacks. That risks "Rendered more hooks than during the previous
-    // render" when a panel toggles. Downgraded so the gate can land and catch
-    // new violations; the hoisting refactor is the follow-up.
-    files: [
-      "src/console-ui/panels/ChannelStripPanel.tsx",
-      "src/console-ui/panels/MasterPanel.tsx",
-      "src/console-ui/panels/ModulatorPanel.tsx",
-    ],
-    rules: { "react-hooks/rules-of-hooks": "warn" },
-  },
   prettier,
 );

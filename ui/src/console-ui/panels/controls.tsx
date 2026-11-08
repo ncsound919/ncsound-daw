@@ -74,7 +74,7 @@ export interface PanelProps {
   onRedo?: () => void;
 }
 
-interface Ctx {
+export interface Ctx {
   schema: Schema;
   bind: (k: string) => Bound | null;
   store: ParamStore;
@@ -99,7 +99,9 @@ export function PanelScope({
   return <PanelCtx.Provider value={{ schema: merged, bind, store }}>{children}</PanelCtx.Provider>;
 }
 
-function usePanel() {
+/** The resolved panel (schema, binder, store). Call it once per component,
+ *  then use the pure `panel*` reads below wherever a hook would be illegal. */
+export function usePanelContext(): Ctx {
   const c = useContext(PanelCtx);
   if (!c) throw new Error("panel control used outside <PanelScope>");
   return c;
@@ -111,46 +113,52 @@ function def(schema: Schema, k: string): CtlDef {
   return d;
 }
 
+/** Pure reads of a resolved panel: identical results to the `useXxx` accessors,
+ *  but not hooks, so they are legal in loops, `.map()` bodies, conditionals and
+ *  callbacks - exactly where the accessors would break the rules of hooks. */
+export const panelValue = (p: Ctx, k: string): number => p.bind(k)?.value ?? def(p.schema, k).def;
+export const panelSpec = (p: Ctx, k: string): ParamSpec => def(p.schema, k).spec ?? {};
+export const panelOption = (p: Ctx, k: string): number =>
+  optionIndex(panelValue(p, k), panelSpec(p, k).options?.length ?? 2);
+export const panelNum = (p: Ctx, k: string): number => toValue(panelValue(p, k), panelSpec(p, k));
+export const panelLabel = (p: Ctx, k: string): string =>
+  panelSpec(p, k).options?.[panelOption(p, k)] ?? "";
+export const panelBound = (p: Ctx, k: string): Bound | null => p.bind(k);
+export const panelHas = (p: Ctx, ...keys: string[]): boolean =>
+  keys.some((k) => p.bind(k) !== null);
+export const panelText = (p: Ctx, k: string): string =>
+  formatValue(panelValue(p, k), panelSpec(p, k));
+
 /** Current normalised value of a key, or its schema default when unmapped. */
 export function useValue(k: string): number {
-  const { schema, bind } = usePanel();
-  return bind(k)?.value ?? def(schema, k).def;
+  return panelValue(usePanelContext(), k);
 }
 /** Current option index of an enum key (default when unmapped). */
 export function useOption(k: string): number {
-  const { schema } = usePanel();
-  const n = def(schema, k).spec?.options?.length ?? 2;
-  return optionIndex(useValue(k), n);
+  return panelOption(usePanelContext(), k);
 }
 /** The effective (host-merged) spec of a key. */
 export function useSpec(k: string): ParamSpec {
-  const { schema } = usePanel();
-  return def(schema, k).spec ?? {};
+  return panelSpec(usePanelContext(), k);
 }
 /** Current value of a key in real units (Hz, dB, ms...) using the effective spec. */
 export function useNum(k: string): number {
-  const spec = useSpec(k);
-  return toValue(useValue(k), spec);
+  return panelNum(usePanelContext(), k);
 }
 /** Label of the current option of an enum key ("" for non-enum keys). */
 export function useLabel(k: string): string {
-  const spec = useSpec(k);
-  const i = useOption(k);
-  return spec.options?.[i] ?? "";
+  return panelLabel(usePanelContext(), k);
 }
 /** Raw binding of a key (value + onChange + onGesture), or null when unmapped.
  *  For custom editors that are not a single knob/slider (e.g. the rhythm grid). */
 export function useBound(k: string): Bound | null {
-  const { bind } = usePanel();
-  return bind(k);
+  return panelBound(usePanelContext(), k);
 }
 export function useHas(...keys: string[]): boolean {
-  const { bind } = usePanel();
-  return keys.some((k) => bind(k) !== null);
+  return panelHas(usePanelContext(), ...keys);
 }
 export function useText(k: string): string {
-  const { schema } = usePanel();
-  return formatValue(useValue(k), def(schema, k).spec ?? {});
+  return panelText(usePanelContext(), k);
 }
 
 interface LearnStore {
@@ -159,7 +167,7 @@ interface LearnStore {
 }
 
 export function PLearn({ k, title }: { k: string; title?: string }) {
-  const { store } = usePanel();
+  const { store } = usePanelContext();
   // A host store may expose a direct MIDI-learn method or the generic action
   // channel; both are optional, so the surface is typed rather than cast.
   const learnStore = store as LearnStore;
@@ -204,7 +212,7 @@ export function PKnob({
   label?: string;
   learn?: boolean;
 }) {
-  const { schema, bind } = usePanel();
+  const { schema, bind } = usePanelContext();
   const b = bind(k);
   if (!b) return null;
   const d = def(schema, k);
@@ -245,7 +253,7 @@ export function PSlider({
   accent?: string;
   label?: string;
 }) {
-  const { schema, bind } = usePanel();
+  const { schema, bind } = usePanelContext();
   const b = bind(k);
   if (!b) return null;
   const d = def(schema, k);
@@ -273,7 +281,7 @@ export function PToggle({
   children?: ReactNode;
   style?: CSSProperties;
 }) {
-  const { schema, bind } = usePanel();
+  const { schema, bind } = usePanelContext();
   const b = bind(k);
   if (!b) return null;
   const on = b.value >= 0.5;
@@ -308,7 +316,7 @@ export function PChoice({
   keyStyle?: CSSProperties;
   labels?: readonly string[];
 }) {
-  const { schema, bind } = usePanel();
+  const { schema, bind } = usePanelContext();
   const b = bind(k);
   if (!b) return null;
   const d = def(schema, k);
@@ -359,7 +367,7 @@ export function PChoice({
 /** Enum parameter shown as an LCD that steps to the next option on click
  *  (keeps narrow slots narrow). The full list is in the accessible name. */
 export function PCycle({ k, style }: { k: string; style?: CSSProperties }) {
-  const { schema, bind } = usePanel();
+  const { schema, bind } = usePanelContext();
   const b = bind(k);
   if (!b) return null;
   const opts = def(schema, k).spec?.options ?? [];
@@ -402,7 +410,7 @@ export function PAction({
   children: ReactNode;
   style?: CSSProperties;
 }) {
-  const { store } = usePanel();
+  const { store } = usePanelContext();
   if (!store.hasAction?.(name)) return null;
   return (
     <Key onClick={() => store.action?.(name)} style={style}>
@@ -431,7 +439,7 @@ export function PGroup({
   style?: CSSProperties;
   children: ReactNode;
 }) {
-  const { bind } = usePanel();
+  const { bind } = usePanelContext();
   const has = useHas(...keys);
   if (!has) return null;
   const en = enable ? bind(enable) : null;

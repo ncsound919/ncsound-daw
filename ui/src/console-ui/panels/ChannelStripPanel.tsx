@@ -16,12 +16,13 @@ import {
   Readout,
   Row,
   optionKey,
-  useHas,
-  useLabel,
-  useNum,
-  useValue,
   type PanelProps,
   type Schema,
+  panelHas,
+  panelLabel,
+  panelNum,
+  panelValue,
+  usePanelContext,
 } from "./controls";
 import { Overlay, PluginFrame } from "./PluginFrame";
 import { StereoMeter } from "./StereoMeter";
@@ -160,20 +161,20 @@ export interface ChannelStripPanelProps extends PanelProps {
 }
 
 function useBands(): EqBand[] {
+  const p = usePanelContext();
   const out: EqBand[] = [];
-  const on = !useHas("eqOn") || useValue("eqOn") >= 0.5;
+  const on = !panelHas(p, "eqOn") || panelValue(p, "eqOn") >= 0.5;
   for (let n = 1; n <= 4; n++) {
-    // Fixed loop length: hook order is stable.
     const shape = bandShape(
-      useLabel(`band${n}Type`) || STRIP_SHAPES[n === 1 || n === 4 ? 1 : 0],
+      panelLabel(p, `band${n}Type`) || STRIP_SHAPES[n === 1 || n === 4 ? 1 : 0],
       n,
     );
-    const f = useNum(`band${n}Freq`);
-    let g = useNum(`band${n}Gain`);
-    const hasQ = useHas(`band${n}Q`);
-    const qv = useNum(`band${n}Q`);
+    const f = panelNum(p, `band${n}Freq`);
+    let g = panelNum(p, `band${n}Gain`);
+    const hasQ = panelHas(p, `band${n}Q`);
+    const qv = panelNum(p, `band${n}Q`);
     const q = hasQ ? qv : 0.7;
-    const has = useHas(`band${n}Freq`);
+    const has = panelHas(p, `band${n}Freq`);
     if (!has || !on) continue;
     if (shape === "notch") g = -18;
     if (shape === "bp" || shape === "ap") g = shape === "bp" ? Math.max(g, 0) : 0;
@@ -195,12 +196,13 @@ function StripScreen({
   sidechainSource?: string;
   getFrame?: () => unknown;
 }) {
+  const p = usePanelContext();
   const bands = useBands();
-  const hasHpf = useHas("hpfFreq");
-  const hpfHz = useNum("hpfFreq");
-  const hpfOn = !useHas("hpfOn") || useValue("hpfOn") >= 0.5;
+  const hasHpf = panelHas(p, "hpfFreq");
+  const hpfHz = panelNum(p, "hpfFreq");
+  const hpfOn = !panelHas(p, "hpfOn") || panelValue(p, "hpfOn") >= 0.5;
   const hpf = hasHpf && hpfOn ? hpfHz : 0;
-  const scOn = useValue("scExternal") >= 0.5;
+  const scOn = panelValue(p, "scExternal") >= 0.5;
   const frame = getFrame as
     (() => { spectrum?: ArrayLike<number>; gr?: number; level?: number } | undefined) | undefined;
   return (
@@ -260,12 +262,14 @@ function StripDeck({
   setSel: (n: number) => void;
   meters?: PanelProps["meters"];
 }) {
-  const bandHas = [1, 2, 3, 4].map((n) => useHas(`band${n}Freq`));
-  const hasFilters = useHas("hpfFreq", "lpfFreq");
+  const p = usePanelContext();
+  const bandHas = [1, 2, 3, 4].map((n) => panelHas(p, `band${n}Freq`));
+  const hasFilters = panelHas(p, "hpfFreq", "lpfFreq");
   const page = sel === FILTER_PAGE && hasFilters ? FILTER_PAGE : Math.min(sel, 3);
   const b = page + 1;
-  const dynOn = useValue(`band${b}Dyn`) >= 0.5;
-  const hasDynDetail = useHas(
+  const dynOn = panelValue(p, `band${b}Dyn`) >= 0.5;
+  const hasDynDetail = panelHas(
+    p,
     "compLookahead",
     "compHold",
     "compRange",
@@ -465,8 +469,9 @@ function StripDeck({
 
 /** One cut filter on the HP·LP page: on key, big frequency knob, slope keys. */
 function FilterRow({ on, freq, slope }: { on: string; freq: string; slope: string }) {
-  const has = useHas(freq);
-  const enabled = !useHas(on) || useValue(on) >= 0.5;
+  const p = usePanelContext();
+  const has = panelHas(p, freq);
+  const enabled = !panelHas(p, on) || panelValue(p, on) >= 0.5;
   if (!has) return null;
   return (
     <Row gap={16} align="center" justify="flex-start">

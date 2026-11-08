@@ -254,3 +254,20 @@ eslint-config-prettier) and Prettier, wired as `npm run lint` and
   and callbacks, which can throw "Rendered more hooks than during the previous
   render" when a panel toggles. Downgraded to warnings so the gate can land and
   block new violations; hoisting the accessors is the follow-up.
+
+### Hook order - the 31 violations are fixed, not just counted
+
+The panel DSL accessors were real hooks (`useContext` on the panel context) being
+called from loops, `.map()` bodies, conditionals and callbacks. Each accessor is
+now a two-layer pair: a pure read (`panelValue`, `panelNum`, `panelOption`,
+`panelLabel`, `panelHas`, `panelSpec`, `panelBound`, `panelText`) that takes the
+resolved panel, plus the existing hook as a one-line wrapper over it. Panels call
+`usePanelContext()` once per component and use the pure reads everywhere a hook
+would be illegal; the 150-odd ordinary call sites keep their original accessors.
+
+That removes the "Rendered more hooks than during the previous render" hazard
+when a module, EQ band or filter row toggles, keeps the accessors' API and error
+behaviour (`panel control used outside <PanelScope>`, unknown key throws), and
+lets `react-hooks/rules-of-hooks` go back to `error` everywhere: the per-file
+downgrade in `eslint.config.js` is gone. Targeted calls that were only legal by
+luck (fixed-length loops) are now provably legal.

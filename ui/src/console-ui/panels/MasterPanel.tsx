@@ -27,12 +27,16 @@ import {
   Readout,
   Row,
   useBound,
-  useHas,
   useNum,
   useOption,
   useValue,
   type PanelProps,
   type Schema,
+  panelHas,
+  panelNum,
+  panelOption,
+  panelValue,
+  usePanelContext,
 } from "./controls";
 import { Overlay, PluginFrame } from "./PluginFrame";
 import { StereoMeter } from "./StereoMeter";
@@ -319,18 +323,19 @@ function localPoint(e: RPointerEvent<Element>, el: Element, w: number, h: number
 
 // ---------------------------------------------------------------- EQ view
 function useEqBands(): (EqBandDef & { ch: number })[] {
+  const p = usePanelContext();
   const out: (EqBandDef & { ch: number })[] = [];
   for (let n = 1; n <= 8; n++) {
-    const has = useHas(`eq${n}On`),
-      on = useValue(`eq${n}On`) >= 0.5;
+    const has = panelHas(p, `eq${n}On`),
+      on = panelValue(p, `eq${n}On`) >= 0.5;
     out.push({
       on: has && on,
-      type: useOption(`eq${n}Type`),
-      freq: useNum(`eq${n}Freq`),
-      gain: useNum(`eq${n}Gain`),
-      q: useNum(`eq${n}Q`),
-      slope: useOption(`eq${n}Slope`),
-      ch: useOption(`eq${n}Ch`),
+      type: panelOption(p, `eq${n}Type`),
+      freq: panelNum(p, `eq${n}Freq`),
+      gain: panelNum(p, `eq${n}Gain`),
+      q: panelNum(p, `eq${n}Q`),
+      slope: panelOption(p, `eq${n}Slope`),
+      ch: panelOption(p, `eq${n}Ch`),
     });
   }
   return out;
@@ -554,14 +559,15 @@ function DynEqView({
   sel: number;
   onSelect: (n: number) => void;
 }) {
+  const p = usePanelContext();
   const w = MAIN_W - 6;
   const bands = [1, 2, 3, 4].map((n) => ({
     n,
-    on: useValue(`deq${n}On`) >= 0.5,
-    has: useHas(`deq${n}On`),
-    freq: useNum(`deq${n}Freq`),
-    range: useNum(`deq${n}Range`),
-    thresh: useNum(`deq${n}Thresh`),
+    on: panelValue(p, `deq${n}On`) >= 0.5,
+    has: panelHas(p, `deq${n}On`),
+    freq: panelNum(p, `deq${n}Freq`),
+    range: panelNum(p, `deq${n}Range`),
+    thresh: panelNum(p, `deq${n}Thresh`),
   }));
   const bars = useRef<(SVGRectElement | null)[]>([]);
   const svg = useRef<SVGSVGElement>(null);
@@ -1065,8 +1071,9 @@ function TonalPanel({
 }) {
   const refs = extra?.references ?? [];
   const missing = extra?.missingReferences ?? [];
+  const p = usePanelContext();
   const idx = useBound("refIndex");
-  const active = idx ? Math.round(useNum("refIndex")) : 0;
+  const active = idx ? Math.round(panelNum(p, "refIndex")) : 0;
   const mix = useRef<SVGPathElement>(null);
   const ref = refs[active];
   useEffect(() => {
@@ -1256,10 +1263,11 @@ function ModuleStrip({
   setSel: (k: MasterModuleKey) => void;
   setOrder?: (o: string[]) => void;
 }) {
-  const on = Object.fromEntries(MASTER_MODULES.map((m) => [m.key, useValue(m.on) >= 0.5]));
-  const has = Object.fromEntries(MASTER_MODULES.map((m) => [m.key, useHas(m.on)]));
-  const maxOn = useValue("maxOn") >= 0.5,
-    hasMax = useHas("maxOn");
+  const p = usePanelContext();
+  const on = Object.fromEntries(MASTER_MODULES.map((m) => [m.key, panelValue(p, m.on) >= 0.5]));
+  const has = Object.fromEntries(MASTER_MODULES.map((m) => [m.key, panelHas(p, m.on)]));
+  const maxOn = panelValue(p, "maxOn") >= 0.5,
+    hasMax = panelHas(p, "maxOn");
   const i = order.indexOf(sel);
   const move = (d: -1 | 1) => {
     if (!setOrder || i < 0) return;
@@ -1371,7 +1379,8 @@ function EqDeck({ sel, setSel }: { sel: number; setSel: (n: number) => void }) {
   const gainShape = type <= 2,
     hasSlope = type >= 1 && type <= 4,
     hasQ = type === 0 || type === 5;
-  const bandOn = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => useValue(`eq${n}On`) >= 0.5);
+  const p = usePanelContext();
+  const bandOn = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => panelValue(p, `eq${n}On`) >= 0.5);
   return (
     <div style={DECK}>
       <PGroup
@@ -1433,7 +1442,8 @@ function DynEqDeck({
   setSel: (n: number) => void;
   getFrame: GetFrame;
 }) {
-  const bandOn = [1, 2, 3, 4].map((n) => useValue(`deq${n}On`) >= 0.5);
+  const p = usePanelContext();
+  const bandOn = [1, 2, 3, 4].map((n) => panelValue(p, `deq${n}On`) >= 0.5);
   return (
     <div style={DECK}>
       <PGroup
