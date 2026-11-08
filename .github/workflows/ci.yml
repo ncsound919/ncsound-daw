@@ -87,11 +87,15 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
       - name: Configure (full app)
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-      - name: Build ChopStation VST3
-        run: cmake --build build --config Release --target NCChopStation
+      - name: Build both plug-ins
+        run: cmake --build build --config Release --target NCChopStation NCEightOHeight
       - uses: Tracktion/pluginval/validate@v2
         with:
-          plugins: build/plugins/chopstation/NCChopStation_artefacts/Release/VST3/Chop Station.vst3
+          # One path per line: both VST3s ship, so both are validated at the
+          # host-compatibility floor. The nightly job runs level 10.
+          plugins: |
+            build/plugins/chopstation/NCChopStation_artefacts/Release/VST3/Chop Station.vst3
+            build/plugins/eightoheight/NCEightOHeight_artefacts/Release/VST3/808 Designer.vst3
           strictness-level: 5
           args: --skip-gui-tests
 

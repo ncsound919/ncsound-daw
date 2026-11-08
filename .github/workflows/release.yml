@@ -1,0 +1,63 @@
+name: release
+
+# A tag builds the plug-ins, packages them, checks the package contents and
+# attaches the archive to the release. Nothing here is built by hand any more.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Native dependencies (pinned JUCE checkout, WebView2 package)
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File ./tools/fetch-native-deps.ps1
+      - name: Point CMake at the WebView2 package
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_ENV -Value "NC_WEBVIEW2_PACKAGE_LOCATION=${{ github.workspace }}/deps/webview2"
+      - name: Web UI build (required for NCSoundHub BinaryData)
+        working-directory: ui
+        run: |
+          npm ci
+          npm run build
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build plug-ins
+        run: cmake --build build --config Release --target NCChopStation NCEightOHeight
+      - name: Package (ZIP)
+        working-directory: build
+        run: cpack -G ZIP
+      - name: Verify package contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          zip=$(find build -maxdepth 2 -name 'ncsound-daw-*.zip' -print -quit)
+          [ -n "$zip" ] || { echo "cpack produced no ZIP"; exit 1; }
+          bash tools/verify-package.sh "$zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ncsound-daw-package
+          path: build/ncsound-daw-*.zip
+          if-no-files-found: error
+      - name: Attach the package to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" build/ncsound-daw-*.zip --clobber

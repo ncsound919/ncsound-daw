@@ -1,0 +1,49 @@
+name: pluginval-nightly
+
+# Strictness 10 is too slow for every push, so it runs nightly: parameter
+# fuzzing and repeated state restoration are what catch the failures level 5
+# does not. The push-time job stays at 5, which is the accepted host floor.
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  strictness-10:
+    runs-on: windows-latest
+    env:
+      # pluginval's documented false positive: at level >= 8 "Discrete parameter
+      # state restoration" fails for plug-ins using juce::AudioParameterBool
+      # until JUCE snaps the value to 0/1. 808 Designer has one (mono lock), so
+      # the test is disabled by name rather than by lowering the level.
+      DISABLED_TESTS: Discrete parameter state restoration
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Native dependencies (pinned JUCE checkout, WebView2 package)
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File ./tools/fetch-native-deps.ps1
+      - name: Point CMake at the WebView2 package
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_ENV -Value "NC_WEBVIEW2_PACKAGE_LOCATION=${{ github.workspace }}/deps/webview2"
+      - name: Web UI build (required for NCSoundHub BinaryData)
+        working-directory: ui
+        run: |
+          npm ci
+          npm run build
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build both plug-ins
+        run: cmake --build build --config Release --target NCChopStation NCEightOHeight
+      - name: Validate at strictness 10
+        uses: Tracktion/pluginval/validate@v2
+        with:
+          plugins: |
+            build/plugins/chopstation/NCChopStation_artefacts/Release/VST3/Chop Station.vst3
+            build/plugins/eightoheight/NCEightOHeight_artefacts/Release/VST3/808 Designer.vst3
+          strictness-level: 10
+          args: --skip-gui-tests
