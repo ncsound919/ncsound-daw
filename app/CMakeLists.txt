@@ -1,7 +1,10 @@
 # The native mix rack is compiled once and shared by the app and its DSP test.
 # It embeds the real Overlay FX / Open Mic / Mixology sources instead of
 # reimplementing their signal paths.
-set(NC_PLUGINS_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../ChordStudio-master")
+# Resolved and hash-checked by cmake/ChordStudioDeps.cmake: the vendored
+# copy under third_party/chordstudio is the default, overridable with
+# -DNC_PLUGINS_ROOT=<path> or the NC_PLUGINS_ROOT environment variable.
+include(ChordStudioDeps)
 
 add_library(nc_mixrack STATIC
     Source/MixRack.cpp

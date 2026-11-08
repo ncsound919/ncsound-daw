@@ -299,3 +299,48 @@ NSIS/WIX installer - neither toolchain is installed here, so that branch is
 configured but has never been exercised. The app itself is not in the package:
 it links against the out-of-repo `ChordStudio-master` sources, so packaging it
 would mean shipping a half-empty product.
+
+## Dependency pinning - 8 November 2026
+
+`app/CMakeLists.txt` built the native mix rack from
+`set(NC_PLUGINS_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../ChordStudio-master")`: a
+sibling path with no version and no history. A clean clone could not configure
+the app at all, so CI has only ever built the engine.
+
+Two facts killed the obvious fix. The ChordStudio copy on this machine has no
+`.git`, and nothing in it records an upstream remote, so there is no commit hash
+for `FetchContent` or a submodule to point at. What it does have is a 674-line
+GPL-3.0 `LICENSE`.
+
+The dependency is small - 25 files, 165 KB - so it is vendored instead:
+
+- `tools/vendor-chordstudio.py` walks the quoted-include closure from both sides:
+  the `${NC_PLUGINS_ROOT}/*.cpp` listed in `app/CMakeLists.txt` and our own
+  sources. It copies the closure to `third_party/chordstudio/`, preserving paths,
+  writes `lock.cmake` with a sha256 per file, and copies the licence texts.
+- `cmake/ChordStudioDeps.cmake` resolves the root (`-DNC_PLUGINS_ROOT`, then the
+  `NC_PLUGINS_ROOT` environment variable, then the vendored copy as default) and
+  treats the lock as both the required-file list and the drift check, so there is
+  no second list to fall out of date.
+
+The two-sided walk was not optional. The first attempt started only from the seven
+ChordStudio translation units and vendored 17 files; the build then failed on
+`app/Source/MixRack.cpp` including `fx/Biquad.h`, which is ours-to-theirs rather
+than theirs-to-theirs. 25 files after the fix.
+
+Verified: configure reports
+`ChordStudio sources: .../third_party/chordstudio (vendored, 25 files)`;
+`nc_mixrack` and `NCMixRackTests` build from it; `ctest -R mix_rack` passes (1/1,
+149 s). Appending one newline to a vendored header makes configure exit 1 with
+"The vendored ChordStudio copy no longer matches its lock:
+plugins/overlay-fx/.../Biquad.h"; re-running the vendor tool restores it and
+configure passes again (6.9 s, exit 0).
+
+Not verified, and found while testing: a *fresh* build directory resolves the
+vendored pin correctly but then fails at `juce_add_gui_app`, because WebView2 is
+found only through `JUCE_WEBVIEW2_PACKAGE_LOCATION` sitting in the existing
+`build/CMakeCache.txt`. That is the remaining blocker for a clean configure and it
+is recorded in `docs/DEPENDENCIES.md`; it belongs with phase 2, not this pin. The
+licence consequence is recorded and unresolved: ChordStudio is GPL-3.0 and
+statically linked, so these binaries are derivatives whatever is decided about
+JUCE.

@@ -60,18 +60,19 @@ meaningless while the app build reads `../../ChordStudio-master`.
 CI cannot reproduce the app, and a fresh clone cannot configure it.
 
 **Tasks**
-1.1 Convert `NC_PLUGINS_ROOT` into a pinned dependency:
-    - if ChordStudio is publishable: `FetchContent_Declare(chordstudio
-      GIT_REPOSITORY <url> GIT_TAG <full-commit-sha>)`, no tag;
-    - if not: a git submodule at `third_party/chordstudio`, pinned to a commit,
-      with `NC_PLUGINS_ROOT` defaulting to it;
-    - keep an override (`-DNC_PLUGINS_ROOT=<path>`) plus
-      `FETCHCONTENT_SOURCE_DIR_CHORDSTUDIO` for offline work.
-1.2 Fail loudly and early when the root is missing: a `message(FATAL_ERROR)`
-    naming the option, instead of a configure that half-succeeds.
-1.3 Document the pin (commit, date, why) in `docs/DEPENDENCIES.md`.
-1.4 Pin JUCE the same way: it already resolves 8.0.17 via CPM, so record the
-    exact version and add it to the same doc.
+1.1 **Done.** Neither pinned route in the original draft was possible: the
+    ChordStudio copy has no `.git` and no recorded remote, so there is no commit
+    for `FetchContent` or a submodule to point at. The include closure is 17
+    files / 77 KB, so it is vendored at `third_party/chordstudio/` with a sha256
+    `lock.cmake` -- the nearest available equivalent to a commit pin. Resolution
+    and verification live in `cmake/ChordStudioDeps.cmake`.
+1.2 **Done.** A missing or partial copy fails configure with the exact missing
+    files and the three ways to supply them, instead of half-configuring.
+1.3 **Done.** `docs/DEPENDENCIES.md` records the pin, the lookup order, the
+    refresh command and the GPL-3.0 consequence.
+1.4 **Done.** JUCE was already a pinned shallow clone
+    (`third_party/JUCE_PIN.txt`: `8.0.17-security`, commit `dabd5ad`), now also
+    recorded in that document.
 
 **Verification**
 ```bash
@@ -80,8 +81,19 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release   # must configure with 
 cmake --build build --target NCChopStation_VST3 NCEightOHeight_VST3
 grep -rn '\.\./\.\./' CMakeLists.txt app/CMakeLists.txt   # must be empty
 ```
-**Exit criteria:** clean clone configures and builds both plug-ins; the
-dependency commit is recorded; no absolute or sibling path remains.
+**Exit criteria:** a configure with no sibling checkout resolves the vendored
+copy and builds both plug-ins; the copy is hash-locked; no absolute or sibling
+path remains.
+
+**Landed 2026-11-08.** Configure reports the vendored root, `nc_mixrack` and
+`NCMixRackTests` build from it, `ctest -R mix_rack` passes, and a one-byte edit
+to a vendored file fails configure on the hash. Not verified: a build of the
+*plug-ins* from a truly clean clone (the JUCE clone is a manual step) and CI,
+which still builds nothing but the engine. A fresh build directory also fails
+later, for an unrelated reason found while testing this: WebView2's package path
+lives only in `build/CMakeCache.txt`, so `juce_add_gui_app` cannot configure
+without `-DJUCE_WEBVIEW2_PACKAGE_LOCATION` (see `docs/DEPENDENCIES.md`). That,
+not the ChordStudio pin, is what still blocks a clean configure.
 
 ---
 
