@@ -271,3 +271,31 @@ behaviour (`panel control used outside <PanelScope>`, unknown key throws), and
 lets `react-hooks/rules-of-hooks` go back to `error` everywhere: the per-file
 downgrade in `eslint.config.js` is gone. Targeted calls that were only legal by
 luck (fixed-length loops) are now provably legal.
+
+## Release packaging - 8 November 2026
+
+There was no `install()` rule and no CPack anywhere in the tree, so a release
+could only be assembled by hand from `build/`. Added `cmake/Packaging.cmake`
+(included from the root list, `NC_ENABLE_PACKAGING` to switch off):
+
+- Payload is copied from JUCE's artefact tree, because on Windows a `.vst3` is a
+  directory bundle: `VST3/` and `Standalone/` for 808 Designer and Chop Station,
+  plus `docs/`. Only our components are packaged.
+- `cmake/package-clean.cmake` runs as a CPack pre-build script and deletes what
+  JUCE's own install rules drop into the staging tree (its modules, headers and
+  `juceaide.exe`), so no toolchain output can ship.
+- Linker output (`*.exp`, `*.lib`, `*.pdb`, `*.ilk`) is excluded: it sits in the
+  same `VST3/` folder as the bundle.
+- ZIP builds everywhere. NSIS64/WIX are appended to the generator list only when
+  `makensis`/`candle` is found, so `cpack` cannot fail on a machine without an
+  installer toolchain.
+
+Verified: `cpack -G ZIP` produced `ncsound-daw-0.1.0-AMD64.zip` (14 MB)
+containing both `.vst3` bundles with their `moduleinfo.json`, both standalone
+`.exe` files and the docs, with 0 leaked tools/headers and 0 linker artefacts.
+
+Not verified, and not claimed: an actual install run on a clean machine, and any
+NSIS/WIX installer - neither toolchain is installed here, so that branch is
+configured but has never been exercised. The app itself is not in the package:
+it links against the out-of-repo `ChordStudio-master` sources, so packaging it
+would mean shipping a half-empty product.

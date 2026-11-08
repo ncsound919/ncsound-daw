@@ -79,3 +79,5 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/JUCE/CMakeLists.txt")
 else()
     message(STATUS "JUCE not found in third_party/JUCE - skipping plugin targets")
 endif()
+
+include(Packaging)
