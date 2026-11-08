@@ -4,11 +4,29 @@
 // needs a spec per control to render and format consistently.
 
 export type Unit =
-  | "" | "Hz" | "dB" | "dBTP" | "ms" | "%" | "st" | "ct" | "ratio" | "pan" | "x" | "rate" | "deg" | "bpm" | "s" | "note" | "ticks" | "steps";
+  | ""
+  | "Hz"
+  | "dB"
+  | "dBTP"
+  | "ms"
+  | "%"
+  | "st"
+  | "ct"
+  | "ratio"
+  | "pan"
+  | "x"
+  | "rate"
+  | "deg"
+  | "bpm"
+  | "s"
+  | "note"
+  | "ticks"
+  | "steps";
 
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 /** MIDI note name, MPC convention (36 = C1). */
-export const noteName = (n: number): string => `${NOTE_NAMES[((Math.round(n) % 12) + 12) % 12]}${Math.floor(Math.round(n) / 12) - 2}`;
+export const noteName = (n: number): string =>
+  `${NOTE_NAMES[((Math.round(n) % 12) + 12) % 12]}${Math.floor(Math.round(n) / 12) - 2}`;
 
 export interface ParamSpec {
   min?: number;
@@ -55,7 +73,8 @@ export function toNorm(value: number, spec: ParamSpec): number {
   return clamp01((value - min) / (max - min));
 }
 
-const signed = (n: number, d: number): string => (n > 0 ? "+" : n < 0 ? "−" : "") + Math.abs(n).toFixed(d);
+const signed = (n: number, d: number): string =>
+  (n > 0 ? "+" : n < 0 ? "−" : "") + Math.abs(n).toFixed(d);
 
 export function formatValue(norm: number, spec: ParamSpec): string {
   if (spec.options) return spec.options[toValue(norm, spec)] ?? "";
@@ -69,7 +88,9 @@ export function formatValue(norm: number, spec: ParamSpec): string {
     case "dBTP":
       return `${signed(x, d ?? 1)} dBTP`;
     case "ms":
-      return x >= 1000 ? `${(x / 1000).toFixed(2)} s` : `${x < 10 ? x.toFixed(1) : Math.round(x)} ms`;
+      return x >= 1000
+        ? `${(x / 1000).toFixed(2)} s`
+        : `${x < 10 ? x.toFixed(1) : Math.round(x)} ms`;
     case "s":
       return `${x.toFixed(d ?? 2)} s`;
     case "%":
@@ -105,7 +126,10 @@ export function formatValue(norm: number, spec: ParamSpec): string {
  * Returns NaN when the text cannot be read; the caller should ignore it.
  */
 export function parseValue(text: string, spec: ParamSpec): number {
-  const raw = text.trim().replace(/[\u2212\u2013]/g, "-").replace(/,/g, ".");
+  const raw = text
+    .trim()
+    .replace(/[\u2212\u2013]/g, "-")
+    .replace(/,/g, ".");
   if (spec.options) {
     const i = spec.options.findIndex((o) => o.toLowerCase() === raw.toLowerCase());
     if (i >= 0) return i;
@@ -123,7 +147,8 @@ export function parseValue(text: string, spec: ParamSpec): number {
   if (spec.unit === "note") {
     const n = raw.match(/^([A-G])(#|b)?\s*(-?\d+)$/i);
     if (n) {
-      const pc = NOTE_NAMES.indexOf(n[1].toUpperCase()) + (n[2] === "#" ? 1 : n[2] === "b" ? -1 : 0);
+      const pc =
+        NOTE_NAMES.indexOf(n[1].toUpperCase()) + (n[2] === "#" ? 1 : n[2] === "b" ? -1 : 0);
       return (Number.parseInt(n[3], 10) + 2) * 12 + pc;
     }
   }

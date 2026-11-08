@@ -1,9 +1,9 @@
 # Workspace typefaces
 
-| File | Source face | Source path |
-|---|---|---|
-| `din-neuzeit-light.ttf` | DIN Neuzeit Grotesk Light | `fonts/premium/dinneuzeitgrotesk_light_regular.ttf` |
-| `motter-corpus-condensed.ttf` | Motter Corpus Condensed ITC TT | `fonts/premium/mottcci.ttf` |
+| File                          | Source face                    | Source path                                         |
+| ----------------------------- | ------------------------------ | --------------------------------------------------- |
+| `din-neuzeit-light.ttf`       | DIN Neuzeit Grotesk Light      | `fonts/premium/dinneuzeitgrotesk_light_regular.ttf` |
+| `motter-corpus-condensed.ttf` | Motter Corpus Condensed ITC TT | `fonts/premium/mottcci.ttf`                         |
 
 Both are rebuilt subsets (ASCII/Latin + symbols, `PCLT`/`DSIG` dropped) of the
 GrowthOS / marketing-studio library originals. DIN Neuzeit's cmap was additionally

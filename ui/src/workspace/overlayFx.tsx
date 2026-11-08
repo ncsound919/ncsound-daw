@@ -172,7 +172,12 @@ export function OverlayFace({
         className="ws-ov-face-inner"
         style={{ width: PANEL_W, height: PANEL_H, transform: `scale(${scale})` }}
       >
-        <Panel store={store} map={map} presetName={presetName ?? entry.presetName} {...(entry.props ?? {})} />
+        <Panel
+          store={store}
+          map={map}
+          presetName={presetName ?? entry.presetName}
+          {...(entry.props ?? {})}
+        />
       </div>
     </div>
   );

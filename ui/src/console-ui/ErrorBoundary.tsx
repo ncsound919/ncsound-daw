@@ -11,7 +11,10 @@ export interface ErrorBoundaryProps {
   resetKeys?: readonly unknown[];
 }
 
-interface State { hasError: boolean; error: unknown }
+interface State {
+  hasError: boolean;
+  error: unknown;
+}
 
 const sameKeys = (a: readonly unknown[] = [], b: readonly unknown[] = []) =>
   a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
@@ -49,10 +52,33 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, State> {
       message = "Unknown error";
     }
     return (
-      <div role="alert" className="cs-sub" style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", justifyContent: "center", gap: 10, flex: 1, width: "100%", height: "100%", boxSizing: "border-box", padding: 16, minHeight: 0 }}>
+      <div
+        role="alert"
+        className="cs-sub"
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "flex-start",
+          justifyContent: "center",
+          gap: 10,
+          flex: 1,
+          width: "100%",
+          height: "100%",
+          boxSizing: "border-box",
+          padding: 16,
+          minHeight: 0,
+        }}
+      >
         <span>{this.props.label} hit an error and was stopped.</span>
-        <span className="cs-readout" style={{ fontSize: 12, textTransform: "none", letterSpacing: 0 }}>{message}</span>
-        <button type="button" className="cs-key" onClick={this.reset}>Try again</button>
+        <span
+          className="cs-readout"
+          style={{ fontSize: 12, textTransform: "none", letterSpacing: 0 }}
+        >
+          {message}
+        </span>
+        <button type="button" className="cs-key" onClick={this.reset}>
+          Try again
+        </button>
       </div>
     );
   }

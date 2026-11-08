@@ -57,8 +57,7 @@ export function Transport({
     drag.current = null;
   };
 
-  const setBpm = (next: number) =>
-    onBpm(Math.round(Math.max(20, Math.min(300, next)) * 10) / 10);
+  const setBpm = (next: number) => onBpm(Math.round(Math.max(20, Math.min(300, next)) * 10) / 10);
 
   const onBpmKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const step = event.shiftKey ? 0.1 : 1;
@@ -96,10 +95,20 @@ export function Transport({
   return (
     <div className="ws-transport">
       <div className="ws-transport-group">
-        <button className="ws-btn is-icon" onClick={onRewind} title="Return to bar 1 (Home)" aria-label="Return to bar 1">
+        <button
+          className="ws-btn is-icon"
+          onClick={onRewind}
+          title="Return to bar 1 (Home)"
+          aria-label="Return to bar 1"
+        >
           ⏮
         </button>
-        <button className="ws-btn is-icon" onClick={onStop} title="Stop and return to bar 1" aria-label="Stop">
+        <button
+          className="ws-btn is-icon"
+          onClick={onStop}
+          title="Stop and return to bar 1"
+          aria-label="Stop"
+        >
           ■
         </button>
         <button
@@ -116,7 +125,9 @@ export function Transport({
           aria-pressed={recording}
           disabled={!onRecord}
           onClick={() => onRecord?.(!recording)}
-          title={onRecord ? "Record armed tracks (punch at loop end)" : "Recording is not available"}
+          title={
+            onRecord ? "Record armed tracks (punch at loop end)" : "Recording is not available"
+          }
           aria-label="Record"
         >
           ●
@@ -144,7 +155,9 @@ export function Transport({
       <div className="ws-sep" />
 
       <div className="ws-lcd ws-lcd-position" title="Musical position">
-        <span className="ws-lcd-value" data-pos>{position.main}</span>
+        <span className="ws-lcd-value" data-pos>
+          {position.main}
+        </span>
         <span className="ws-lcd-caption">{position.small}</span>
       </div>
 
@@ -187,13 +200,18 @@ export function Transport({
       <div className="ws-meter ws-meter-fill-space" title="Master peak">
         <span className="ws-meter-label">MASTER {masterDb}</span>
         <span className="ws-meter-bar">
-          <span className="ws-meter-fill" style={{ width: `${meterPct(transport.masterPeakLeft)}%` }} />
+          <span
+            className="ws-meter-fill"
+            style={{ width: `${meterPct(transport.masterPeakLeft)}%` }}
+          />
         </span>
         <span className="ws-meter-bar">
-          <span className="ws-meter-fill" style={{ width: `${meterPct(transport.masterPeakRight)}%` }} />
+          <span
+            className="ws-meter-fill"
+            style={{ width: `${meterPct(transport.masterPeakRight)}%` }}
+          />
         </span>
       </div>
-
     </div>
   );
 }

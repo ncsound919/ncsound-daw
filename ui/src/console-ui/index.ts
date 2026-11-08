@@ -7,7 +7,18 @@ export { Knob, type KnobProps, type Gesture } from "./Knob";
 export { Slider, type SliderProps } from "./Slider";
 export { Meter, type MeterProps } from "./Meter";
 export { Scope, type ScopeProps } from "./Scope";
-export { ConsoleRoot, Face, Group, Module, Led, Key, Seg, Lcd, SidechainBadge, Bus } from "./Surface";
+export {
+  ConsoleRoot,
+  Face,
+  Group,
+  Module,
+  Led,
+  Key,
+  Seg,
+  Lcd,
+  SidechainBadge,
+  Bus,
+} from "./Surface";
 export * as renderers from "./renderers";
 export * from "./store";
 export { ErrorBoundary, type ErrorBoundaryProps } from "./ErrorBoundary";

@@ -145,13 +145,21 @@ describe("workspace surfaces", () => {
   it("fuses the insert chain with the stock faceplate in one channel view", () => {
     // Selection is owned by the host, so render the fixture already on the
     // track that owns the insert rather than clicking a mocked action.
-    render(<Workspace state={{ ...STATE, selectedTrack: 0 }} transport={TRANSPORT} actions={actions()} />);
+    render(
+      <Workspace
+        state={{ ...STATE, selectedTrack: 0 }}
+        transport={TRANSPORT}
+        actions={actions()}
+      />,
+    );
     fireEvent.click(screen.getByRole("tab", { name: "Channel" }));
 
     expect(document.querySelector(".ws-editor-face")).not.toBeNull();
     // Preview controls must not be reachable by keyboard or assistive tech.
     expect(document.querySelector(".ws-editor-face")).toHaveAttribute("inert", "");
-    expect(document.querySelector(".ws-editor-title")?.textContent).toContain("Overlay Retro Color");
+    expect(document.querySelector(".ws-editor-title")?.textContent).toContain(
+      "Overlay Retro Color",
+    );
 
     expect(document.querySelectorAll(".ws-ins-slot")).toHaveLength(4);
   });
@@ -216,7 +224,12 @@ describe("workspace surfaces", () => {
   it("commits a piano-roll drag once, on pointer up", () => {
     const onNotes = vi.fn();
     render(
-      <Workspace state={STATE} transport={TRANSPORT} actions={actions()} onNotesChanged={onNotes} />,
+      <Workspace
+        state={STATE}
+        transport={TRANSPORT}
+        actions={actions()}
+        onNotesChanged={onNotes}
+      />,
     );
     fireEvent.pointerDown(screen.getByTitle(/INTRO · bar 1 · 4 bars/));
     openView("Piano Roll");

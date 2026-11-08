@@ -49,7 +49,10 @@ export function StatusBar({
         {hints}
       </span>
       <span className="ws-status-right" aria-hidden="true">
-        {overCapacity ? `${activeTracks}/${trackCapacity} TRACKS` : `${activeTracks} OF ${trackCapacity} TRACKS`} / {clipCount} CLIPS / {pluginCount} PLUG-INS / {time}
+        {overCapacity
+          ? `${activeTracks}/${trackCapacity} TRACKS`
+          : `${activeTracks} OF ${trackCapacity} TRACKS`}{" "}
+        / {clipCount} CLIPS / {pluginCount} PLUG-INS / {time}
       </span>
     </footer>
   );

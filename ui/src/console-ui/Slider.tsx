@@ -1,5 +1,12 @@
 // GENERATED from console-ui — edit there, then run `npm run sync`.
-import { useCallback, useRef, useState, type KeyboardEvent, type PointerEvent, type WheelEvent } from "react";
+import {
+  useCallback,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent,
+  type WheelEvent,
+} from "react";
 import { dragStep, keyStep, wheelStep } from "./interaction";
 import type { Gesture } from "./Knob";
 import { clamp01, formatValue, type ParamSpec } from "./param";
@@ -23,7 +30,17 @@ export interface SliderProps {
 const THUMB = 16;
 
 export function Slider({
-  label, value, defaultValue = 0.5, onChange, onGesture, spec = {}, width = 220, bipolar = false, off = false, accent, id,
+  label,
+  value,
+  defaultValue = 0.5,
+  onChange,
+  onGesture,
+  spec = {},
+  width = 220,
+  bipolar = false,
+  off = false,
+  accent,
+  id,
 }: SliderProps) {
   const [inner, setInner] = useState(value ?? defaultValue);
   const v = value ?? inner;
@@ -35,12 +52,19 @@ export function Slider({
   const dragging = useRef(false);
   const travel = width - THUMB;
 
-  const commit = useCallback((nv: number) => {
-    acc.current = nv;
-    if (value === undefined) setInner(nv);
-    onChange?.(nv);
-  }, [value, onChange]);
-  const once = (nv: number) => { onGesture?.("start"); commit(nv); onGesture?.("end"); };
+  const commit = useCallback(
+    (nv: number) => {
+      acc.current = nv;
+      if (value === undefined) setInner(nv);
+      onChange?.(nv);
+    },
+    [value, onChange],
+  );
+  const once = (nv: number) => {
+    onGesture?.("start");
+    commit(nv);
+    onGesture?.("end");
+  };
 
   const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
@@ -82,10 +106,16 @@ export function Slider({
   const active = hover || drag;
 
   return (
-    <div className={`cs-slider${active ? " cs-active" : ""}${off ? " cs-off" : ""}`} style={{ width }}>
+    <div
+      className={`cs-slider${active ? " cs-active" : ""}${off ? " cs-off" : ""}`}
+      style={{ width }}
+    >
       <div className="cs-slider-head">
         <span className="cs-slider-label">{label}</span>
-        <span className="cs-slider-val">{text}{drag && fine ? "  FINE" : ""}</span>
+        <span className="cs-slider-val">
+          {text}
+          {drag && fine ? "  FINE" : ""}
+        </span>
       </div>
       <div
         id={id}
@@ -114,7 +144,10 @@ export function Slider({
         }}
       >
         <span className="cs-slider-groove" />
-        <span className="cs-slider-fill" style={{ left, width: fillW, background: off ? "#555" : accent }} />
+        <span
+          className="cs-slider-fill"
+          style={{ left, width: fillW, background: off ? "#555" : accent }}
+        />
         {bipolar && <span className="cs-slider-zero" style={{ left: mid }} />}
         <span className="cs-slider-thumb" style={{ left: tx }} />
       </div>

@@ -10,7 +10,12 @@ import { DRAG_TRAVEL, FINE_FACTOR, WHEEL_STEP, WHEEL_STEP_FINE } from "./tokens"
  * running value. Accumulating per event (not from the drag origin) means
  * pressing or releasing Shift mid-drag never makes the value jump.
  */
-export function dragStep(current: number, deltaPx: number, fine: boolean, travel = DRAG_TRAVEL): number {
+export function dragStep(
+  current: number,
+  deltaPx: number,
+  fine: boolean,
+  travel = DRAG_TRAVEL,
+): number {
   return clamp01(current + (deltaPx / travel) * (fine ? FINE_FACTOR : 1));
 }
 
@@ -20,7 +25,12 @@ export function wheelStep(current: number, deltaY: number, fine: boolean): numbe
 }
 
 /** Returns the new value, or null when the key is not a control key. */
-export function keyStep(current: number, key: string, fine: boolean, defaultValue: number): number | null {
+export function keyStep(
+  current: number,
+  key: string,
+  fine: boolean,
+  defaultValue: number,
+): number | null {
   const st = fine ? WHEEL_STEP_FINE : WHEEL_STEP;
   switch (key) {
     case "ArrowUp":
@@ -57,5 +67,10 @@ export function knobAngles(value: number, bipolar: boolean) {
 export function modRange(value: number, depth: number) {
   const lo = clamp01(value - depth);
   const hi = clamp01(value + depth);
-  return { fromDeg: 270 * lo, toDeg: 270 * hi, fromPointer: -135 + 270 * lo, toPointer: -135 + 270 * hi };
+  return {
+    fromDeg: 270 * lo,
+    toDeg: 270 * hi,
+    fromPointer: -135 + 270 * lo,
+    toPointer: -135 + 270 * hi,
+  };
 }

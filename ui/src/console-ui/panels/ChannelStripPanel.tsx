@@ -5,31 +5,76 @@ import { Scope } from "../Scope";
 import { Key, Seg, SidechainBadge } from "../Surface";
 import { eqRenderer, historyRenderer, type EqBand } from "../renderers";
 import { system } from "../tokens";
-import { Grid, PChoice, PCycle, PGroup, PKnob, PToggle, PanelScope, Readout, Row, optionKey, useHas, useLabel, useNum, useValue, type PanelProps, type Schema } from "./controls";
+import {
+  Grid,
+  PChoice,
+  PCycle,
+  PGroup,
+  PKnob,
+  PToggle,
+  PanelScope,
+  Readout,
+  Row,
+  optionKey,
+  useHas,
+  useLabel,
+  useNum,
+  useValue,
+  type PanelProps,
+  type Schema,
+} from "./controls";
 import { Overlay, PluginFrame } from "./PluginFrame";
 import { StereoMeter } from "./StereoMeter";
 
 export const STRIP_SHAPES = ["Bell", "Shelf", "Notch", "BP", "AP"] as const;
 export const STRIP_SLOPES = ["12", "24", "36", "48"] as const;
-export const STRIP_TEMPLATES = ["Clean utility", "Vocal lead", "Keys glue", "Drum bus punch", "Bass tight", "Pad air", "Guitar bite", "Parallel smash"] as const;
+export const STRIP_TEMPLATES = [
+  "Clean utility",
+  "Vocal lead",
+  "Keys glue",
+  "Drum bus punch",
+  "Bass tight",
+  "Pad air",
+  "Guitar bite",
+  "Parallel smash",
+] as const;
 
 const hz = (min: number, max: number) => ({ unit: "Hz" as const, min, max, curve: "log" as const });
-const BAND_DEFAULTS = [{ f: 80, s: 1 }, { f: 320, s: 0 }, { f: 2400, s: 0 }, { f: 10000, s: 1 }];
+const BAND_DEFAULTS = [
+  { f: 80, s: 1 },
+  { f: 320, s: 0 },
+  { f: 2400, s: 0 },
+  { f: 10000, s: 1 },
+];
 const freqNorm = (f: number) => Math.log(f / 20) / Math.log(1000);
 
-const bandSchema = Object.fromEntries(BAND_DEFAULTS.flatMap((b, i) => {
-  const n = i + 1;
-  return [
-    [`band${n}Type`, { label: `Band ${n} shape`, def: b.s / 4, spec: { options: STRIP_SHAPES } }],
-    [`band${n}Freq`, { label: "Freq", def: freqNorm(b.f), spec: hz(20, 20000) }],
-    [`band${n}Gain`, { label: "Gain", def: 0.5, bipolar: true, spec: { unit: "dB", min: -18, max: 18 } }],
-    [`band${n}Q`, { label: "Q", def: 0.35, spec: { min: 0.1, max: 18, curve: "log", decimals: 2 } }],
-    [`band${n}Slope`, { label: `Band ${n} slope`, def: 0, spec: { options: STRIP_SLOPES } }],
-    [`band${n}Dyn`, { label: "Dynamic", def: 0 }],
-    [`band${n}DynThresh`, { label: "Dyn thresh", def: 0.6, spec: { unit: "dB", min: -60, max: 0 } }],
-    [`band${n}DynRange`, { label: "Dyn range", def: 0.3, bipolar: true, spec: { unit: "dB", min: -12, max: 12 } }],
-  ];
-}));
+const bandSchema = Object.fromEntries(
+  BAND_DEFAULTS.flatMap((b, i) => {
+    const n = i + 1;
+    return [
+      [`band${n}Type`, { label: `Band ${n} shape`, def: b.s / 4, spec: { options: STRIP_SHAPES } }],
+      [`band${n}Freq`, { label: "Freq", def: freqNorm(b.f), spec: hz(20, 20000) }],
+      [
+        `band${n}Gain`,
+        { label: "Gain", def: 0.5, bipolar: true, spec: { unit: "dB", min: -18, max: 18 } },
+      ],
+      [
+        `band${n}Q`,
+        { label: "Q", def: 0.35, spec: { min: 0.1, max: 18, curve: "log", decimals: 2 } },
+      ],
+      [`band${n}Slope`, { label: `Band ${n} slope`, def: 0, spec: { options: STRIP_SLOPES } }],
+      [`band${n}Dyn`, { label: "Dynamic", def: 0 }],
+      [
+        `band${n}DynThresh`,
+        { label: "Dyn thresh", def: 0.6, spec: { unit: "dB", min: -60, max: 0 } },
+      ],
+      [
+        `band${n}DynRange`,
+        { label: "Dyn range", def: 0.3, bipolar: true, spec: { unit: "dB", min: -12, max: 12 } },
+      ],
+    ];
+  }),
+);
 
 /** Maps a band-shape option label to what the EQ drawing needs. Accepts the
  *  panel's own labels and host labels ("Low Shelf", "Band Pass", ...). */
@@ -52,7 +97,12 @@ export const channelStripSchema = {
   compOn: { label: "Dynamics", def: 1 },
   compType: { label: "Character", def: 0, spec: { options: ["VCA", "FET", "Opto", "VariMu"] } },
   compKnee: { label: "Knee", def: 0.25, spec: { unit: "dB", min: 0, max: 24 } },
-  compMakeup: { label: "Makeup", def: 0.33, bipolar: true, spec: { unit: "dB", min: -12, max: 24 } },
+  compMakeup: {
+    label: "Makeup",
+    def: 0.33,
+    bipolar: true,
+    spec: { unit: "dB", min: -12, max: 24 },
+  },
   compMix: { label: "Mix", def: 1, spec: { unit: "%", min: 0, max: 100 } },
   satMode: { label: "Sat mode", def: 0, spec: { options: ["Tape", "Tube", "Diode"] } },
   satBias: { label: "Bias", def: 0.5, bipolar: true, spec: { min: -1, max: 1, decimals: 2 } },
@@ -65,12 +115,24 @@ export const channelStripSchema = {
   hpfSlope: { label: "HPF slope", def: 1 / 3, spec: { options: STRIP_SLOPES } },
   lpfFreq: { label: "LPF", def: 1, spec: hz(1000, 20000) },
   lpfSlope: { label: "LPF slope", def: 1 / 3, spec: { options: STRIP_SLOPES } },
-  dynAttack: { label: "Dyn attack", def: 0.3, spec: { unit: "ms", min: 0.1, max: 100, curve: "log" } },
-  dynRelease: { label: "Dyn release", def: 0.45, spec: { unit: "ms", min: 10, max: 2000, curve: "log" } },
+  dynAttack: {
+    label: "Dyn attack",
+    def: 0.3,
+    spec: { unit: "ms", min: 0.1, max: 100, curve: "log" },
+  },
+  dynRelease: {
+    label: "Dyn release",
+    def: 0.45,
+    spec: { unit: "ms", min: 10, max: 2000, curve: "log" },
+  },
   compThresh: { label: "Threshold", def: 1, spec: { unit: "dB", min: -60, max: 0 } },
   compRatio: { label: "Ratio", def: 0.23, spec: { unit: "ratio", min: 1, max: 20, curve: "log" } },
   compAttack: { label: "Attack", def: 0.3, spec: { unit: "ms", min: 0.1, max: 100, curve: "log" } },
-  compRelease: { label: "Release", def: 0.5, spec: { unit: "ms", min: 10, max: 2000, curve: "log" } },
+  compRelease: {
+    label: "Release",
+    def: 0.5,
+    spec: { unit: "ms", min: 10, max: 2000, curve: "log" },
+  },
   compAmount: { label: "Amount", def: 1, spec: { unit: "%", min: 0, max: 100 } },
   compLookahead: { label: "Lookahead", def: 0, spec: { unit: "ms", min: 0, max: 10 } },
   compHold: { label: "Hold", def: 0, spec: { unit: "ms", min: 0, max: 200 } },
@@ -102,7 +164,10 @@ function useBands(): EqBand[] {
   const on = !useHas("eqOn") || useValue("eqOn") >= 0.5;
   for (let n = 1; n <= 4; n++) {
     // Fixed loop length: hook order is stable.
-    const shape = bandShape(useLabel(`band${n}Type`) || STRIP_SHAPES[n === 1 || n === 4 ? 1 : 0], n);
+    const shape = bandShape(
+      useLabel(`band${n}Type`) || STRIP_SHAPES[n === 1 || n === 4 ? 1 : 0],
+      n,
+    );
     const f = useNum(`band${n}Freq`);
     let g = useNum(`band${n}Gain`);
     const hasQ = useHas(`band${n}Q`);
@@ -117,24 +182,66 @@ function useBands(): EqBand[] {
   return out;
 }
 
-function StripScreen({ sel, eqCurve, meters, sidechainSource, getFrame }: { sel: number; eqCurve?: (hz: number) => number; meters?: PanelProps["meters"]; sidechainSource?: string; getFrame?: () => unknown }) {
+function StripScreen({
+  sel,
+  eqCurve,
+  meters,
+  sidechainSource,
+  getFrame,
+}: {
+  sel: number;
+  eqCurve?: (hz: number) => number;
+  meters?: PanelProps["meters"];
+  sidechainSource?: string;
+  getFrame?: () => unknown;
+}) {
   const bands = useBands();
   const hasHpf = useHas("hpfFreq");
   const hpfHz = useNum("hpfFreq");
   const hpfOn = !useHas("hpfOn") || useValue("hpfOn") >= 0.5;
   const hpf = hasHpf && hpfOn ? hpfHz : 0;
   const scOn = useValue("scExternal") >= 0.5;
-  const frame = getFrame as (() => { spectrum?: ArrayLike<number>; gr?: number; level?: number } | undefined) | undefined;
+  const frame = getFrame as
+    (() => { spectrum?: ArrayLike<number>; gr?: number; level?: number } | undefined) | undefined;
   return (
-    <div className="cs-screen" style={{ height: 330, boxSizing: "border-box", display: "flex", gap: 4 }}>
+    <div
+      className="cs-screen"
+      style={{ height: 330, boxSizing: "border-box", display: "flex", gap: 4 }}
+    >
       <div style={{ position: "relative", flexShrink: 0 }}>
-        <Scope renderer={eqRenderer} params={{ bands, hpf: hpf > 21 ? hpf : 0, selected: sel >= 4 ? -1 : sel, curve: eqCurve }} width={876} height={322} label="EQ curve over the post-EQ spectrum" getFrame={frame} />
-        <Overlay style={{ left: 16, top: 12 }}><Readout size={13} style={{ letterSpacing: ".12em" }}>EQUALISER · {sel >= 4 ? "HP · LP FILTERS" : `BAND ${sel + 1} SELECTED`}</Readout></Overlay>
+        <Scope
+          renderer={eqRenderer}
+          params={{ bands, hpf: hpf > 21 ? hpf : 0, selected: sel >= 4 ? -1 : sel, curve: eqCurve }}
+          width={876}
+          height={322}
+          label="EQ curve over the post-EQ spectrum"
+          getFrame={frame}
+        />
+        <Overlay style={{ left: 16, top: 12 }}>
+          <Readout size={13} style={{ letterSpacing: ".12em" }}>
+            EQUALISER · {sel >= 4 ? "HP · LP FILTERS" : `BAND ${sel + 1} SELECTED`}
+          </Readout>
+        </Overlay>
       </div>
       <div style={{ position: "relative", flexGrow: 1, minWidth: 0 }}>
-        <Scope renderer={historyRenderer} params={{}} width={396} height={322} label="Gain reduction history" getFrame={frame ? () => ({ gr: frame()?.gr ?? meters?.gr?.() }) : meters?.gr ? () => ({ gr: meters.gr!() }) : undefined} />
+        <Scope
+          renderer={historyRenderer}
+          params={{}}
+          width={396}
+          height={322}
+          label="Gain reduction history"
+          getFrame={
+            frame
+              ? () => ({ gr: frame()?.gr ?? meters?.gr?.() })
+              : meters?.gr
+                ? () => ({ gr: meters.gr!() })
+                : undefined
+          }
+        />
         <Overlay style={{ left: 16, top: 12, display: "flex", flexDirection: "column", gap: 6 }}>
-          <Readout size={13} style={{ letterSpacing: ".12em" }}>GAIN REDUCTION</Readout>
+          <Readout size={13} style={{ letterSpacing: ".12em" }}>
+            GAIN REDUCTION
+          </Readout>
           {scOn && <SidechainBadge source={sidechainSource ?? "EXT"} />}
         </Overlay>
       </div>
@@ -144,28 +251,96 @@ function StripScreen({ sel, eqCurve, meters, sidechainSource, getFrame }: { sel:
 
 const FILTER_PAGE = 4;
 
-function StripDeck({ sel, setSel, meters }: { sel: number; setSel: (n: number) => void; meters?: PanelProps["meters"] }) {
+function StripDeck({
+  sel,
+  setSel,
+  meters,
+}: {
+  sel: number;
+  setSel: (n: number) => void;
+  meters?: PanelProps["meters"];
+}) {
   const bandHas = [1, 2, 3, 4].map((n) => useHas(`band${n}Freq`));
   const hasFilters = useHas("hpfFreq", "lpfFreq");
   const page = sel === FILTER_PAGE && hasFilters ? FILTER_PAGE : Math.min(sel, 3);
   const b = page + 1;
   const dynOn = useValue(`band${b}Dyn`) >= 0.5;
-  const hasDynDetail = useHas("compLookahead", "compHold", "compRange", "compAutoRelease", "compAutoGain", "scEq", "scExternal", "compAmount", "scHpf");
+  const hasDynDetail = useHas(
+    "compLookahead",
+    "compHold",
+    "compRange",
+    "compAutoRelease",
+    "compAutoGain",
+    "scEq",
+    "scExternal",
+    "compAmount",
+    "scHpf",
+  );
   const [dynPage, setDynPage] = useState<"comp" | "detail">("comp");
   const dPage = hasDynDetail ? dynPage : "comp";
   return (
     <>
-      <PGroup title="In" chip={system.out} keys={["trim", "phase"]} style={{ width: 120, boxSizing: "border-box", alignItems: "center" }}>
+      <PGroup
+        title="In"
+        chip={system.out}
+        keys={["trim", "phase"]}
+        style={{ width: 120, boxSizing: "border-box", alignItems: "center" }}
+      >
         <PKnob k="trim" />
         <PToggle k="phase" style={{ alignSelf: "stretch" }} />
-        {meters?.in && <div style={{ display: "flex", gap: 3, marginTop: "auto" }}><Meter vertical read={() => meters.in!()[0]} segments={20} length={120} label="Input left" /><Meter vertical read={() => meters.in!()[1]} segments={20} length={120} label="Input right" /></div>}
+        {meters?.in && (
+          <div style={{ display: "flex", gap: 3, marginTop: "auto" }}>
+            <Meter
+              vertical
+              read={() => meters.in!()[0]}
+              segments={20}
+              length={120}
+              label="Input left"
+            />
+            <Meter
+              vertical
+              read={() => meters.in!()[1]}
+              segments={20}
+              length={120}
+              label="Input right"
+            />
+          </div>
+        )}
       </PGroup>
 
-      <PGroup title="EQ" chip={system.filter} keys={["band1Freq", "band2Freq", "band3Freq", "band4Freq", "hpfFreq", "lpfFreq"]} enable="eqOn" style={{ width: 430, boxSizing: "border-box" }}
-        extra={<div role="tablist" aria-label="EQ page" style={{ display: "flex", gap: 8 }}>
-          {[0, 1, 2, 3].map((i) => bandHas[i] && <Key key={i} pressed={i === page} onClick={() => setSel(i)} label={`Band ${i + 1}`}>{i + 1}</Key>)}
-          {hasFilters && <Key pressed={page === FILTER_PAGE} onClick={() => setSel(FILTER_PAGE)} label="High-pass and low-pass filters">HP·LP</Key>}
-        </div>}>
+      <PGroup
+        title="EQ"
+        chip={system.filter}
+        keys={["band1Freq", "band2Freq", "band3Freq", "band4Freq", "hpfFreq", "lpfFreq"]}
+        enable="eqOn"
+        style={{ width: 430, boxSizing: "border-box" }}
+        extra={
+          <div role="tablist" aria-label="EQ page" style={{ display: "flex", gap: 8 }}>
+            {[0, 1, 2, 3].map(
+              (i) =>
+                bandHas[i] && (
+                  <Key
+                    key={i}
+                    pressed={i === page}
+                    onClick={() => setSel(i)}
+                    label={`Band ${i + 1}`}
+                  >
+                    {i + 1}
+                  </Key>
+                ),
+            )}
+            {hasFilters && (
+              <Key
+                pressed={page === FILTER_PAGE}
+                onClick={() => setSel(FILTER_PAGE)}
+                label="High-pass and low-pass filters"
+              >
+                HP·LP
+              </Key>
+            )}
+          </div>
+        }
+      >
         {page === FILTER_PAGE ? (
           <>
             <FilterRow on="hpfOn" freq="hpfFreq" slope="hpfSlope" />
@@ -196,8 +371,26 @@ function StripDeck({ sel, setSel, meters }: { sel: number; setSel: (n: number) =
         )}
       </PGroup>
 
-      <PGroup title="Dynamics" chip={system.dynamics} keys={["compThresh", "compRatio"]} enable="compOn" style={{ width: 340, boxSizing: "border-box" }}
-        extra={hasDynDetail && <Seg label="Dynamics page" value={dPage} onChange={setDynPage} options={[{ id: "comp", label: "Comp" }, { id: "detail", label: "More" }]} />}>
+      <PGroup
+        title="Dynamics"
+        chip={system.dynamics}
+        keys={["compThresh", "compRatio"]}
+        enable="compOn"
+        style={{ width: 340, boxSizing: "border-box" }}
+        extra={
+          hasDynDetail && (
+            <Seg
+              label="Dynamics page"
+              value={dPage}
+              onChange={setDynPage}
+              options={[
+                { id: "comp", label: "Comp" },
+                { id: "detail", label: "More" },
+              ]}
+            />
+          )
+        }
+      >
         {dPage === "comp" ? (
           <>
             <Row justify="space-around">
@@ -232,15 +425,36 @@ function StripDeck({ sel, setSel, meters }: { sel: number; setSel: (n: number) =
         )}
       </PGroup>
 
-      <PGroup title="Sat" chip={system.colour} keys={["satDrive", "satMix"]} enable="satOn" style={{ width: 200, boxSizing: "border-box" }}
-        extra={<PToggle k="satOversample">OS</PToggle>}>
-        <Row justify="space-around"><PKnob k="satDrive" size="xl" learn /><PKnob k="satMix" size="l" learn /></Row>
+      <PGroup
+        title="Sat"
+        chip={system.colour}
+        keys={["satDrive", "satMix"]}
+        enable="satOn"
+        style={{ width: 200, boxSizing: "border-box" }}
+        extra={<PToggle k="satOversample">OS</PToggle>}
+      >
+        <Row justify="space-around">
+          <PKnob k="satDrive" size="xl" learn />
+          <PKnob k="satMix" size="l" learn />
+        </Row>
         <PChoice k="satMode" variant="seg" />
-        <Row justify="space-around"><PKnob k="satBias" size="m" learn /><PKnob k="satTone" size="m" learn /><PKnob k="satOutput" size="m" label="Out" learn /></Row>
+        <Row justify="space-around">
+          <PKnob k="satBias" size="m" learn />
+          <PKnob k="satTone" size="m" learn />
+          <PKnob k="satOutput" size="m" label="Out" learn />
+        </Row>
       </PGroup>
 
-      <PGroup title="Out" chip={system.out} keys={["output", "width"]} style={{ flexGrow: 1, minWidth: 0, alignItems: "center" }}>
-        <Row gap={10} justify="center"><PKnob k="output" size="xl" /><PKnob k="width" /></Row>
+      <PGroup
+        title="Out"
+        chip={system.out}
+        keys={["output", "width"]}
+        style={{ flexGrow: 1, minWidth: 0, alignItems: "center" }}
+      >
+        <Row gap={10} justify="center">
+          <PKnob k="output" size="xl" />
+          <PKnob k="width" />
+        </Row>
         <PToggle k="mono" style={{ alignSelf: "stretch" }} />
         <PCycle k="template" style={{ alignSelf: "stretch" }} />
         <StereoMeter read={meters?.out} segments={18} />
@@ -266,12 +480,37 @@ function FilterRow({ on, freq, slope }: { on: string; freq: string; slope: strin
   );
 }
 
-export function ChannelStripPanel({ store, map, specs, presetName, onPresetStep, meters, eqCurve, sidechainSource, getFrame }: ChannelStripPanelProps) {
+export function ChannelStripPanel({
+  store,
+  map,
+  specs,
+  presetName,
+  onPresetStep,
+  meters,
+  eqCurve,
+  sidechainSource,
+  getFrame,
+}: ChannelStripPanelProps) {
   const [sel, setSel] = useState(2);
   return (
     <PanelScope schema={channelStripSchema} specs={specs} store={store} map={map}>
-      <PluginFrame name="CHANNEL STRIP" tag="OVERLAY FX" subtitle="In → EQ → Dynamics → Saturate → Out" presetName={presetName} onPresetStep={onPresetStep} screenHeight={330}
-        screen={<StripScreen sel={sel} eqCurve={eqCurve} meters={meters} sidechainSource={sidechainSource} getFrame={getFrame} />}>
+      <PluginFrame
+        name="CHANNEL STRIP"
+        tag="OVERLAY FX"
+        subtitle="In → EQ → Dynamics → Saturate → Out"
+        presetName={presetName}
+        onPresetStep={onPresetStep}
+        screenHeight={330}
+        screen={
+          <StripScreen
+            sel={sel}
+            eqCurve={eqCurve}
+            meters={meters}
+            sidechainSource={sidechainSource}
+            getFrame={getFrame}
+          />
+        }
+      >
         <StripDeck sel={sel} setSel={setSel} meters={meters} />
       </PluginFrame>
     </PanelScope>

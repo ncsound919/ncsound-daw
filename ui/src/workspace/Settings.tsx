@@ -70,14 +70,19 @@ const BUFFERS = [32, 64, 128, 256, 512, 1024];
 
 function useAudioDevices() {
   const [devices, setDevices] = useState<AudioDevice[]>([]);
-  const [note, setNote] = useState("Click Refresh to list devices (browser permission may be needed for names).");
+  const [note, setNote] = useState(
+    "Click Refresh to list devices (browser permission may be needed for names).",
+  );
   const refresh = async () => {
     try {
       const list = await navigator.mediaDevices.enumerateDevices();
       setDevices(
         list
           .filter((d) => d.kind === "audioinput" || d.kind === "audiooutput")
-          .map((d) => ({ deviceId: d.deviceId, label: d.label || `${d.kind} ${d.deviceId.slice(0, 6)}` })),
+          .map((d) => ({
+            deviceId: d.deviceId,
+            label: d.label || `${d.kind} ${d.deviceId.slice(0, 6)}`,
+          })),
       );
       setNote(
         list.some((d) => d.label)
@@ -104,17 +109,26 @@ function useMidiDevices(enabled: boolean) {
       return;
     }
     let cancelled = false;
-    const nav = navigator as Navigator & { requestMIDIAccess?: (o?: unknown) => Promise<MIDIAccess> };
+    const nav = navigator as Navigator & {
+      requestMIDIAccess?: (o?: unknown) => Promise<MIDIAccess>;
+    };
     nav
       .requestMIDIAccess?.({ sysex: false })
       .then((access) => {
         if (cancelled) return;
-        const found = Array.from(access.inputs.values()).map((input) => input.name ?? input.id ?? "MIDI input");
+        const found = Array.from(access.inputs.values()).map(
+          (input) => input.name ?? input.id ?? "MIDI input",
+        );
         setNames(found);
-        setNote(found.length === 0 ? "No MIDI controllers found." : `${found.length} controller(s) found.`);
+        setNote(
+          found.length === 0
+            ? "No MIDI controllers found."
+            : `${found.length} controller(s) found.`,
+        );
       })
       .catch(() => {
-        if (!cancelled) setNote("Web MIDI needs permission (chrome://settings) or is unavailable in WebView2.");
+        if (!cancelled)
+          setNote("Web MIDI needs permission (chrome://settings) or is unavailable in WebView2.");
       });
     return () => {
       cancelled = true;
@@ -166,11 +180,12 @@ export function SettingsPanel({
   const { devices, note: audioNote, refresh: refreshDevices } = useAudioDevices();
   const { names: midiNames, note: midiNote } = useMidiDevices(settings.midiEnabled);
   const windows = typeof window !== "undefined" && /win/i.test(window.navigator.platform);
-  const asioNote = settings.driver === "asio"
-    ? windows
-      ? "ASIO is preferred — the native engine opens the ASIO device on Windows; WebView2 falls back to WASAPI for preview."
-      : "ASIO is Windows-only — select WASAPI/WASAPI-exclusive on other platforms."
-    : "ASIO available on Windows in the desktop app (native JUCE enables it). This panel prefers it and saves the choice.";
+  const asioNote =
+    settings.driver === "asio"
+      ? windows
+        ? "ASIO is preferred — the native engine opens the ASIO device on Windows; WebView2 falls back to WASAPI for preview."
+        : "ASIO is Windows-only — select WASAPI/WASAPI-exclusive on other platforms."
+      : "ASIO available on Windows in the desktop app (native JUCE enables it). This panel prefers it and saves the choice.";
 
   return (
     <div className="ws-settings" aria-label="Settings">
@@ -287,7 +302,11 @@ export function SettingsPanel({
         </label>
         <label className="ws-settings-slider">
           <span>
-            Default clip gain <b>{settings.clipGain > 0 ? "+" : ""}{settings.clipGain.toFixed(1)} dB</b>
+            Default clip gain{" "}
+            <b>
+              {settings.clipGain > 0 ? "+" : ""}
+              {settings.clipGain.toFixed(1)} dB
+            </b>
           </span>
           <input
             type="range"
@@ -300,7 +319,11 @@ export function SettingsPanel({
         </label>
         <label className="ws-settings-slider">
           <span>
-            Master gain <b>{settings.masterGain > 0 ? "+" : ""}{settings.masterGain.toFixed(1)} dB</b>
+            Master gain{" "}
+            <b>
+              {settings.masterGain > 0 ? "+" : ""}
+              {settings.masterGain.toFixed(1)} dB
+            </b>
           </span>
           <input
             type="range"
@@ -337,7 +360,9 @@ export function SettingsPanel({
             Loop {settings.loop ? "ON" : "OFF"}
           </button>
         </div>
-        <p className="ws-settings-note">Changes apply live to the transport and arranger where the host exposes the route.</p>
+        <p className="ws-settings-note">
+          Changes apply live to the transport and arranger where the host exposes the route.
+        </p>
       </section>
 
       <section className="ws-settings-card">
@@ -491,7 +516,9 @@ export function SettingsPanel({
             Compact
           </button>
         </div>
-        <p className="ws-settings-note">Compact tightens strip/toolbar gaps. Stored locally in this browser.</p>
+        <p className="ws-settings-note">
+          Compact tightens strip/toolbar gaps. Stored locally in this browser.
+        </p>
       </section>
     </div>
   );

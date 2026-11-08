@@ -25,15 +25,29 @@ export interface ScopeProps<P, S, F> {
  * touches React state, so audio-rate data can't cause re-renders, and the UI
  * can never block the audio thread (it only ever reads snapshots).
  */
-export function Scope<P, S, F>({ renderer, params, width, height, getFrame, label, paused = false, children, style }: ScopeProps<P, S, F>) {
+export function Scope<P, S, F>({
+  renderer,
+  params,
+  width,
+  height,
+  getFrame,
+  label,
+  paused = false,
+  children,
+  style,
+}: ScopeProps<P, S, F>) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const live = useRef({ renderer, params, getFrame });
   live.current = { renderer, params, getFrame };
   const state = useRef<S>((renderer.init?.() ?? {}) as S);
   const rendererRef = useRef(renderer);
-  if (rendererRef.current !== renderer) { rendererRef.current = renderer; state.current = (renderer.init?.() ?? {}) as S; }
+  if (rendererRef.current !== renderer) {
+    rendererRef.current = renderer;
+    state.current = (renderer.init?.() ?? {}) as S;
+  }
 
-  const cw = width - 6, ch = height - 6;
+  const cw = width - 6,
+    ch = height - 6;
 
   useEffect(() => {
     if (paused) return;
@@ -48,8 +62,12 @@ export function Scope<P, S, F>({ renderer, params, width, height, getFrame, labe
       const g = c?.getContext("2d");
       if (!c || !g) return;
       const dpr = Math.min(2, window.devicePixelRatio || 1);
-      const pw = Math.round(cw * dpr), ph = Math.round(ch * dpr);
-      if (c.width !== pw || c.height !== ph) { c.width = pw; c.height = ph; }
+      const pw = Math.round(cw * dpr),
+        ph = Math.round(ch * dpr);
+      if (c.width !== pw || c.height !== ph) {
+        c.width = pw;
+        c.height = ph;
+      }
       g.setTransform(dpr, 0, 0, dpr, 0, 0);
       g.clearRect(0, 0, cw, ch);
       const { renderer: r, params: p, getFrame: gf } = live.current;
@@ -61,9 +79,44 @@ export function Scope<P, S, F>({ renderer, params, width, height, getFrame, labe
   }, [cw, ch, paused]);
 
   return (
-    <div className="cs-scope" style={{ position: "relative", width, height, boxSizing: "border-box", borderRadius: 6, padding: 3, background: "linear-gradient(180deg,#050506,#111113)", boxShadow: "inset 0 2px 6px #000, 0 1px 0 rgba(255,255,255,.07), 0 0 0 1px #000", ...style }}>
-      <canvas ref={canvas} role="img" aria-label={label} style={{ display: "block", width: cw, height: ch, borderRadius: 4, background: "radial-gradient(ellipse at 50% 40%, #1d1307, #0e0903 80%)" }} />
-      <span aria-hidden="true" style={{ position: "absolute", inset: 3, borderRadius: 4, pointerEvents: "none", background: "linear-gradient(165deg, rgba(255,255,255,.09) 0%, rgba(255,255,255,.02) 28%, transparent 42%), repeating-linear-gradient(0deg, rgba(0,0,0,.16) 0 1px, transparent 1px 3px)", boxShadow: "inset 0 0 18px rgba(0,0,0,.7)" }} />
+    <div
+      className="cs-scope"
+      style={{
+        position: "relative",
+        width,
+        height,
+        boxSizing: "border-box",
+        borderRadius: 6,
+        padding: 3,
+        background: "linear-gradient(180deg,#050506,#111113)",
+        boxShadow: "inset 0 2px 6px #000, 0 1px 0 rgba(255,255,255,.07), 0 0 0 1px #000",
+        ...style,
+      }}
+    >
+      <canvas
+        ref={canvas}
+        role="img"
+        aria-label={label}
+        style={{
+          display: "block",
+          width: cw,
+          height: ch,
+          borderRadius: 4,
+          background: "radial-gradient(ellipse at 50% 40%, #1d1307, #0e0903 80%)",
+        }}
+      />
+      <span
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          inset: 3,
+          borderRadius: 4,
+          pointerEvents: "none",
+          background:
+            "linear-gradient(165deg, rgba(255,255,255,.09) 0%, rgba(255,255,255,.02) 28%, transparent 42%), repeating-linear-gradient(0deg, rgba(0,0,0,.16) 0 1px, transparent 1px 3px)",
+          boxShadow: "inset 0 0 18px rgba(0,0,0,.7)",
+        }}
+      />
       {children}
     </div>
   );

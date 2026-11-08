@@ -24,7 +24,11 @@ export function PitchKnobs({
 }) {
   const size = compact ? "m" : "l";
   return (
-    <div className={`ws-pitch-row${compact ? " is-compact" : ""}`} role="group" aria-label={`${label} pitch`}>
+    <div
+      className={`ws-pitch-row${compact ? " is-compact" : ""}`}
+      role="group"
+      aria-label={`${label} pitch`}
+    >
       <Knob
         label="Transpose"
         size={size}

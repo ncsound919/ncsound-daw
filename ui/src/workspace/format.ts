@@ -3,14 +3,7 @@
 export const INSERT_SLOTS = [0, 1, 2, 3] as const;
 
 export type WorkspaceView =
-  | "arrange"
-  | "mix"
-  | "inspector"
-  | "piano"
-  | "browser"
-  | "automation"
-  | "pitch"
-  | "settings";
+  "arrange" | "mix" | "inspector" | "piano" | "browser" | "automation" | "pitch" | "settings";
 
 /** Every surface the native app owns, in the order its menus reach them.
  *  Browser lives only as the insert-load dialog and pitch lives in the

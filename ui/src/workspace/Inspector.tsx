@@ -101,42 +101,45 @@ export function Inspector({
       <header className="ws-ins-head">
         <span className="ws-tint" style={{ background: tintForTrack(track.index) }} />
         <span className="ws-ins-title">
-          <span className="ws-ins-name" title={track.name}>TRACK {track.index + 1}</span>
-          <span className="ws-ins-sub">
-            {track.instrumentName || "No instrument"}
+          <span className="ws-ins-name" title={track.name}>
+            TRACK {track.index + 1}
           </span>
+          <span className="ws-ins-sub">{track.instrumentName || "No instrument"}</span>
         </span>
 
         {!compact && (
-        <span className="ws-strip-buttons">
-          <button
-            className="ws-mini-btn is-rec"
-            aria-pressed={track.armed ?? false}
-            aria-label={`Arm ${track.name}`}
-            onClick={() => onArm(track.index, !track.armed)}
-          >
-            R
-          </button>
-          <button
-            className="ws-mini-btn"
-            aria-pressed={track.muted}
-            aria-label={`Mute ${track.name}`}
-            onClick={() => onMute(track.index, !track.muted)}
-          >
-            M
-          </button>
-          <button
-            className="ws-mini-btn is-solo"
-            aria-pressed={track.soloed}
-            aria-label={`Solo ${track.name}`}
-            onClick={() => onSolo(track.index, !track.soloed)}
-          >
-            S
-          </button>
-        </span>
+          <span className="ws-strip-buttons">
+            <button
+              className="ws-mini-btn is-rec"
+              aria-pressed={track.armed ?? false}
+              aria-label={`Arm ${track.name}`}
+              onClick={() => onArm(track.index, !track.armed)}
+            >
+              R
+            </button>
+            <button
+              className="ws-mini-btn"
+              aria-pressed={track.muted}
+              aria-label={`Mute ${track.name}`}
+              onClick={() => onMute(track.index, !track.muted)}
+            >
+              M
+            </button>
+            <button
+              className="ws-mini-btn is-solo"
+              aria-pressed={track.soloed}
+              aria-label={`Solo ${track.name}`}
+              onClick={() => onSolo(track.index, !track.soloed)}
+            >
+              S
+            </button>
+          </span>
         )}
 
-        <span className="ws-ins-meter" title={`Peak ${dbLabel(20 * Math.log10(Math.max(1e-6, peak)))} dB`}>
+        <span
+          className="ws-ins-meter"
+          title={`Peak ${dbLabel(20 * Math.log10(Math.max(1e-6, peak)))} dB`}
+        >
           <i style={{ "--lvl": `${meterPct(peak)}%` } as React.CSSProperties} />
         </span>
       </header>
@@ -193,9 +196,7 @@ export function Inspector({
           })}
         </div>
 
-        <p className="ws-ins-note">
-          Four insert slots. The selected insert opens on the right.
-        </p>
+        <p className="ws-ins-note">Four insert slots. The selected insert opens on the right.</p>
       </section>
 
       <section className="ws-ins-card">
@@ -264,20 +265,29 @@ export function Inspector({
       <section className="ws-ins-card">
         <h3>Output</h3>
         <div className="ws-ins-route">
-          <span className="ws-ins-route-node" title={track.name}>TRACK {track.index + 1}</span>
+          <span className="ws-ins-route-node" title={track.name}>
+            TRACK {track.index + 1}
+          </span>
           <span className="ws-ins-route-arrow">→</span>
           <span className="ws-ins-route-node">MASTER</span>
         </div>
         {pitch && onPitch && (
           <div className="ws-ins-pitch">
-            <span className="ws-ins-pitch-label" title={`${track.name} PITCH`}>TRACK {track.index + 1} PITCH</span>
+            <span className="ws-ins-pitch-label" title={`${track.name} PITCH`}>
+              TRACK {track.index + 1} PITCH
+            </span>
             <PitchKnobs label={`${track.name} track`} value={pitch} onChange={onPitch} compact />
           </div>
         )}
         {instrumentPitch && onInstrumentPitch && (
           <div className="ws-ins-pitch">
             <span className="ws-ins-pitch-label">INSTRUMENT</span>
-            <PitchKnobs label={`${track.name} instrument`} value={instrumentPitch} onChange={onInstrumentPitch} compact />
+            <PitchKnobs
+              label={`${track.name} instrument`}
+              value={instrumentPitch}
+              onChange={onInstrumentPitch}
+              compact
+            />
           </div>
         )}
       </section>
@@ -333,7 +343,10 @@ export function Inspector({
             </div>
 
             {rows.length > 14 && (
-              <button className="ws-btn ws-editor-more" onClick={() => setShowAll((value) => !value)}>
+              <button
+                className="ws-btn ws-editor-more"
+                onClick={() => setShowAll((value) => !value)}
+              >
                 {showAll ? "SHOW FEWER" : `SHOW ALL ${rows.length}`}
               </button>
             )}

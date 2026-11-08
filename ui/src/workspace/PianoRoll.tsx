@@ -60,7 +60,13 @@ type Drag = {
   origin: MidiNote;
 };
 
-export function PianoRoll({ clipName, lengthBeats, initialNotes = [], persisted = false, onEdited }: PianoRollProps) {
+export function PianoRoll({
+  clipName,
+  lengthBeats,
+  initialNotes = [],
+  persisted = false,
+  onEdited,
+}: PianoRollProps) {
   const [notes, setNotes] = useState<MidiNote[]>(initialNotes);
   const [selected, setSelected] = useState<number | null>(null);
   const [beatPx, setBeatPx] = useState(44);
@@ -129,7 +135,8 @@ export function PianoRoll({ clipName, lengthBeats, initialNotes = [], persisted 
     const current = notesRef.current;
     const beat = beatAt(x);
     const pitch = pitchAt(y);
-    if (current.some((note) => note.pitch === pitch && Math.abs(note.startBeat - beat) < 1e-4)) return false;
+    if (current.some((note) => note.pitch === pitch && Math.abs(note.startBeat - beat) < 1e-4))
+      return false;
     const note: MidiNote = {
       startBeat: beat,
       lengthBeats: Math.min(snap, Math.max(0.0625, lengthBeats - beat)),
@@ -330,7 +337,12 @@ export function PianoRoll({ clipName, lengthBeats, initialNotes = [], persisted 
         >
           +
         </button>
-        <button className="ws-btn" onClick={removeSelected} disabled={selected === null} title="Delete the selected note">
+        <button
+          className="ws-btn"
+          onClick={removeSelected}
+          disabled={selected === null}
+          title="Delete the selected note"
+        >
           Delete
         </button>
       </div>
@@ -376,7 +388,11 @@ export function PianoRoll({ clipName, lengthBeats, initialNotes = [], persisted 
             {Array.from({ length: PITCH_HIGH - PITCH_LOW + 1 }, (_, row) => {
               const pitch = PITCH_HIGH - row;
               return isBlack(pitch) ? (
-                <span key={pitch} className="pr-row is-black" style={{ top: row * ROW_H, height: ROW_H }} />
+                <span
+                  key={pitch}
+                  className="pr-row is-black"
+                  style={{ top: row * ROW_H, height: ROW_H }}
+                />
               ) : null;
             })}
 
@@ -475,14 +491,18 @@ export function PianoRoll({ clipName, lengthBeats, initialNotes = [], persisted 
                 onKeyDown={(event) => {
                   const step = event.shiftKey ? 1 : 5;
                   let next = note.velocity;
-                  if (event.key === "ArrowUp" || event.key === "ArrowRight") next = Math.min(127, note.velocity + step);
-                  else if (event.key === "ArrowDown" || event.key === "ArrowLeft") next = Math.max(1, note.velocity - step);
+                  if (event.key === "ArrowUp" || event.key === "ArrowRight")
+                    next = Math.min(127, note.velocity + step);
+                  else if (event.key === "ArrowDown" || event.key === "ArrowLeft")
+                    next = Math.max(1, note.velocity - step);
                   else if (event.key === "Home") next = 100;
                   else if (event.key === "End") next = 127;
                   else return;
                   event.preventDefault();
                   event.stopPropagation();
-                  const nextNotes = notes.map((entry, entryIndex) => (entryIndex === index ? { ...entry, velocity: next } : entry));
+                  const nextNotes = notes.map((entry, entryIndex) =>
+                    entryIndex === index ? { ...entry, velocity: next } : entry,
+                  );
                   commit(nextNotes);
                   setSelected(index);
                 }}

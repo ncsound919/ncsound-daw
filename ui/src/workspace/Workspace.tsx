@@ -180,23 +180,23 @@ export function Workspace({
   useEffect(() => {
     if (selectedClip !== null && selectedClip >= clips.length) setSelectedClip(null);
   }, [clips.length, selectedClip]);
-  const selectedTrack = state.tracks.find((track) => track.index === state.selectedTrack) ?? state.tracks[0];
+  const selectedTrack =
+    state.tracks.find((track) => track.index === state.selectedTrack) ?? state.tracks[0];
   const trackIndex = selectedTrack?.index ?? 0;
 
   const clip = selectedClip !== null ? clips[selectedClip] : undefined;
-  const clipNotes = selectedClip !== null ? noteDrafts[selectedClip] ?? clip?.notes ?? [] : [];
+  const clipNotes = selectedClip !== null ? (noteDrafts[selectedClip] ?? clip?.notes ?? []) : [];
 
   const autoParam = autoParams[trackIndex] ?? "volume";
   const autoKey = `${trackIndex}:${autoParam}`;
   const hostLane = state.automation?.find(
     (lane) => lane.track === trackIndex && lane.param === autoParam,
   );
-  const autoDraft: AutomationLaneDraft =
-    autoDrafts[autoKey] ?? hostLane ?? { param: autoParam, curve: "linear", points: [] };
+  const autoDraft: AutomationLaneDraft = autoDrafts[autoKey] ??
+    hostLane ?? { param: autoParam, curve: "linear", points: [] };
 
   const inserts = selectedTrack?.inserts ?? [];
-  const firstEmptyInsert =
-    INSERT_SLOTS.find((slot) => !inserts[slot]?.name) ?? INSERT_SLOTS[0];
+  const firstEmptyInsert = INSERT_SLOTS.find((slot) => !inserts[slot]?.name) ?? INSERT_SLOTS[0];
 
   const flash = useCallback((text: string, alert = false) => setStatus({ text, alert }), []);
   const trackPitch = useMemo<PitchState>(
@@ -445,7 +445,9 @@ export function Workspace({
             pitch={trackPitch}
             onPitch={(patch) => selectedTrack && actions.trackPitch(selectedTrack.index, patch)}
             instrumentPitch={selectedTrack?.instrumentPitch ?? EMPTY_PITCH}
-            onInstrumentPitch={(patch) => selectedTrack && actions.instrumentPitch(selectedTrack.index, patch)}
+            onInstrumentPitch={(patch) =>
+              selectedTrack && actions.instrumentPitch(selectedTrack.index, patch)
+            }
             onOpenClip={(index) => {
               setSelectedClip(index);
               setView("piano");
@@ -502,7 +504,9 @@ export function Workspace({
             pitch={trackPitch}
             onPitch={(patch) => selectedTrack && actions.trackPitch(selectedTrack.index, patch)}
             instrumentPitch={selectedTrack?.instrumentPitch ?? EMPTY_PITCH}
-            onInstrumentPitch={(patch) => selectedTrack && actions.instrumentPitch(selectedTrack.index, patch)}
+            onInstrumentPitch={(patch) =>
+              selectedTrack && actions.instrumentPitch(selectedTrack.index, patch)
+            }
           />
         )}
 
@@ -548,7 +552,6 @@ export function Workspace({
             }}
           />
         )}
-
       </div>
 
       {browserTarget && (
@@ -557,13 +560,24 @@ export function Workspace({
           <div className="ws-browser-modal-panel">
             <header className="ws-browser-modal-head">
               <span>LOAD PLUG-IN</span>
-              <button className="ws-btn is-icon" aria-label="Close plug-in browser" onClick={closeBrowser} autoFocus>
+              <button
+                className="ws-btn is-icon"
+                aria-label="Close plug-in browser"
+                onClick={closeBrowser}
+                autoFocus
+              >
                 ✕
               </button>
             </header>
             <Browser
               plugins={state.plugins ?? []}
-              targetName={isMasterTarget ? "MASTER" : browserTrack ? `TRACK ${browserTrack.index + 1}` : "TRACK"}
+              targetName={
+                isMasterTarget
+                  ? "MASTER"
+                  : browserTrack
+                    ? `TRACK ${browserTrack.index + 1}`
+                    : "TRACK"
+              }
               targetSlot={isMasterTarget ? undefined : browserSlot}
               scanning={state.pluginScan?.scanning}
               progress={state.pluginScan?.progress}

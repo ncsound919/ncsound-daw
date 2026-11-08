@@ -17,7 +17,10 @@ export const backend = {
     return call<TransportState>("getTransport");
   },
 
-  getPitch(): Promise<{ globalPitch: PitchState; tracks: { index: number; pitch: PitchState; instrumentPitch: PitchState }[] }> {
+  getPitch(): Promise<{
+    globalPitch: PitchState;
+    tracks: { index: number; pitch: PitchState; instrumentPitch: PitchState }[];
+  }> {
     return call("getPitch");
   },
 

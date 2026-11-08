@@ -63,7 +63,8 @@ export function Browser({
           TARGET <b>{targetName ?? "NO TRACK"}</b>
           {targetSlot !== undefined && (
             <>
-              {" "}· SLOT <b>{targetSlot + 1}</b>
+              {" "}
+              · SLOT <b>{targetSlot + 1}</b>
             </>
           )}
         </span>
@@ -72,7 +73,12 @@ export function Browser({
           <span className="ws-browser-scanning">SCANNING {Math.round(progress * 100)}%</span>
         ) : null}
         {onScan ? (
-          <button className="ws-btn" onClick={onScan} disabled={scanning} title="Rescan the plug-in folders">
+          <button
+            className="ws-btn"
+            onClick={onScan}
+            disabled={scanning}
+            title="Rescan the plug-in folders"
+          >
             {scanning ? "Scanning" : "Scan"}
           </button>
         ) : null}
@@ -143,7 +149,9 @@ export function Browser({
               >
                 <span className="ws-browser-row-name">{plugin.name}</span>
                 <span className="ws-browser-row-vendor">{plugin.vendor ?? ""}</span>
-                <span className="ws-browser-row-tag">{plugin.category === "instrument" ? "INST" : "FX"}</span>
+                <span className="ws-browser-row-tag">
+                  {plugin.category === "instrument" ? "INST" : "FX"}
+                </span>
               </button>
             ))
           )}

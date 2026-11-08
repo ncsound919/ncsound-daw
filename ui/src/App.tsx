@@ -16,37 +16,30 @@ import { Workspace, type WorkspaceActions } from "./workspace/Workspace";
 const EMPTY_PITCH: PitchState = { transpose: 0, pitchCents: 0, tuningHz: 440 };
 const MAX_TRACKS = 8;
 
-const MOCK_TRACKS = [
-  "DRUMS",
-  "BASS",
-  "KEYS",
-  "VOX",
-  "GTR",
-  "PERC",
-  "AUX 1",
-  "AUX 2",
-].map((name, index) => ({
-  index,
-  name,
-  instrumentName: index % 3 === 2 ? "" : name.toLowerCase(),
-  gainDb: 0,
-  pan: 0,
-  muted: false,
-  soloed: false,
-  transpose: 0,
-  pitchCents: 0,
-  tuningHz: 440,
-  instrumentPitch: EMPTY_PITCH,
-  sendA: index < 6 ? 0.18 : 0,
-  sendB: index < 6 ? 0.08 : 0,
-  armed: false,
-  inserts: [
-    { name: index === 3 ? "VoxStudio" : "Overlay Retro Color", missing: false },
-    { name: index === 2 ? "Overlay Delay" : "", missing: false },
-    { name: "", missing: false },
-    { name: "", missing: false },
-  ],
-}));
+const MOCK_TRACKS = ["DRUMS", "BASS", "KEYS", "VOX", "GTR", "PERC", "AUX 1", "AUX 2"].map(
+  (name, index) => ({
+    index,
+    name,
+    instrumentName: index % 3 === 2 ? "" : name.toLowerCase(),
+    gainDb: 0,
+    pan: 0,
+    muted: false,
+    soloed: false,
+    transpose: 0,
+    pitchCents: 0,
+    tuningHz: 440,
+    instrumentPitch: EMPTY_PITCH,
+    sendA: index < 6 ? 0.18 : 0,
+    sendB: index < 6 ? 0.08 : 0,
+    armed: false,
+    inserts: [
+      { name: index === 3 ? "VoxStudio" : "Overlay Retro Color", missing: false },
+      { name: index === 2 ? "Overlay Delay" : "", missing: false },
+      { name: "", missing: false },
+      { name: "", missing: false },
+    ],
+  }),
+);
 
 /** Standalone-preview only: a plausible envelope so the mock timeline shows
     waveform shapes. Inside the host the real peaks come from the engine. */
@@ -164,8 +157,7 @@ export default function App() {
 
   useEffect(
     () => () => {
-      for (const timer of saveChannelTimers.current.values())
-        clearTimeout(timer);
+      for (const timer of saveChannelTimers.current.values()) clearTimeout(timer);
     },
     [],
   );
@@ -211,7 +203,9 @@ export default function App() {
     const patchTrack = (track: number, patch: Partial<AppState["tracks"][number]>) =>
       setState((current) => ({
         ...current,
-        tracks: current.tracks.map((entry) => (entry.index === track ? { ...entry, ...patch } : entry)),
+        tracks: current.tracks.map((entry) =>
+          entry.index === track ? { ...entry, ...patch } : entry,
+        ),
       }));
 
     return {
@@ -220,7 +214,12 @@ export default function App() {
         send(() => backend.setPlaying(playing));
       },
       stop() {
-        setTransport((current) => ({ ...current, playing: false, positionBar: 1, positionSeconds: 0 }));
+        setTransport((current) => ({
+          ...current,
+          playing: false,
+          positionBar: 1,
+          positionSeconds: 0,
+        }));
         send(() => backend.setPlaying(false));
         send(() => backend.setPositionBar(1));
       },
@@ -310,7 +309,7 @@ export default function App() {
             tracks,
             selectedTrack: tracks.some((track) => track.index === current.selectedTrack)
               ? current.selectedTrack
-              : tracks[tracks.length - 1]?.index ?? 0,
+              : (tracks[tracks.length - 1]?.index ?? 0),
           };
         });
         send(() => backend.setActiveTrackCount(Math.max(1, state.tracks.length - 1)));
@@ -383,7 +382,10 @@ export default function App() {
           ...current,
           tracks: current.tracks.map((entry) =>
             entry.index === track
-              ? { ...entry, instrumentPitch: { ...(entry.instrumentPitch ?? EMPTY_PITCH), ...patch } }
+              ? {
+                  ...entry,
+                  instrumentPitch: { ...(entry.instrumentPitch ?? EMPTY_PITCH), ...patch },
+                }
               : entry,
           ),
         }));

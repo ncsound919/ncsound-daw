@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import type { AutomationCurve, AutomationLaneDraft, AutomationParam, AutomationPoint } from "../types";
+import type {
+  AutomationCurve,
+  AutomationLaneDraft,
+  AutomationParam,
+  AutomationPoint,
+} from "../types";
 
 const SNAP = 0.25;
 
@@ -68,7 +73,14 @@ export interface AutomationProps {
  * dragging moves it and Alt-click deletes it. A drag stays local and is handed
  * to the host once, on pointer up.
  */
-export function Automation({ track, draft, lengthBeats = 16, persisted = false, onDraft, onParam }: AutomationProps) {
+export function Automation({
+  track,
+  draft,
+  lengthBeats = 16,
+  persisted = false,
+  onDraft,
+  onParam,
+}: AutomationProps) {
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const drag = useRef<{ index: number } | null>(null);
   const pendingRef = useRef<AutomationLaneDraft | null>(null);
@@ -185,7 +197,9 @@ export function Automation({ track, draft, lengthBeats = 16, persisted = false, 
           <select
             value={shown.curve}
             aria-label="Automation curve"
-            onChange={(event) => commit({ ...shown, curve: event.target.value as AutomationCurve }, false)}
+            onChange={(event) =>
+              commit({ ...shown, curve: event.target.value as AutomationCurve }, false)
+            }
           >
             {CURVES.map((entry) => (
               <option key={entry.id} value={entry.id}>
@@ -242,9 +256,17 @@ export function Automation({ track, draft, lengthBeats = 16, persisted = false, 
       >
         <span className="ws-auto-grid" aria-hidden="true" />
         {points.length === 0 && (
-          <span className="ws-auto-empty" aria-hidden="true">CLICK TO ADD A BREAKPOINT</span>
+          <span className="ws-auto-empty" aria-hidden="true">
+            CLICK TO ADD A BREAKPOINT
+          </span>
         )}
-        <svg className="ws-auto-line" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+        <svg
+          className="ws-auto-line"
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+          aria-hidden="true"
+          focusable="false"
+        >
           <path d={lanePath(points, lengthBeats, shown.curve)} />
         </svg>
 
@@ -270,14 +292,29 @@ export function Automation({ track, draft, lengthBeats = 16, persisted = false, 
               const fine = event.shiftKey ? 0.01 : 0.05;
               const beatStep = event.shiftKey ? 0.05 : 0.25;
               let next: AutomationPoint | null = null;
-              if (event.key === "ArrowUp") next = { ...point, value: clamp(point.value + fine, 0, 1) };
-              else if (event.key === "ArrowDown") next = { ...point, value: clamp(point.value - fine, 0, 1) };
-              else if (event.key === "ArrowRight") next = { ...point, beat: clamp(Math.round((point.beat + beatStep) / SNAP) * SNAP, 0, lengthBeats) };
-              else if (event.key === "ArrowLeft") next = { ...point, beat: clamp(Math.round((point.beat - beatStep) / SNAP) * SNAP, 0, lengthBeats) };
+              if (event.key === "ArrowUp")
+                next = { ...point, value: clamp(point.value + fine, 0, 1) };
+              else if (event.key === "ArrowDown")
+                next = { ...point, value: clamp(point.value - fine, 0, 1) };
+              else if (event.key === "ArrowRight")
+                next = {
+                  ...point,
+                  beat: clamp(Math.round((point.beat + beatStep) / SNAP) * SNAP, 0, lengthBeats),
+                };
+              else if (event.key === "ArrowLeft")
+                next = {
+                  ...point,
+                  beat: clamp(Math.round((point.beat - beatStep) / SNAP) * SNAP, 0, lengthBeats),
+                };
               else return;
               event.preventDefault();
               event.stopPropagation();
-              commit({ ...shown, points: points.map((entry, i) => (i === index ? next as AutomationPoint : entry)).sort(byBeat) });
+              commit({
+                ...shown,
+                points: points
+                  .map((entry, i) => (i === index ? (next as AutomationPoint) : entry))
+                  .sort(byBeat),
+              });
             }}
             onPointerDown={(event) => {
               event.stopPropagation();

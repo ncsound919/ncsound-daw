@@ -123,7 +123,10 @@ describe("arrange parity", () => {
       expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
     }
 
-    expect(screen.getByRole("slider", { name: "Loop region" })).toHaveAttribute("aria-valuetext", "Bars 1 to 17");
+    expect(screen.getByRole("slider", { name: "Loop region" })).toHaveAttribute(
+      "aria-valuetext",
+      "Bars 1 to 17",
+    );
     expect(document.querySelectorAll(".ws-lane .ws-clip")).toHaveLength(2);
     // Single channel is not in arranger view; header FIT never scrolls.
     expect(document.querySelector(".ws-arrange-side")).toBeNull();
@@ -199,7 +202,10 @@ describe("arrange parity", () => {
       />,
     );
 
-    expect(screen.getByRole("slider", { name: "Loop region" })).toHaveAttribute("aria-valuetext", "Bars 3 to 9");
+    expect(screen.getByRole("slider", { name: "Loop region" })).toHaveAttribute(
+      "aria-valuetext",
+      "Bars 3 to 9",
+    );
   });
 
   it("renders MIDI clips from the arrangement list with their notes", () => {

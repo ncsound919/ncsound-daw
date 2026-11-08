@@ -54,7 +54,6 @@ const SCALE_DB = [0, -12, -24, -48, -60];
    red zone + clip LED. */
 const METER_DB = [-12, -24, -48];
 
-
 /** Vertical fader: pointer drag, wheel, keyboard, double-click to unity. */
 function Fader({
   value,
@@ -194,9 +193,18 @@ function Meter({ left, right, title }: { left: number; right: number; title: str
   const r = meterPct(right);
   return (
     <div className="ws-meters" title={title} aria-hidden="true">
-      <span className="ws-meter-hold" style={{ bottom: `calc(4px + ${meterPct(hold)}% * (100% - 8px) / 100%)` }} />
-      <span className={left >= 0.985 ? "ws-meter-col is-clip" : "ws-meter-col"} style={{ "--lvl": `${l}%` } as CSSProperties} />
-      <span className={right >= 0.985 ? "ws-meter-col is-clip" : "ws-meter-col"} style={{ "--lvl": `${r}%` } as CSSProperties} />
+      <span
+        className="ws-meter-hold"
+        style={{ bottom: `calc(4px + ${meterPct(hold)}% * (100% - 8px) / 100%)` }}
+      />
+      <span
+        className={left >= 0.985 ? "ws-meter-col is-clip" : "ws-meter-col"}
+        style={{ "--lvl": `${l}%` } as CSSProperties}
+      />
+      <span
+        className={right >= 0.985 ? "ws-meter-col is-clip" : "ws-meter-col"}
+        style={{ "--lvl": `${r}%` } as CSSProperties}
+      />
     </div>
   );
 }
@@ -235,7 +243,9 @@ function SlotRow({
     .join(" ");
   const label = insert?.name ? insert.name.replace(/^Overlay\s+/i, "") : "empty";
   const name = insert?.missing ? `${label} — MISSING` : label;
-  const title = insert?.missing ? `${insert.name} is missing` : insert?.name || `Insert ${slot + 1} is empty`;
+  const title = insert?.missing
+    ? `${insert.name} is missing`
+    : insert?.name || `Insert ${slot + 1} is empty`;
 
   return (
     <button
@@ -309,26 +319,64 @@ function lufsOf(peak: number): number {
   return 20 * Math.log10(peak) - 3;
 }
 
-function masteringTips(masterGainDb: number, peakDb: number, lufs: number, dim: boolean, mono: boolean): { text: string; warn: boolean }[] {
+function masteringTips(
+  masterGainDb: number,
+  peakDb: number,
+  lufs: number,
+  dim: boolean,
+  mono: boolean,
+): { text: string; warn: boolean }[] {
   const tips: { text: string; warn: boolean }[] = [];
   if (!Number.isFinite(peakDb)) {
     tips.push({ text: "No signal yet — play the arrangement to measure the master.", warn: false });
   } else if (peakDb > -1) {
-    tips.push({ text: `Peak at ${dbLabel(peakDb)} dBFS is over −1. Exit the limiter / lower master gain.`, warn: true });
+    tips.push({
+      text: `Peak at ${dbLabel(peakDb)} dBFS is over −1. Exit the limiter / lower master gain.`,
+      warn: true,
+    });
   } else if (peakDb > -3) {
-    tips.push({ text: `Peak ${dbLabel(peakDb)} dBFS — leave 1 dB of true-peak headroom for streaming codecs.`, warn: false });
+    tips.push({
+      text: `Peak ${dbLabel(peakDb)} dBFS — leave 1 dB of true-peak headroom for streaming codecs.`,
+      warn: false,
+    });
   } else {
-    tips.push({ text: `Peak ${dbLabel(peakDb)} dBFS is inside the −1 dB streaming ceiling.`, warn: false });
+    tips.push({
+      text: `Peak ${dbLabel(peakDb)} dBFS is inside the −1 dB streaming ceiling.`,
+      warn: false,
+    });
   }
   if (Number.isFinite(lufs)) {
-    if (lufs < -16) tips.push({ text: `Integrated ${lufs.toFixed(1)} LUFS — quiet for streaming; raise master gain toward −14 LUFS.`, warn: false });
-    else if (lufs > -8) tips.push({ text: `Integrated ${lufs.toFixed(1)} LUFS is hot — lossy codecs will pump. Ease the limiter.`, warn: true });
-    else tips.push({ text: `Integrated ${lufs.toFixed(1)} LUFS sits in the streaming window (−14 to −10 LUFS).`, warn: false });
+    if (lufs < -16)
+      tips.push({
+        text: `Integrated ${lufs.toFixed(1)} LUFS — quiet for streaming; raise master gain toward −14 LUFS.`,
+        warn: false,
+      });
+    else if (lufs > -8)
+      tips.push({
+        text: `Integrated ${lufs.toFixed(1)} LUFS is hot — lossy codecs will pump. Ease the limiter.`,
+        warn: true,
+      });
+    else
+      tips.push({
+        text: `Integrated ${lufs.toFixed(1)} LUFS sits in the streaming window (−14 to −10 LUFS).`,
+        warn: false,
+      });
   }
-  if (masterGainDb > 3) tips.push({ text: `Master gain +${masterGainDb.toFixed(1)} dB is pushing the limiter — check gain staging.`, warn: true });
+  if (masterGainDb > 3)
+    tips.push({
+      text: `Master gain +${masterGainDb.toFixed(1)} dB is pushing the limiter — check gain staging.`,
+      warn: true,
+    });
   if (dim) tips.push({ text: "DIM is on — audition at −20 dB, then check mono.", warn: false });
-  if (mono) tips.push({ text: "MONO is on — collapse hides stereo effects; audition in stereo before delivery.", warn: true });
-  tips.push({ text: "Industry target: −14 LUFS integrated, −1 dBTP ceiling. Print at 16-bit / 48 kHz for delivery.", warn: false });
+  if (mono)
+    tips.push({
+      text: "MONO is on — collapse hides stereo effects; audition in stereo before delivery.",
+      warn: true,
+    });
+  tips.push({
+    text: "Industry target: −14 LUFS integrated, −1 dBTP ceiling. Print at 16-bit / 48 kHz for delivery.",
+    warn: false,
+  });
   return tips;
 }
 
@@ -370,7 +418,15 @@ function MasterViz({
       const bars = 48;
       for (let i = 0; i < bars; i += 1) {
         const t = i / (bars - 1);
-        const level = Math.max(0, Math.min(1, Math.sqrt(Math.max(masterPeakLeft, masterPeakRight)) * (1 - t * 0.72) * (0.72 + 0.28 * Math.sin(t * 6.28 + performance.now() / 900))));
+        const level = Math.max(
+          0,
+          Math.min(
+            1,
+            Math.sqrt(Math.max(masterPeakLeft, masterPeakRight)) *
+              (1 - t * 0.72) *
+              (0.72 + 0.28 * Math.sin(t * 6.28 + performance.now() / 900)),
+          ),
+        );
         const barH = level * h;
         ctx.fillStyle = level > 0.84 ? "#e0503c" : level > 0.6 ? "#e0824d" : "#f8e8c8";
         ctx.fillRect((i / bars) * w + 1, h - barH, w / bars - 2, barH);
@@ -447,12 +503,24 @@ function MasterViz({
   return (
     <>
       {!large && (
-        <div className="ws-master-viz" title="Double-click for larger view" role="group" aria-label="Master visualizer" onDoubleClick={openLarge}>
+        <div
+          className="ws-master-viz"
+          title="Double-click for larger view"
+          role="group"
+          aria-label="Master visualizer"
+          onDoubleClick={openLarge}
+        >
           {viz}
         </div>
       )}
       {large && (
-        <div className="ws-master-viz-modal" role="dialog" aria-modal="true" aria-label="Master visualizer large" onClick={() => setLarge(false)}>
+        <div
+          className="ws-master-viz-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Master visualizer large"
+          onClick={() => setLarge(false)}
+        >
           <div className="ws-master-viz-modal-panel" onClick={(event) => event.stopPropagation()}>
             <div className="ws-master-viz" style={{ flex: "1 1 auto" }}>
               {viz}
@@ -519,11 +587,20 @@ function ChannelStrip({
       <div className="ws-strip-section">
         <div className="ws-section-head">
           <span>Inserts 1–4</span>
-          <i className={peak >= 0.985 ? "ws-strip-clip is-hot" : "ws-strip-clip"} aria-hidden="true" />
+          <i
+            className={peak >= 0.985 ? "ws-strip-clip is-hot" : "ws-strip-clip"}
+            aria-hidden="true"
+          />
         </div>
         <div className="ws-slots">
           {INSERT_SLOTS.map((slot) => (
-            <SlotRow key={slot} slot={slot} insert={inserts[slot]} track={track.index} onInsert={onInsert} />
+            <SlotRow
+              key={slot}
+              slot={slot}
+              insert={inserts[slot]}
+              track={track.index}
+              onInsert={onInsert}
+            />
           ))}
         </div>
       </div>
@@ -633,11 +710,11 @@ export function Mixer({
   onMasterInsert,
 }: MixerProps) {
   const masterPeak = Math.max(transport?.masterPeakLeft ?? 0, transport?.masterPeakRight ?? 0);
-  const masterPeakDb = masterPeak > 0 ? 20 * Math.log10(Math.max(1e-6, masterPeak)) : Number.NEGATIVE_INFINITY;
+  const masterPeakDb =
+    masterPeak > 0 ? 20 * Math.log10(Math.max(1e-6, masterPeak)) : Number.NEGATIVE_INFINITY;
 
   return (
     <div className="ws-mixer" role="group" aria-label="Mixer">
-
       <div className="ws-mixbody">
         <div className="ws-strips">
           {tracks.map((track) => (
@@ -671,7 +748,10 @@ export function Mixer({
           <div className="ws-strip-section">
             <div className="ws-section-head">
               <span>Master chain</span>
-              <i className={masterPeak >= 0.985 ? "ws-strip-clip is-hot" : "ws-strip-clip"} aria-hidden="true" />
+              <i
+                className={masterPeak >= 0.985 ? "ws-strip-clip is-hot" : "ws-strip-clip"}
+                aria-hidden="true"
+              />
             </div>
             <div className="ws-slots">
               <button
@@ -688,7 +768,9 @@ export function Mixer({
                 className="ws-slot"
                 onClick={onMasterInsert}
                 disabled={!onMasterInsert}
-                title={onMasterInsert ? "Load a VST into the master insert" : "Master insert unavailable"}
+                title={
+                  onMasterInsert ? "Load a VST into the master insert" : "Master insert unavailable"
+                }
                 aria-label="Load master insert"
               >
                 <i className="ws-slot-led" aria-hidden="true" />
@@ -698,7 +780,11 @@ export function Mixer({
             </div>
           </div>
 
-          <div className="ws-strip-buttons is-master-switches" role="group" aria-label="Master monitoring">
+          <div
+            className="ws-strip-buttons is-master-switches"
+            role="group"
+            aria-label="Master monitoring"
+          >
             <button
               className="ws-chan-btn is-wide"
               aria-pressed={transport?.masterDim ?? false}
@@ -720,7 +806,12 @@ export function Mixer({
           </div>
 
           <div className="ws-strip-fader">
-            <Fader value={masterGainDb} label="Master gain" tint="#f8e8c8" onChange={onMasterGain} />
+            <Fader
+              value={masterGainDb}
+              label="Master gain"
+              tint="#f8e8c8"
+              onChange={onMasterGain}
+            />
             <Meter
               left={transport?.masterPeakLeft ?? 0}
               right={transport?.masterPeakRight ?? 0}
@@ -735,11 +826,25 @@ export function Mixer({
             <span className="ws-read-peak">{dbLabel(masterPeakDb)} dBFS</span>
           </div>
 
-          <div className="ws-strip-buttons is-master-switches" role="group" aria-label="Master switches">
-            <button className="ws-chan-btn" disabled title="Master A/B — not available" aria-label="Master A/B">
+          <div
+            className="ws-strip-buttons is-master-switches"
+            role="group"
+            aria-label="Master switches"
+          >
+            <button
+              className="ws-chan-btn"
+              disabled
+              title="Master A/B — not available"
+              aria-label="Master A/B"
+            >
               A/B
             </button>
-            <button className="ws-chan-btn" disabled title="Automix — not available" aria-label="Automix">
+            <button
+              className="ws-chan-btn"
+              disabled
+              title="Automix — not available"
+              aria-label="Automix"
+            >
               AUTO
             </button>
           </div>

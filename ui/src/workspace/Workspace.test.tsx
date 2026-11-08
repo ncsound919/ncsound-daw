@@ -10,8 +10,24 @@ const STATE: AppState = {
   selectedTrack: 1,
   globalPitch: PITCH,
   tracks: [
-    { index: 0, name: "DRUMS", instrumentName: "kit", gainDb: -3, pan: 0, muted: false, soloed: false },
-    { index: 1, name: "BASS", instrumentName: "sub", gainDb: 0, pan: -0.2, muted: true, soloed: false },
+    {
+      index: 0,
+      name: "DRUMS",
+      instrumentName: "kit",
+      gainDb: -3,
+      pan: 0,
+      muted: false,
+      soloed: false,
+    },
+    {
+      index: 1,
+      name: "BASS",
+      instrumentName: "sub",
+      gainDb: 0,
+      pan: -0.2,
+      muted: true,
+      soloed: false,
+    },
   ],
   clips: [
     { track: 0, startBar: 1, lengthBars: 4, assetId: 0, gainDb: 0, name: "INTRO" },

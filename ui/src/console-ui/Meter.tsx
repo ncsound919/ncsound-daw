@@ -16,7 +16,15 @@ export interface MeterProps {
 }
 
 /** LED ladder driven by requestAnimationFrame with direct class updates. */
-export function Meter({ read, segments = 18, vertical = false, kind = "level", thickness = 8, length, label }: MeterProps) {
+export function Meter({
+  read,
+  segments = 18,
+  vertical = false,
+  kind = "level",
+  thickness = 8,
+  length,
+  label,
+}: MeterProps) {
   const root = useRef<HTMLDivElement>(null);
   const readRef = useRef(read);
   readRef.current = read;
@@ -37,7 +45,15 @@ export function Meter({ read, segments = 18, vertical = false, kind = "level", t
       const cells = el.children;
       for (let i = 0; i < cells.length; i++) {
         const on = i < n;
-        const cls = !on ? "" : kind === "gr" ? "cs-lit-gr" : i >= segments - 2 ? "cs-lit-high" : i >= segments - 5 ? "cs-lit-mid" : "cs-lit-low";
+        const cls = !on
+          ? ""
+          : kind === "gr"
+            ? "cs-lit-gr"
+            : i >= segments - 2
+              ? "cs-lit-high"
+              : i >= segments - 5
+                ? "cs-lit-mid"
+                : "cs-lit-low";
         (cells[i] as HTMLElement).className = cls;
       }
     };
@@ -45,10 +61,22 @@ export function Meter({ read, segments = 18, vertical = false, kind = "level", t
     return () => cancelAnimationFrame(raf);
   }, [segments, kind]);
 
-  const style = vertical ? { width: thickness, height: length } : { height: thickness, width: length };
+  const style = vertical
+    ? { width: thickness, height: length }
+    : { height: thickness, width: length };
   return (
-    <div ref={root} className={`cs-meter${vertical ? " cs-meter-v" : ""}`} style={style} role="meter" aria-label={label ?? "Level"} aria-valuemin={0} aria-valuemax={1}>
-      {Array.from({ length: segments }, (_, i) => <i key={i} />)}
+    <div
+      ref={root}
+      className={`cs-meter${vertical ? " cs-meter-v" : ""}`}
+      style={style}
+      role="meter"
+      aria-label={label ?? "Level"}
+      aria-valuemin={0}
+      aria-valuemax={1}
+    >
+      {Array.from({ length: segments }, (_, i) => (
+        <i key={i} />
+      ))}
     </div>
   );
 }

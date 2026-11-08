@@ -1,5 +1,13 @@
 // GENERATED from console-ui — edit there, then run `npm run sync`.
-import { useCallback, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type WheelEvent } from "react";
+import {
+  useCallback,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type PointerEvent,
+  type WheelEvent,
+} from "react";
 import { dragStep, keyStep, knobAngles, modRange, wheelStep } from "./interaction";
 import { formatValue, parseValue, toNorm, toValue, type ParamSpec } from "./param";
 import { HIT_PAD, color, knobSize, type KnobSize } from "./tokens";
@@ -40,9 +48,24 @@ export interface KnobProps {
 }
 
 export function Knob({
-  label, value, defaultValue = 0.5, onChange, onGesture, spec = {}, size = "m", bipolar = false,
-  modDepth = 0, modSource = "Mod", modPeriod = 1.6, off = false, showValue = false, debugHit = false, id,
-  editable = false, onContextMenu, title,
+  label,
+  value,
+  defaultValue = 0.5,
+  onChange,
+  onGesture,
+  spec = {},
+  size = "m",
+  bipolar = false,
+  modDepth = 0,
+  modSource = "Mod",
+  modPeriod = 1.6,
+  off = false,
+  showValue = false,
+  debugHit = false,
+  id,
+  editable = false,
+  onContextMenu,
+  title,
 }: KnobProps) {
   const [inner, setInner] = useState(value ?? defaultValue);
   const v = value ?? inner;
@@ -55,13 +78,20 @@ export function Knob({
   const lastY = useRef(0);
   const dragging = useRef(false);
 
-  const commit = useCallback((nv: number) => {
-    acc.current = nv;
-    if (value === undefined) setInner(nv);
-    onChange?.(nv);
-  }, [value, onChange]);
+  const commit = useCallback(
+    (nv: number) => {
+      acc.current = nv;
+      if (value === undefined) setInner(nv);
+      onChange?.(nv);
+    },
+    [value, onChange],
+  );
 
-  const once = (nv: number) => { onGesture?.("start"); commit(nv); onGesture?.("end"); };
+  const once = (nv: number) => {
+    onGesture?.("start");
+    commit(nv);
+    onGesture?.("end");
+  };
 
   // Enter and blur can both fire for one edit; commit only once.
   const editOpen = useRef(false);
@@ -71,7 +101,10 @@ export function Knob({
     setEditing(false);
     const parsed = parseValue(draft, spec);
     if (Number.isNaN(parsed)) return;
-    if (spec.options) { once(toNorm(parsed, spec)); return; }
+    if (spec.options) {
+      once(toNorm(parsed, spec));
+      return;
+    }
     const min = spec.min ?? 0;
     const max = spec.max ?? 1;
     once(toNorm(Math.min(max, Math.max(min, parsed)), spec));
@@ -129,15 +162,31 @@ export function Knob({
   const H = B + 16 + (showValue ? 15 : 0);
   const rootStyle: CSSProperties = { width: Math.max(B + 8, 60), height: H };
   const bodyStyle: CSSProperties = { left: HIT_PAD, top: HIT_PAD, width: D, height: D };
-  const skirtVars = { "--cs-shy": `${Math.round(D / 10)}px`, "--cs-shb": `${Math.round(D / 6)}px` } as CSSProperties;
-  const dotVars = { "--cs-a0": `${m.fromPointer}deg`, "--cs-a1": `${m.toPointer}deg`, "--cs-mod-dur": `${modPeriod}s`, transform: `rotate(${(m.fromPointer + m.toPointer) / 2}deg)` } as CSSProperties;
+  const skirtVars = {
+    "--cs-shy": `${Math.round(D / 10)}px`,
+    "--cs-shb": `${Math.round(D / 6)}px`,
+  } as CSSProperties;
+  const dotVars = {
+    "--cs-a0": `${m.fromPointer}deg`,
+    "--cs-a1": `${m.toPointer}deg`,
+    "--cs-mod-dur": `${modPeriod}s`,
+    transform: `rotate(${(m.fromPointer + m.toPointer) / 2}deg)`,
+  } as CSSProperties;
 
   return (
-    <div className={`cs-knob${active ? " cs-active" : ""}${off ? " cs-off" : ""}`} style={rootStyle} title={title}>
+    <div
+      className={`cs-knob${active ? " cs-active" : ""}${off ? " cs-off" : ""}`}
+      style={rootStyle}
+      title={title}
+    >
       {active && (
         <span className="cs-tip" style={{ bottom: H - 4 }} role="status">
           <span className="cs-tip-val">{text}</span>
-          {hasMod && <span className="cs-tip-mod">{modSource} ±{Math.round(modDepth * 100)}%</span>}
+          {hasMod && (
+            <span className="cs-tip-mod">
+              {modSource} ±{Math.round(modDepth * 100)}%
+            </span>
+          )}
           {drag && fine && <span className="cs-tip-fine">FINE ×0.1</span>}
         </span>
       )}
@@ -148,14 +197,32 @@ export function Knob({
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commitEdit}
           onKeyDown={(e) => {
-            if (e.key === "Enter") { e.preventDefault(); commitEdit(); }
-            if (e.key === "Escape") { e.preventDefault(); editOpen.current = false; setEditing(false); }
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commitEdit();
+            }
+            if (e.key === "Escape") {
+              e.preventDefault();
+              editOpen.current = false;
+              setEditing(false);
+            }
           }}
           aria-label={`${label} value`}
           style={{
-            position: "absolute", top: -2, left: "50%", transform: "translateX(-50%)", zIndex: 30, width: 76, textAlign: "center",
-            fontFamily: "var(--cs-font-mono)", fontSize: 12, color: color.lcdText,
-            background: color.panel, border: `1px solid ${color.value}`, borderRadius: 4, outline: "none",
+            position: "absolute",
+            top: -2,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 30,
+            width: 76,
+            textAlign: "center",
+            fontFamily: "var(--cs-font-mono)",
+            fontSize: 12,
+            color: color.lcdText,
+            background: color.panel,
+            border: `1px solid ${color.value}`,
+            borderRadius: 4,
+            outline: "none",
           }}
         />
       ) : null}
@@ -196,7 +263,12 @@ export function Knob({
         <span className="cs-knob-body" style={bodyStyle}>
           {hasMod && (
             <>
-              <span className="cs-knob-modring" style={{ background: `conic-gradient(from 225deg, transparent 0deg ${m.fromDeg}deg, ${color.mod} ${m.fromDeg}deg ${m.toDeg}deg, transparent ${m.toDeg}deg 360deg)` }} />
+              <span
+                className="cs-knob-modring"
+                style={{
+                  background: `conic-gradient(from 225deg, transparent 0deg ${m.fromDeg}deg, ${color.mod} ${m.fromDeg}deg ${m.toDeg}deg, transparent ${m.toDeg}deg 360deg)`,
+                }}
+              />
               <span className="cs-knob-moddot" style={dotVars} />
             </>
           )}
@@ -205,11 +277,19 @@ export function Knob({
           <span className="cs-knob-skirt" style={skirtVars} />
           <span className="cs-knob-cap" />
           <span className="cs-knob-rot" style={{ transform: `rotate(${pointerDeg}deg)` }}>
-            <span className="cs-knob-ptr" style={{ width: D >= 62 ? 4 : D >= 48 ? 3 : 2, marginLeft: D >= 62 ? -2 : D >= 48 ? -1.5 : -1 }} />
+            <span
+              className="cs-knob-ptr"
+              style={{
+                width: D >= 62 ? 4 : D >= 48 ? 3 : 2,
+                marginLeft: D >= 62 ? -2 : D >= 48 ? -1.5 : -1,
+              }}
+            />
           </span>
         </span>
       </div>
-      <span className="cs-knob-label" style={{ fontSize: 11 }}>{label}</span>
+      <span className="cs-knob-label" style={{ fontSize: 11 }}>
+        {label}
+      </span>
       {showValue && <span className="cs-knob-value">{text}</span>}
     </div>
   );

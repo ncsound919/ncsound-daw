@@ -22,7 +22,13 @@ export interface HeaderBarProps {
   onFit?: () => void;
 }
 
-type Item = { label: string; run?: () => void; disabled?: boolean; checked?: boolean; hint?: string };
+type Item = {
+  label: string;
+  run?: () => void;
+  disabled?: boolean;
+  checked?: boolean;
+  hint?: string;
+};
 type Entry = Item | "separator" | { heading: string };
 
 /** Native MainComponent header: NCSound lockup, five menus, hardware buttons.
@@ -74,7 +80,9 @@ export function HeaderBar({
       }
       if (event.key !== "Tab") return;
       const items = Array.from(
-        dialogEl?.querySelectorAll<HTMLElement>("button:not(:disabled), [href], [tabindex]:not([tabindex='-1'])") ?? [],
+        dialogEl?.querySelectorAll<HTMLElement>(
+          "button:not(:disabled), [href], [tabindex]:not([tabindex='-1'])",
+        ) ?? [],
       );
       if (items.length === 0) return;
       const first = items[0];
@@ -136,7 +144,8 @@ export function HeaderBar({
     let nextIndex = index;
 
     if (event.key === "ArrowRight") nextIndex = (index + 1) % WORKSPACE_VIEWS.length;
-    else if (event.key === "ArrowLeft") nextIndex = (index - 1 + WORKSPACE_VIEWS.length) % WORKSPACE_VIEWS.length;
+    else if (event.key === "ArrowLeft")
+      nextIndex = (index - 1 + WORKSPACE_VIEWS.length) % WORKSPACE_VIEWS.length;
     else if (event.key === "Home") nextIndex = 0;
     else if (event.key === "End") nextIndex = WORKSPACE_VIEWS.length - 1;
     else return;
@@ -233,7 +242,12 @@ export function HeaderBar({
       <div className="ws-logo">
         <svg className="ws-logo-mark" viewBox="0 0 28 28" aria-hidden="true" focusable="false">
           <circle cx="14" cy="14" r="12.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
-          <path d="M8 15.5v-3M11.5 18V10M15 16.5v-5M18.5 19V9M22 15v-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          <path
+            d="M8 15.5v-3M11.5 18V10M15 16.5v-5M18.5 19V9M22 15v-2"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+          />
         </svg>
         <span className="ws-logo-text">
           <b>NCSOUND</b>
@@ -254,7 +268,9 @@ export function HeaderBar({
                 event.preventDefault();
                 setOpen(index);
                 window.setTimeout(() => {
-                  navRef.current?.querySelector<HTMLButtonElement>(".ws-menu-item:not(:disabled)")?.focus();
+                  navRef.current
+                    ?.querySelector<HTMLButtonElement>(".ws-menu-item:not(:disabled)")
+                    ?.focus();
                 }, 0);
               }}
             >
@@ -264,7 +280,10 @@ export function HeaderBar({
             {open === index && (
               <div className="ws-menu" role="menu" aria-label={menu.name} onKeyDown={onMenuKeyDown}>
                 {menu.entries.map((entry, entryIndex) => {
-                  if (entry === "separator") return <span key={`sep-${entryIndex}`} className="ws-menu-sep" role="separator" />;
+                  if (entry === "separator")
+                    return (
+                      <span key={`sep-${entryIndex}`} className="ws-menu-sep" role="separator" />
+                    );
                   if ("heading" in entry) {
                     return (
                       <span key={`head-${entryIndex}`} className="ws-menu-heading">
@@ -337,7 +356,11 @@ export function HeaderBar({
         </button>
       )}
 
-      <button className="ws-btn ws-new" onClick={onNewSession} title="Stop the transport and return to bar 1; clips stay">
+      <button
+        className="ws-btn ws-new"
+        onClick={onNewSession}
+        title="Stop the transport and return to bar 1; clips stay"
+      >
         NEW
       </button>
 
@@ -347,7 +370,13 @@ export function HeaderBar({
             className="ws-dialog"
             role="dialog"
             aria-modal="true"
-            aria-label={dialog === "about" ? "About" : dialog === "prefs" ? "Preferences" : "Keyboard shortcuts"}
+            aria-label={
+              dialog === "about"
+                ? "About"
+                : dialog === "prefs"
+                  ? "Preferences"
+                  : "Keyboard shortcuts"
+            }
             onClick={(event) => event.stopPropagation()}
           >
             <header>
@@ -358,33 +387,81 @@ export function HeaderBar({
                     ? "PREFERENCES"
                     : "KEYBOARD SHORTCUTS"}
               </span>
-              <button className="ws-btn is-icon" aria-label="Close" autoFocus onClick={() => setDialog(null)}>
+              <button
+                className="ws-btn is-icon"
+                aria-label="Close"
+                autoFocus
+                onClick={() => setDialog(null)}
+              >
                 ✕
               </button>
             </header>
             {dialog === "about" ? (
               <p>
-                NCSound Music Hub / DAW. Transport, mixer and arrange live here. Plug-in catalogue, automation and clip editing follow your selection.
+                NCSound Music Hub / DAW. Transport, mixer and arrange live here. Plug-in catalogue,
+                automation and clip editing follow your selection.
               </p>
             ) : dialog === "prefs" ? (
               <dl className="ws-keys">
-                <div><dt>View</dt><dd>{WORKSPACE_VIEWS.find((entry) => entry.id === view)?.label ?? view}</dd></div>
-                <div><dt>DSP</dt><dd>{dsp === undefined ? "—" : `${Math.round(dsp * 100)}%`}</dd></div>
-                <div><dt>Tracks</dt><dd>{canAddTrack ? "up to 8" : "8 / 8 — full"}</dd></div>
-                <div><dt>Loop</dt><dd>Drag the loop lane in the ruler</dd></div>
+                <div>
+                  <dt>View</dt>
+                  <dd>{WORKSPACE_VIEWS.find((entry) => entry.id === view)?.label ?? view}</dd>
+                </div>
+                <div>
+                  <dt>DSP</dt>
+                  <dd>{dsp === undefined ? "—" : `${Math.round(dsp * 100)}%`}</dd>
+                </div>
+                <div>
+                  <dt>Tracks</dt>
+                  <dd>{canAddTrack ? "up to 8" : "8 / 8 — full"}</dd>
+                </div>
+                <div>
+                  <dt>Loop</dt>
+                  <dd>Drag the loop lane in the ruler</dd>
+                </div>
               </dl>
             ) : (
               <dl className="ws-keys">
-                <div><dt>Space</dt><dd>Play / pause (Pro Tools transport)</dd></div>
-                <div><dt>Home</dt><dd>Return to bar 1</dd></div>
-                <div><dt>1 · 2 · 3 · 4 · 5 · 6</dt><dd>Grabber / Trim / Fade / Volume / X / Erase (V/T/F/G/X/E aliases)</dd></div>
-                <div><dt>Cmd/Ctrl + Z</dt><dd>Undo</dd></div>
-                <div><dt>Cmd/Ctrl + Shift + Z</dt><dd>Redo (Ctrl+Y too)</dd></div>
-                <div><dt>+ / −</dt><dd>Zoom timeline</dd></div>
-                <div><dt>L</dt><dd>Loop enable (in ruler — arrow keys nudge)</dd></div>
-                <div><dt>Delete</dt><dd>Remove the selected clip / piano note</dd></div>
-                <div><dt>Alt-click</dt><dd>Delete an automation point</dd></div>
-                <div><dt>Ctrl / ⌘ + wheel</dt><dd>Zoom the arrangement</dd></div>
+                <div>
+                  <dt>Space</dt>
+                  <dd>Play / pause (Pro Tools transport)</dd>
+                </div>
+                <div>
+                  <dt>Home</dt>
+                  <dd>Return to bar 1</dd>
+                </div>
+                <div>
+                  <dt>1 · 2 · 3 · 4 · 5 · 6</dt>
+                  <dd>Grabber / Trim / Fade / Volume / X / Erase (V/T/F/G/X/E aliases)</dd>
+                </div>
+                <div>
+                  <dt>Cmd/Ctrl + Z</dt>
+                  <dd>Undo</dd>
+                </div>
+                <div>
+                  <dt>Cmd/Ctrl + Shift + Z</dt>
+                  <dd>Redo (Ctrl+Y too)</dd>
+                </div>
+                <div>
+                  <dt>+ / −</dt>
+                  <dd>Zoom timeline</dd>
+                </div>
+                <div>
+                  <dt>L</dt>
+                  <dd>Loop enable (in ruler — arrow keys nudge)</dd>
+                </div>
+                <div>
+                  <dt>Delete</dt>
+                  <dd>Remove the selected clip / piano note</dd>
+                </div>
+                <div>
+                  <dt>Alt-click</dt>
+                  <dd>Delete an automation point</dd>
+                </div>
+                <div>
+                  <dt>Ctrl / ⌘ + wheel</dt>
+                  <dd>Zoom the arrangement</dd>
+                </div>
               </dl>
             )}
           </div>

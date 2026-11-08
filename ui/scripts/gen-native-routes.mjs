@@ -38,7 +38,9 @@ const content = render(names);
 
 if (process.argv.includes("--check")) {
   let existing = "";
-  try { existing = readFileSync(outFile, "utf8"); } catch {}
+  try {
+    existing = readFileSync(outFile, "utf8");
+  } catch {}
   if (existing.replace(/\r\n/g, "\n") !== content) {
     console.error("nativeRoutes.generated.ts is out of date. Run `npm run gen:routes`.");
     process.exit(1);

@@ -2,7 +2,15 @@
 import { Meter } from "../Meter";
 
 /** Two horizontal LED ladders reading [L, R] from one tap. Renders nothing without a tap. */
-export function StereoMeter({ read, segments = 20, label = "Output level" }: { read?: () => [number, number]; segments?: number; label?: string }) {
+export function StereoMeter({
+  read,
+  segments = 20,
+  label = "Output level",
+}: {
+  read?: () => [number, number];
+  segments?: number;
+  label?: string;
+}) {
   if (!read) return null;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 3, alignSelf: "stretch" }}>

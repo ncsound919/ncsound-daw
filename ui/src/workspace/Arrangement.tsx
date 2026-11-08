@@ -85,8 +85,10 @@ const ClipView = memo(function ClipView({
 }) {
   const points = waveformPoints(clip.peaks ?? []);
   const tint = tintForTrack(clip.track);
-  const fadeIn = clip.fadeInBars && clip.lengthBars > 0 ? (clip.fadeInBars / clip.lengthBars) * 100 : 0;
-  const fadeOut = clip.fadeOutBars && clip.lengthBars > 0 ? (clip.fadeOutBars / clip.lengthBars) * 100 : 0;
+  const fadeIn =
+    clip.fadeInBars && clip.lengthBars > 0 ? (clip.fadeInBars / clip.lengthBars) * 100 : 0;
+  const fadeOut =
+    clip.fadeOutBars && clip.lengthBars > 0 ? (clip.fadeOutBars / clip.lengthBars) * 100 : 0;
   const compact = width < 3;
   const [faderOpen, setFaderOpen] = useState(false);
 
@@ -137,13 +139,25 @@ const ClipView = memo(function ClipView({
             focusable="false"
           >
             <polygon points={points} />
-            {fadeIn > 0.5 && <polyline className="ws-fade" points={`0,100 ${fadeIn.toFixed(2)},0`} />}
-            {fadeOut > 0.5 && <polyline className="ws-fade" points={`100,100 ${(100 - fadeOut).toFixed(2)},0`} />}
+            {fadeIn > 0.5 && (
+              <polyline className="ws-fade" points={`0,100 ${fadeIn.toFixed(2)},0`} />
+            )}
+            {fadeOut > 0.5 && (
+              <polyline className="ws-fade" points={`100,100 ${(100 - fadeOut).toFixed(2)},0`} />
+            )}
           </svg>
         )}
 
-        {fadeIn > 0.5 && <span className="ws-clip-fade is-in" style={{ width: `${fadeIn}%` }} aria-hidden="true" />}
-        {fadeOut > 0.5 && <span className="ws-clip-fade is-out" style={{ width: `${fadeOut}%` }} aria-hidden="true" />}
+        {fadeIn > 0.5 && (
+          <span className="ws-clip-fade is-in" style={{ width: `${fadeIn}%` }} aria-hidden="true" />
+        )}
+        {fadeOut > 0.5 && (
+          <span
+            className="ws-clip-fade is-out"
+            style={{ width: `${fadeOut}%` }}
+            aria-hidden="true"
+          />
+        )}
 
         {clip.notes && clip.notes.length > 0 && (
           <span className="ws-clip-notes" aria-hidden="true">
@@ -178,7 +192,11 @@ const ClipView = memo(function ClipView({
           ▢
         </button>
         {faderOpen && (
-          <span className="ws-clip-fader-pop" onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+          <span
+            className="ws-clip-fader-pop"
+            onClick={(event) => event.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
             <input
               className="ws-clip-fader-range"
               type="range"
@@ -295,7 +313,12 @@ export function Arrangement({
   const drag = useRef<DragState | null>(null);
   const arrangeRef = useRef<HTMLDivElement>(null);
   const pendingEdit = useRef<{ index: number; patch: Record<string, unknown> } | null>(null);
-  const loopDrag = useRef<{ mode: "start" | "end" | "move"; x: number; start: number; end: number } | null>(null);
+  const loopDrag = useRef<{
+    mode: "start" | "end" | "move";
+    x: number;
+    start: number;
+    end: number;
+  } | null>(null);
   const heightDragCleanup = useRef<(() => void) | null>(null);
 
   // A header resize owns window listeners until pointer up; unmounting mid-drag
@@ -336,7 +359,8 @@ export function Arrangement({
   // Track height: 30 px folded, 84 px by default, drag the header edge to
   // change it. Height is written inline because the head and its lane are
   // separate grid children of the same row.
-  const heightFor = (index: number) => (foldedTracks[index] ? 30 : trackHeights[index] ?? defaultTrackHeight);
+  const heightFor = (index: number) =>
+    foldedTracks[index] ? 30 : (trackHeights[index] ?? defaultTrackHeight);
 
   const beginHeightDrag = (event: React.PointerEvent<HTMLSpanElement>, index: number) => {
     event.stopPropagation();
@@ -407,7 +431,8 @@ export function Arrangement({
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      if (target && (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable)) return;
+      if (target && (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable))
+        return;
       const mod = event.ctrlKey || event.metaKey;
       const key = event.key.toLowerCase();
       if (mod && key === "z") {
@@ -486,7 +511,10 @@ export function Arrangement({
     const rightBars = clip.lengthBars - leftBars;
     const leftNotes = clip.notes
       ?.filter((note) => note.startBeat < leftBars * 4)
-      .map((note) => ({ ...note, lengthBeats: Math.min(note.lengthBeats, leftBars * 4 - note.startBeat) }));
+      .map((note) => ({
+        ...note,
+        lengthBeats: Math.min(note.lengthBeats, leftBars * 4 - note.startBeat),
+      }));
     const rightNotes = clip.notes
       ?.filter((note) => note.startBeat + note.lengthBeats > leftBars * 4)
       .map((note) => ({
@@ -611,7 +639,10 @@ export function Arrangement({
         break;
       }
       case "gain": {
-        clip.gainDb = roundTo(clamp(origin.gainDb - (event.clientY - state.y) * 0.25, -24, 12), 0.1);
+        clip.gainDb = roundTo(
+          clamp(origin.gainDb - (event.clientY - state.y) * 0.25, -24, 12),
+          0.1,
+        );
         break;
       }
     }
@@ -817,7 +848,9 @@ export function Arrangement({
             className="ws-btn ws-chip"
             aria-pressed={snap}
             onClick={() => setSnap(!snap)}
-            title={snap ? "Snap is on: clips and seeks land on bars" : "Snap is off: free positioning"}
+            title={
+              snap ? "Snap is on: clips and seeks land on bars" : "Snap is off: free positioning"
+            }
           >
             <b>SNAP</b>
           </button>
@@ -867,14 +900,21 @@ export function Arrangement({
             aria-valuenow={loopStart}
             aria-valuetext={`Bars ${loopStart} to ${loopEnd}`}
             tabIndex={0}
-            title={transport?.loopEnabled ? "Drag the loop region; drag its ends to resize; arrow keys nudge it" : "Loop is off — enable it in the transport to hear it"}
+            title={
+              transport?.loopEnabled
+                ? "Drag the loop region; drag its ends to resize; arrow keys nudge it"
+                : "Loop is off — enable it in the transport to hear it"
+            }
             onKeyDown={onLoopKeyDown}
             onPointerDown={beginLoopDrag}
             onPointerMove={moveLoopDrag}
             onPointerUp={endLoopDrag}
             onPointerCancel={endLoopDrag}
           >
-            <span className="ws-loop-range" style={{ left: `${loopLeft}%`, width: `${Math.max(0.5, loopWidth)}%` }}>
+            <span
+              className="ws-loop-range"
+              style={{ left: `${loopLeft}%`, width: `${Math.max(0.5, loopWidth)}%` }}
+            >
               <i className="ws-loop-handle is-start" />
               <i className="ws-loop-handle is-end" />
             </span>
@@ -891,7 +931,9 @@ export function Arrangement({
               </span>
             ))}
           </div>
-          {playheadPct >= 0 && playheadPct <= 100 && <span className="ws-playhead" style={{ left: `${playheadPct}%` }} />}
+          {playheadPct >= 0 && playheadPct <= 100 && (
+            <span className="ws-playhead" style={{ left: `${playheadPct}%` }} />
+          )}
         </div>
 
         {tracks.map((track) => {
@@ -902,7 +944,12 @@ export function Arrangement({
             <div key={track.index} style={{ display: "contents" }}>
               <div
                 className={foldedTracks[track.index] ? "ws-head is-folded" : "ws-head"}
-                style={{ height: heightFor(track.index), "--tint": tintForTrack(track.index) } as React.CSSProperties}
+                style={
+                  {
+                    height: heightFor(track.index),
+                    "--tint": tintForTrack(track.index),
+                  } as React.CSSProperties
+                }
                 aria-current={track.index === selectedTrack ? "true" : undefined}
                 onClick={() => onSelectTrack(track.index)}
               >
@@ -916,7 +963,9 @@ export function Arrangement({
                       className="ws-mini-btn ws-head-fold"
                       aria-pressed={Boolean(foldedTracks[track.index])}
                       aria-label={`${foldedTracks[track.index] ? "Expand" : "Collapse"} ${track.name}`}
-                      title={foldedTracks[track.index] ? "Expand this track" : "Collapse this track"}
+                      title={
+                        foldedTracks[track.index] ? "Expand this track" : "Collapse this track"
+                      }
                       onClick={(event) => {
                         event.stopPropagation();
                         setFoldedTracks((current) => ({
@@ -927,7 +976,9 @@ export function Arrangement({
                     >
                       {foldedTracks[track.index] ? "▸" : "▾"}
                     </button>
-                    <span className="ws-head-name" title={track.name}>TRACK {track.index + 1}</span>
+                    <span className="ws-head-name" title={track.name}>
+                      TRACK {track.index + 1}
+                    </span>
                     <button
                       className="ws-mini-btn"
                       aria-pressed={track.muted}
@@ -1022,7 +1073,12 @@ export function Arrangement({
                 ]
                   .filter(Boolean)
                   .join(" ")}
-                style={{ height: heightFor(track.index), "--tint": tintForTrack(track.index) } as React.CSSProperties}
+                style={
+                  {
+                    height: heightFor(track.index),
+                    "--tint": tintForTrack(track.index),
+                  } as React.CSSProperties
+                }
                 onPointerDown={(event) => {
                   onSelectTrack(track.index);
                   onSelectClip(null);
@@ -1032,7 +1088,8 @@ export function Arrangement({
               >
                 {trackClips.map(({ clip, index }) => {
                   const left = barPct(clip.startBar, viewStart, visibleBars);
-                  const width = barPct(clip.startBar + clip.lengthBars, viewStart, visibleBars) - left;
+                  const width =
+                    barPct(clip.startBar + clip.lengthBars, viewStart, visibleBars) - left;
                   if (left > 100 || left + width < 0) return null;
 
                   return (
@@ -1069,7 +1126,8 @@ export function Arrangement({
         })}
 
         <div className="ws-hint">
-          {TOOLS.find((entry) => entry.id === tool)?.hint.toUpperCase()} · SELECT A CLIP TO TRIM ITS VOLUME · WHEEL ZOOMS · SHIFT+WHEEL SCROLLS
+          {TOOLS.find((entry) => entry.id === tool)?.hint.toUpperCase()} · SELECT A CLIP TO TRIM ITS
+          VOLUME · WHEEL ZOOMS · SHIFT+WHEEL SCROLLS
         </div>
       </div>
     </div>

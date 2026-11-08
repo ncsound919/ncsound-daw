@@ -153,9 +153,7 @@ export function getNativeFunction(
       });
     } catch (error) {
       // The call never reached the backend, so no completion is coming.
-      settle(promiseId)?.reject(
-        error instanceof Error ? error : new Error(String(error)),
-      );
+      settle(promiseId)?.reject(error instanceof Error ? error : new Error(String(error)));
     }
 
     return result;

@@ -34,42 +34,64 @@ export interface Bound {
 /** Subscribe a component to the store and return a key-based binder. */
 export function useBinder(store: ParamStore, map: ParamMap) {
   useSyncExternalStore(store.subscribe, store.version, store.version);
-  return useCallback((key: string): Bound | null => {
-    const id = map[key];
-    if (!id) return null;
-    const value = store.get(id);
-    if (value === undefined) return null;
-    return {
-      value,
-      onChange: (v) => store.set(id, v),
-      onGesture: (p) => store.gesture?.(id, p),
-    };
-  }, [store, map, store.version()]); // eslint-disable-line react-hooks/exhaustive-deps
+  return useCallback(
+    (key: string): Bound | null => {
+      const id = map[key];
+      if (!id) return null;
+      const value = store.get(id);
+      if (value === undefined) return null;
+      return {
+        value,
+        onChange: (v) => store.set(id, v),
+        onGesture: (p) => store.gesture?.(id, p),
+      };
+    },
+    [store, map, store.version()],
+  ); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
 /** Index of a discrete option from its normalised value. */
-export const optionIndex = (norm: number, count: number): number => (count < 2 ? 0 : Math.round(norm * (count - 1)));
+export const optionIndex = (norm: number, count: number): number =>
+  count < 2 ? 0 : Math.round(norm * (count - 1));
 /** Normalised value of option `index` of `count`. */
-export const optionNorm = (index: number, count: number): number => (count < 2 ? 0 : index / (count - 1));
+export const optionNorm = (index: number, count: number): number =>
+  count < 2 ? 0 : index / (count - 1);
 
 /**
  * In-memory store for previews and tests. Values are normalised; unknown ids
  * are ignored. `actions` lists supported one-shot actions.
  */
-export function createMemoryStore(initial: Record<string, number>, actions: string[] = []): ParamStore & { log: string[] } {
+export function createMemoryStore(
+  initial: Record<string, number>,
+  actions: string[] = [],
+): ParamStore & { log: string[] } {
   const values = new Map(Object.entries(initial));
   const listeners = new Set<() => void>();
   let ver = 0;
   const log: string[] = [];
-  const emit = () => { ver++; listeners.forEach((l) => l()); };
+  const emit = () => {
+    ver++;
+    listeners.forEach((l) => l());
+  };
   return {
     log,
     get: (id) => values.get(id),
-    set(id, v) { if (!values.has(id)) return; values.set(id, Math.max(0, Math.min(1, v))); emit(); },
-    gesture(id, p) { log.push(`${p}:${id}`); },
-    action(name) { log.push(`action:${name}`); },
+    set(id, v) {
+      if (!values.has(id)) return;
+      values.set(id, Math.max(0, Math.min(1, v)));
+      emit();
+    },
+    gesture(id, p) {
+      log.push(`${p}:${id}`);
+    },
+    action(name) {
+      log.push(`action:${name}`);
+    },
     hasAction: (name) => actions.includes(name),
-    subscribe(l) { listeners.add(l); return () => listeners.delete(l); },
+    subscribe(l) {
+      listeners.add(l);
+      return () => listeners.delete(l);
+    },
     version: () => ver,
   };
 }
@@ -105,7 +127,10 @@ export function createStateStore<T>(opts: StateStoreOptions<T>): StateStore<T> {
   // a slow or out-of-date push can't yank a knob back mid-drag.
   const pending = new Map<string, number>();
   const active = new Set<string>();
-  const emit = () => { ver += 1; listeners.forEach((l) => l()); };
+  const emit = () => {
+    ver += 1;
+    listeners.forEach((l) => l());
+  };
 
   return {
     update(next) {
@@ -126,12 +151,22 @@ export function createStateStore<T>(opts: StateStoreOptions<T>): StateStore<T> {
       emit();
     },
     gesture(id, phase) {
-      if (phase === "start") active.add(id); else active.delete(id);
+      if (phase === "start") active.add(id);
+      else active.delete(id);
       if (source !== null) opts.gesture?.(id, phase, source);
     },
-    action(name) { if (source !== null) opts.action?.(name, source); },
-    hasAction(name) { return source !== null && (opts.actions?.(source)?.includes(name) ?? false); },
-    subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    action(name) {
+      if (source !== null) opts.action?.(name, source);
+    },
+    hasAction(name) {
+      return source !== null && (opts.actions?.(source)?.includes(name) ?? false);
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
     version: () => ver,
   };
 }
