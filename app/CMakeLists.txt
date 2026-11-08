@@ -62,6 +62,8 @@ target_sources(NCMixRackTests PRIVATE
     Source/SendsTests.cpp
     Source/MixPlanTests.cpp
     Source/SnapshotReclaimTests.cpp
+    Source/PianoRollWindow.cpp
+    Source/PianoRollWindowTests.cpp
     Source/WindowLifetimeTests.cpp)
 
 target_link_libraries(NCMixRackTests PRIVATE
@@ -183,6 +185,8 @@ target_sources(NCSoundHub PRIVATE
     Source/BuiltinSynth.h
     Source/PianoRoll.cpp
     Source/PianoRoll.h
+    Source/PianoRollWindow.cpp
+    Source/PianoRollWindow.h
     Source/TrackInsertRack.cpp
     Source/AuxBus.cpp
     Source/AuxBus.h

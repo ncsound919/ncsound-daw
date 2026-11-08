@@ -1,5 +1,6 @@
 #include "ArrangeView.h"
 #include "PianoRoll.h"
+#include "PianoRollWindow.h"
 
 #include <nc/engine/MediaCollect.hpp>
 
@@ -2355,31 +2356,6 @@ void ArrangeView::applyMidiNotes (int clipIndex, std::vector<nc::engine::MidiNot
     nc::engine::sanitizeNotes (clip.notes, nc::engine::clipLengthBeats (static_cast<double> (clip.lengthBars)));
     publishTimeline();
     repaint();
-}
-
-namespace
-{
-/** The piano roll is a pop-up, and DocumentWindow's default closeButtonPressed()
-    only asserts - so without this override the window can never be closed and
-    each open would leak the window and its editor. */
-class PianoRollWindow final : public juce::DocumentWindow
-{
-public:
-    PianoRollWindow (const juce::String& title, std::unique_ptr<PianoRoll> roll)
-        : juce::DocumentWindow (title, juce::Colours::black, juce::DocumentWindow::closeButton)
-    {
-        setResizable (true, true);
-        setUsingNativeTitleBar (false);
-        setContentOwned (roll.release(), true);
-        centreWithSize (760, 420);
-        setVisible (true);
-    }
-
-    void closeButtonPressed() override { delete this; }
-
-private:
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PianoRollWindow)
-};
 }
 
 bool ArrangeView::openPianoRollForSelected()
