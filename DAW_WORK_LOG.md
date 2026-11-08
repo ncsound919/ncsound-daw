@@ -572,3 +572,32 @@ question from the snapshot entry: that was machine load, not a regression.
 Not verified: the piano roll. `PianoRollWindow` lives in an anonymous namespace
 inside `ArrangeView.cpp`, so no test can name it; covering it needs an
 extraction first.
+
+
+## Piano roll window tests - 8 November 2026
+
+A3's second half. The piano-roll pop-up was fixed to delete itself on close, but
+nothing tested it: `PianoRollWindow` was private to `ArrangeView.cpp`, so no
+test could name it. It now lives in `PianoRollWindow.{h,cpp}` and takes a
+`unique_ptr<Component>` instead of a `unique_ptr<PianoRoll>`. ArrangeView still
+passes a PianoRoll and the window takes ownership either way, so the seam costs
+no behaviour and keeps `PianoRoll.cpp` - and its engine dependencies - out of
+the test target.
+
+Three cases in `PianoRollWindowTests.cpp` cover the close path a user has: the
+close button deletes the window and the content it owns, closing one window
+leaves another open, and the window never enters the `pluginEditors` registry -
+registering it would let the rack's `closeWindowsFor()` delete a window that has
+nothing to do with the insert. The stub content counts live instances, so the
+cases prove deletion without reading freed memory.
+
+Verified: `NCMixRackTests` builds clean; `[window]` is 7 cases, 39 assertions,
+all passed; the full suite passes (82 cases, 54,097 assertions, exit 0);
+`NCSoundHub` links, so the edited `ArrangeView.cpp` compiles with the extraction.
+
+One assertion was wrong before the code was: `centreWithSize (760, 420)` sizes
+the window, and its content is inset by the window border (758 px), so the case
+now checks the window width and that the content is non-empty.
+
+Not verified: the piano roll's own editing behaviour is still untested - this
+covers window lifetime only - and nothing has watched these windows on screen.
