@@ -285,3 +285,96 @@ Listed so nobody reads them as done: a clean-VM install, any host load test, the
 verification against a real certificate, and anything requiring the JUCE or font
 licence paperwork. These need either hardware the agent does not drive or an
 owner decision.
+
+
+## 11. Three phases to 1.0
+
+Sections 2-8 say what has to be true. This regroups what is actually left into
+three phases in the order the work can be done: correctness first, then
+evidence, then the paperwork that gates distribution. Each phase ends in
+something demonstrable, not a status claim.
+
+### Phase A - close the audit (agent, no owner input needed)
+
+Goal: the defects from the 8 November review are fixed or proven gone, not
+documented as known issues.
+
+A1. **Reclaim retired snapshots.** `tempoRetired`, `midiRetired` and
+    `automationRetired` grow for the life of the session, because listeners that
+    are swapped out keep their old snapshot alive and nothing ever drops it.
+    Keep at most one retired snapshot per listener, and only until no render
+    thread can still hold it - the generation counter already used for the rack
+    gives the safe point. Test: 10k tempo edits, assert the containers stay
+    bounded.
+A2. **Remove the sleep in the export path.** `renderToFile` sleeps on the
+    message thread between blocks to let the render thread catch up. Replace it
+    with a bounded wait on an event the render thread signals, and assert that
+    no `Thread::sleep` remains on that path.
+A3. **Lifetime tests.** Open and close an editor window with a live processor,
+    then with a processor that is already gone; open and close the piano roll;
+    exercise the rack retire path while an editor is open. These are the first
+    tests that touch window teardown, so they are also what keeps the 8 November
+    fix from regressing.
+A4. **Run it under a checker.** Application Verifier basic checks on the test
+    executables (MSVC has no usable sanitizer here), then a soak with plug-in
+    load/unload cycling.
+
+**Verification:** `mix_rack` plus the new lifetime tests pass; the snapshot test
+holds a bound; the soak's memory graph is flat.
+
+**Exit:** no known high- or medium-severity defect left open in the audit.
+
+### Phase B - evidence (CI, plus two runs that need this desktop)
+
+Goal: every gate is enforced by a command someone else can run, and the two
+things a terminal cannot prove are recorded.
+
+B1. `pluginval` covers both plug-ins at strictness 5; nightly at 10, with the
+    documented false-positive skips named in the workflow.
+B2. Acceptance renders: one config per plug-in, rendered output checked in, so a
+    DSP regression fails a test instead of shipping.
+B3. `tools/verify-package.sh` asserts the package contents (both `.vst3`
+    bundles and `moduleinfo.json`, no `.exp`/`.lib`/`.pdb`, no `juceaide`), and a
+    tag-triggered workflow builds the artifact and attaches it to the release.
+B4. The first real clean-clone CI run - the fetch script has only been run here,
+    never on a runner.
+B5. 150% DPI and a keyboard-only pass, with captures stored in `docs/captures/`.
+
+**Verification:** three jobs green on a tag; the artifact comes from CI, not
+from a local build; captures exist for each host at each scale.
+
+**Exit:** nothing in this phase depends on my shell - the commands are in the
+repo and a runner proves them.
+
+### Phase C - distributable (owner decisions gate the start)
+
+Goal: a signed installer that can be published without a legal question
+attached.
+
+C1. **Pick one licensing path and record it in `docs/LICENSING.md`.** ChordStudio
+    is GPL-3.0 and statically linked, so the combined binary has to be GPL-3.0
+    unless a commercial licence is bought for it; JUCE 8 is AGPLv3 or
+    commercial. Those two constraints have to be satisfied together, and the
+    font question is separate: `din-neuzeit-light.ttf` and
+    `motter-corpus-condensed.ttf` are Monotype faces whose embedding rights do
+    not cover app embedding, so either buy that or ship Inter/Archivo, which are
+    already bundled and OFL.
+C2. Root `LICENSE`, `THIRD-PARTY-NOTICES.md`, `README.md`.
+C3. Version to 1.0.0, tag `v1.0.0`, installer targeting
+    `%CommonProgramFiles%\VST3`, signing with an RFC3161 timestamp on the
+    installer and both plug-in binaries.
+C4. Windows Sandbox: install, scan in two hosts, uninstall, assert no leftovers.
+
+**Verification:** `signtool verify /pa` passes on all three binaries; the sandbox
+round trip leaves nothing behind.
+
+**Exit:** a tagged, signed, installable build whose licence story is written
+down.
+
+### Ordering
+
+A blocks nothing but its own exit criteria and should come first, because the
+snapshot fix touches the same retire path the new tests cover. B can start once
+A1-A2 are in. C1 can be decided in parallel at any time, but C2-C4 should not
+start until it is decided - the answer changes the notices, the README and the
+installer text.
