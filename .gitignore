@@ -14,3 +14,5 @@ third_party/JUCE/
 CMakeUserPresets.json
 .claude/
 reference/
+# fetched by tools/fetch-native-deps.ps1 (WebView2 SDK)
+deps/

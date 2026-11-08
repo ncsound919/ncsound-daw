@@ -100,6 +100,27 @@ Verified: a fresh build directory configured with only that environment variable
 set - exit 0 after 243.8 s, `Found WebView2`, and the vendored ChordStudio copy
 still reported `25 files`.
 
+## CI
+
+Both native jobs must supply these dependencies themselves, because none of them
+are committed. `tools/fetch-native-deps.ps1` does that:
+
+- JUCE is cloned shallowly at the tag from `third_party/JUCE_PIN.txt`, then its
+  `HEAD` is compared with the pinned commit. A retagged or moved branch fails the
+  job instead of quietly building a different JUCE.
+- WebView2 is downloaded from nuget.org at `1.0.4314.35` - the version this
+  machine builds against - and extracted to `deps/webview2`, which is gitignored.
+  The job then exports `NC_WEBVIEW2_PACKAGE_LOCATION` for configure.
+
+The script is idempotent, so a warmed cache or a repeated run costs nothing, and
+it lives in `tools/` rather than in the workflow YAML because that is where it can
+be run and tested locally, unchanged.
+
+This matters more than it looks: without `third_party/JUCE` the top-level
+CMakeLists prints "JUCE not found - skipping plugin targets", skips the app and
+both plug-ins, and still exits 0. A job that does not fetch JUCE proves nothing
+about the release build.
+
 ## Licence consequence
 
 The ChordStudio snapshot is **GPL-3.0**. `nc_mixrack` links it statically into

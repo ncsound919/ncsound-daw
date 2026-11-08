@@ -391,3 +391,48 @@ message; the correct parent directory prints the package line.
 Not verified: a full hub build out of the fresh directory (configure only), and CI,
 which still configures nothing - this fixes the configure step, it does not give
 CI a job.
+
+## CI from a clean clone - 8 November 2026
+
+`ci.yml` had a job called `native-windows` that configured "full app", built it and
+ran the JUCE test suites. It could not have built any of that. `third_party/JUCE`
+is in `.gitignore`, the runner never fetches it, and the top-level CMakeLists has
+one branch for JUCE being present and one for it being absent - the absent branch
+prints "JUCE not found - skipping plugin targets" and exits 0. So the job compiled
+the header engine, reported success, and said nothing about the app.
+
+The `pluginval` job has the same hole and is worse: it runs
+`cmake --build build --target NCChopStation`, a target that does not exist in CI,
+so that job has been failing rather than validating anything.
+
+Fixed with one script instead of inline workflow steps, because a script is the
+part I can actually run here:
+
+- `tools/fetch-native-deps.ps1` clones JUCE shallowly at the tag named in
+  `third_party/JUCE_PIN.txt`, then compares `HEAD` with the pinned commit and
+  throws if they differ. The pin file stays the single source of truth; a moved
+  tag fails the job instead of silently changing the framework.
+- The same script downloads `Microsoft.Web.WebView2.1.0.4314.35` and extracts it
+  to `deps/webview2` (now gitignored - 14 MB is not going in the tree). It is
+  downloaded as `.zip` because `Expand-Archive` refuses the `.nupkg` extension;
+  the first version of the script hit exactly that.
+- Both `native-windows` and `pluginval` run it before configure and export
+  `NC_WEBVIEW2_PACKAGE_LOCATION`, which `cmake/WebView2Deps.cmake` accepts.
+
+The first version of the script was written through a shell heredoc that ate the
+backslashes in `'build/native/include/WebView2.h'`, turning it into a real
+newline mid-literal. It now uses forward slashes throughout, which PowerShell and
+CMake both accept on Windows.
+
+Verified: `powershell -File tools/fetch-native-deps.ps1` from an empty state
+cloned JUCE and ended at `dabd5ad13cd869cba41046947fffc8e5ce5cd662`, exactly the
+pinned commit, and extracted the WebView2 package with
+`build/native/include/WebView2.h` and `build/native/x64/WebView2LoaderStatic.lib`
+present; a second run reported "already at" and "already extracted" and took
+seconds. The workflow YAML parses, and the step list for `native-windows` now
+reads: checkout, setup-node, native dependencies, point CMake at WebView2, Web UI
+build, msvc, configure, build, test.
+
+Not verified: any of this on a GitHub runner - no runner here, and a clean-tree
+compile would mean a full JUCE + app build. The first CI execution is the real
+test of the job, and the two jobs should be watched on the next push.

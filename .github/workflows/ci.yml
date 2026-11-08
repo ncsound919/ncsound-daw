@@ -44,6 +44,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Native dependencies (pinned JUCE checkout, WebView2 package)
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File ./tools/fetch-native-deps.ps1
+      - name: Point CMake at the WebView2 package
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_ENV -Value "NC_WEBVIEW2_PACKAGE_LOCATION=${{ github.workspace }}/deps/webview2"
       - name: Web UI build (required for NCSoundHub BinaryData)
         working-directory: ui
         run: |
@@ -51,6 +57,9 @@ jobs:
           npm run build
       - uses: ilammy/msvc-dev-cmd@v1
       - name: Configure (full app)
+        # third_party/JUCE must exist here: without it the top-level CMakeLists
+        # skips the app and both plug-ins and still exits 0, which is how this
+        # job once passed while building nothing but the engine.
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build --config Release
@@ -64,6 +73,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Native dependencies (pinned JUCE checkout, WebView2 package)
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File ./tools/fetch-native-deps.ps1
+      - name: Point CMake at the WebView2 package
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_ENV -Value "NC_WEBVIEW2_PACKAGE_LOCATION=${{ github.workspace }}/deps/webview2"
       - name: Web UI build (required for NCSoundHub BinaryData)
         working-directory: ui
         run: |

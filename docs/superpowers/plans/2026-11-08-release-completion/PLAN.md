@@ -62,8 +62,8 @@ CI cannot reproduce the app, and a fresh clone cannot configure it.
 **Tasks**
 1.1 **Done.** Neither pinned route in the original draft was possible: the
     ChordStudio copy has no `.git` and no recorded remote, so there is no commit
-    for `FetchContent` or a submodule to point at. The include closure is 17
-    files / 77 KB, so it is vendored at `third_party/chordstudio/` with a sha256
+    for `FetchContent` or a submodule to point at. The include closure is 25
+    files / 165 KB once walked from both sides of the interface, so it is vendored at `third_party/chordstudio/` with a sha256
     `lock.cmake` -- the nearest available equivalent to a commit pin. Resolution
     and verification live in `cmake/ChordStudioDeps.cmake`.
 1.2 **Done.** A missing or partial copy fails configure with the exact missing
@@ -73,6 +73,14 @@ CI cannot reproduce the app, and a fresh clone cannot configure it.
 1.4 **Done.** JUCE was already a pinned shallow clone
     (`third_party/JUCE_PIN.txt`: `8.0.17-security`, commit `dabd5ad`), now also
     recorded in that document.
+1.5 **Done.** CI supplies its own dependencies instead of inheriting them.
+    `tools/fetch-native-deps.ps1` clones JUCE shallowly at the tag in
+    `third_party/JUCE_PIN.txt`, fails if `HEAD` is not the pinned commit, and
+    downloads the pinned WebView2 package; both native jobs then export
+    `NC_WEBVIEW2_PACKAGE_LOCATION`. Before this the `native-windows` job reported
+    success while building only the engine, because `third_party/JUCE` is
+    gitignored and the top-level CMakeLists skips the app and both plug-ins when
+    it is absent.
 
 **Verification**
 ```bash
@@ -87,9 +95,9 @@ path remains.
 
 **Landed 2026-11-08.** Configure reports the vendored root, `nc_mixrack` and
 `NCMixRackTests` build from it, `ctest -R mix_rack` passes, and a one-byte edit
-to a vendored file fails configure on the hash. Not verified: a build of the
-*plug-ins* from a truly clean clone (the JUCE clone is a manual step) and CI,
-which still builds nothing but the engine. A fresh build directory also exposed a
+to a vendored file fails configure on the hash. Not verified locally: a compile of the
+*plug-ins* from a clean tree - the JUCE clone and the app build are now wired into
+CI (1.5) but the first runner execution is their real test. A fresh build directory also exposed a
 second unpinned dependency, since fixed: WebView2's package path existed only in
 `build/CMakeCache.txt`, so `juce_add_gui_app` could not configure from scratch.
 `cmake/WebView2Deps.cmake` now resolves it from a documented environment variable
