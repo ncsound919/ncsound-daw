@@ -389,3 +389,12 @@ and 2k MIDI replacements and asserts the lists drain to zero.
 Remaining in Phase A: A2 (remove the export-path sleep), A3 (lifetime tests for
 editor and piano-roll windows), A4 (Application Verifier plus a load/unload
 soak).
+
+
+### Status - 8 November 2026 (Phase A, continued)
+
+A2 is done: the export hand-off waits for callback signals instead of sleeping
+for two block durations.
+
+Remaining in Phase A: A3 (lifetime tests for the editor and piano-roll windows),
+A4 (Application Verifier plus a load/unload soak).

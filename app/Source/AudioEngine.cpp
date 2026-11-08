@@ -1675,6 +1675,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             if (outputChannelData[channel] != nullptr)
                 juce::FloatVectorOperations::clear (outputChannelData[channel], numSamples);
 
+        // Export waits on this instead of guessing how long a block takes.
+        offlineBlockDone.signal();
         return;
     }
 
@@ -2770,6 +2772,7 @@ bool AudioEngine::renderToFile (const juce::File& destination,
 
     // Copy appends prepareForRender + restore verbatim so transport/device
     // behaviour is identical to the legacy WAV path.
+    offlineBlockDone.reset();
     offlineRender.store (true, std::memory_order_release);
 
     const auto previousPosition = positionSamples.load();
@@ -2806,8 +2809,16 @@ bool AudioEngine::renderToFile (const juce::File& destination,
         offlineRender.store (false, std::memory_order_release);
     };
 
-    const auto settleMs = static_cast<int> (2000.0 * juce::jmax (1, bufferSize.load()) / rate) + 20;
-    juce::Thread::sleep (settleMs);
+    // Two callbacks have to return after the flag is set: the one that may
+    // already have been inside renderBlock when it was set, and the one after
+    // it, which returns immediately. Callbacks are sequential, so once the
+    // second has signalled, nothing can still be holding the buffers that
+    // prepareForRender() is about to resize. Waiting for that is a guarantee
+    // where the old fixed sleep was a guess that a slow block could outrun.
+    if (deviceOpen.load (std::memory_order_acquire))
+        for (int i = 0; i < 2; ++i)
+            if (! offlineBlockDone.wait (500))
+                break;
 
     prepareForRender (rate, blockSize);
 

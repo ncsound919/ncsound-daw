@@ -712,6 +712,10 @@ private:
     /** True while renderToWav() owns the engine: the device callback renders
         silence instead of a second, interleaved pass. */
     std::atomic<bool> offlineRender { false };
+    // Signalled by the audio callback while an offline render has the engine
+    // parked, so renderToFile() can wait for callbacks to stand down instead
+    // of sleeping for a guessed number of block durations.
+    juce::WaitableEvent offlineBlockDone { false };
     std::atomic<bool> metronome { false };
     std::atomic<bool> resetRequested { false };
     std::atomic<bool> seekRequested { false };

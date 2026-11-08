@@ -511,3 +511,32 @@ attributable to the reclamation, but I did not isolate it either.
 
 Not verified: no soak run and no memory graph from a real session yet, which is
 A4 in the plan.
+
+
+
+## Export waits instead of sleeping - 8 November 2026
+
+`renderToFile` parks the engine with `offlineRender`, then calls
+`prepareForRender()`, which resizes the buffers the audio callback renders
+into. Before doing that it slept for two block durations plus 20 ms. Two blocks
+is what the wait was meant to be; as a fixed sleep it was a guess, and one
+overrunning block - a slow plug-in, a large buffer, a loaded machine - would let
+the resize happen under a callback that was still running.
+
+The callback now signals a `WaitableEvent` when it returns silence during an
+offline render, and `renderToFile` waits for two of those signals (500 ms each)
+before touching a buffer. Two, not one: the callback that was already inside
+`renderBlock` when the flag was set has to return, and so does the one after it.
+Callbacks run one at a time, so the second signal proves nothing is still using
+the buffers. The event is signalled only while an export is parked, so normal
+playback costs nothing, and with no device open there is nothing to wait for.
+
+Verified: build clean (125/125). The export tests - the path that actually
+changes - pass: 13 test cases, 106 assertions, 107 s, including the stems case
+(one render per track) and the repeated-mixdown case, so the wait ran many times
+without deadlocking. The full `mix_rack` suite was green at the previous commit
+but was not re-run after this change.
+
+Not verified: no test forces an overrunning callback to show the old sleep
+losing that race. The argument is the ordering, not a reproduced failure; the
+soak in A4 is where a loaded machine would expose it.
