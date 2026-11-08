@@ -187,6 +187,17 @@ bool EightOHeightProcessor::isBusesLayoutSupported (const BusesLayout& layouts) 
     return output == juce::AudioChannelSet::mono() || output == juce::AudioChannelSet::stereo();
 }
 
+void EightOHeightProcessor::releaseResources()
+{
+    // The device is being torn down: drop every voice and filter state so
+    // no envelope survives into the next prepareToPlay. No allocation and
+    // no locking, so it stays callable from the audio thread.
+    voices.fill ({});
+    nextVoice = 0;
+    highpassState.fill (0.0f);
+    monoLowState.fill (0.0f);
+}
+
 void EightOHeightProcessor::latchParams()
 {
     auto read = [] (const std::atomic<float>* parameter, float fallback)
