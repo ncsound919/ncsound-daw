@@ -540,3 +540,33 @@ but was not re-run after this change.
 Not verified: no test forces an overrunning callback to show the old sleep
 losing that race. The argument is the ordering, not a reproduced failure; the
 soak in A4 is where a loaded machine would expose it.
+
+
+
+## Window lifetime tests - 8 November 2026
+
+The 8 November fix closed a plugin editor window when its processor was retired,
+but nothing tested it - no test created a window at all. Four cases now do,
+through the same registry call the rack uses.
+
+They need no plug-in: a stub `AudioProcessor` reports an editor and returns a
+320x240 `AudioProcessorEditor`, so the window is constructed, registered and
+closed exactly as the app does it. Each case asserts the watcher count before
+and after plus the processor's active editor. That covers closing by processor
+identity, leaving a different processor's window alone, destroying a window
+directly, and a window created with no processor at all.
+
+One detail the test leans on is worth recording: `AudioProcessorEditor`'s
+destructor asserts `processor.getActiveEditor() != this`, so JUCE itself treats
+a wrapper that does not call `editorBeingDeleted()` as a bug. That is exactly
+the first version of the fix, which passed a `Component*` that never matched -
+which is why the test checks `getActiveEditor()` and not just the window count.
+
+Verified: build clean (127/127); the four cases pass with 19 assertions, through
+real `DocumentWindow`s on this desktop - so a native window can be created and
+destroyed inside the console test process, which was the open question. The full
+`mix_rack` suite was started after the change.
+
+Not verified: the piano roll. `PianoRollWindow` lives in an anonymous namespace
+inside `ArrangeView.cpp`, so no test can name it; covering it needs an
+extraction first.

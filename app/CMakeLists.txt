@@ -40,6 +40,7 @@ target_sources(NCMixRackTests PRIVATE
     Source/TrackInsertTests.cpp
     Source/PluginCatalogTests.cpp
     Source/VstHostSmokeTests.cpp
+    Source/PluginEditorWindow.cpp
     Source/HostedInsert.cpp
     Source/BuiltinSynth.cpp
     Source/MidiRecorder.cpp
@@ -60,7 +61,8 @@ target_sources(NCMixRackTests PRIVATE
     Source/AutomationTests.cpp
     Source/SendsTests.cpp
     Source/MixPlanTests.cpp
-    Source/SnapshotReclaimTests.cpp)
+    Source/SnapshotReclaimTests.cpp
+    Source/WindowLifetimeTests.cpp)
 
 target_link_libraries(NCMixRackTests PRIVATE
     nc_mixrack

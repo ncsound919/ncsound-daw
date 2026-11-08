@@ -33,6 +33,12 @@ inline void watch (Watcher* watcher)
         detail::watchers().push_back (watcher);
 }
 
+/** Tests and diagnostics: how many windows are currently registered. */
+inline std::size_t watcherCount() noexcept
+{
+    return detail::watchers().size();
+}
+
 inline void unwatch (Watcher* watcher) noexcept
 {
     auto& list = detail::watchers();

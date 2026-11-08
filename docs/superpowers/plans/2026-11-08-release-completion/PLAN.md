@@ -398,3 +398,11 @@ for two block durations.
 
 Remaining in Phase A: A3 (lifetime tests for the editor and piano-roll windows),
 A4 (Application Verifier plus a load/unload soak).
+
+
+### Status - 8 November 2026 (Phase A, A3)
+
+A3 partly done: the plugin editor window has lifetime coverage (4 cases, 19
+assertions) through `pluginEditors::closeWindowsFor()`, the path the rack uses,
+with a stub processor so no plug-in is needed. The piano roll is not covered -
+its window class is private to `ArrangeView.cpp` and needs extracting first.
