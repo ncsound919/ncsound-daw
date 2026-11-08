@@ -65,23 +65,40 @@ configure, and the change belongs upstream.
 
 ## WebView2 (hub UI)
 
-`app/CMakeLists.txt` builds the hub with `juce_add_gui_app(... NEEDS_WEBVIEW2 TRUE)`,
-so configure needs the WebView2 NuGet package. JUCE's `FindWebView2.cmake` looks in
-the local NuGet folder and, failing that, in `JUCE_WEBVIEW2_PACKAGE_LOCATION`.
+`app/CMakeLists.txt` builds the hub with `juce_add_gui_app(... NEEDS_WEBVIEW2 TRUE)`
+and static loader linking, so configure needs the `Microsoft.Web.WebView2` NuGet
+package (2.9 MB header, 11 MB static loader).
 
-On this machine the package sits outside the repository and its path exists only
-inside `build/CMakeCache.txt`, so **a fresh build directory fails configure** with
-`Could NOT find WebView2 (missing: WebView2_include_dir WebView2_library)`.
-Supply it explicitly:
+JUCE's `FindWebView2.cmake` checks two places only: the NuGet package folder under
+`%USERPROFILE%`, and `JUCE_WEBVIEW2_PACKAGE_LOCATION`. On the release machine the
+package sits outside the repository, in `Plugins/.deps/WebView2`, so that variable
+was set in one `build/CMakeCache.txt` and nowhere else - and every fresh build
+directory died inside `juce_add_gui_app`.
+
+`cmake/WebView2Deps.cmake`, included before `app/` is added, resolves it in this
+order:
+
+1. `-DJUCE_WEBVIEW2_PACKAGE_LOCATION=<dir>` - JUCE's own variable, unchanged
+2. `-DNC_WEBVIEW2_PACKAGE_LOCATION=<dir>`
+3. the `NC_WEBVIEW2_PACKAGE_LOCATION` environment variable
+4. the NuGet folder, then a failure that names both fixes
+
+`<dir>` is the directory *containing* `Microsoft.Web.WebView2.<version>/`, which is
+what JUCE globs for. The value is applied as a normal variable rather than a cache
+entry, so it is not baked into whichever build directory happened to have the
+variable set.
+
+Nothing from the package is committed: 14 MB of Microsoft binaries do not belong
+in the tree, and the package is installed rather than vendored.
 
 ```bash
-cmake -S . -B build -DJUCE_WEBVIEW2_PACKAGE_LOCATION=C:/Users/Asus/Desktop/Plugins/.deps/WebView2
+set NC_WEBVIEW2_PACKAGE_LOCATION=C:/Users/Asus/Desktop/Plugins/.deps/WebView2
+cmake -S . -B build
 ```
 
-or install the package into the NuGet folder as JUCE's own message describes.
-This is the last hand-set cache value the build depends on; until it is supplied
-by CI or replaced with a committed dependency, a clean clone cannot configure the
-hub. Tracked as phase 2 work in the release plan.
+Verified: a fresh build directory configured with only that environment variable
+set - exit 0 after 243.8 s, `Found WebView2`, and the vendored ChordStudio copy
+still reported `25 files`.
 
 ## Licence consequence
 

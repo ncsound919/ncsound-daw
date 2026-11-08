@@ -344,3 +344,50 @@ is recorded in `docs/DEPENDENCIES.md`; it belongs with phase 2, not this pin. Th
 licence consequence is recorded and unresolved: ChordStudio is GPL-3.0 and
 statically linked, so these binaries are derivatives whatever is decided about
 JUCE.
+
+## Clean configure - 8 November 2026
+
+Pinning ChordStudio was not enough to configure from scratch. A fresh build
+directory resolved the vendored copy and then died in `juce_add_gui_app`:
+
+```
+CMake Error ... Could NOT find WebView2 (missing: WebView2_include_dir WebView2_library)
+```
+
+The package was installed, in `Plugins/.deps/WebView2`, and JUCE's
+`FindWebView2.cmake` only reads the NuGet folder under `%USERPROFILE%` or
+`JUCE_WEBVIEW2_PACKAGE_LOCATION`. That variable existed in exactly one place:
+`build/CMakeCache.txt`. So every new build directory - a fresh clone, CI - failed
+at the same line, and the fix was invisible unless you already knew the path.
+
+Committing the package was the obvious alternative and the wrong one: `WebView2.h`
+is 2.9 MB and `WebView2LoaderStatic.lib` is 11 MB of Microsoft binaries, installed
+rather than vendored. `cmake/WebView2Deps.cmake` resolves the location instead, in
+order: `-DJUCE_WEBVIEW2_PACKAGE_LOCATION`, `-DNC_WEBVIEW2_PACKAGE_LOCATION`, the
+`NC_WEBVIEW2_PACKAGE_LOCATION` environment variable, then JUCE's NuGet folder. It
+sets a normal variable rather than a cache entry, so configuring with the
+environment variable set does not bake this machine's absolute path into the build
+directory.
+
+Testing changed the validation twice. The first version globbed
+`*Microsoft.Web.WebView2*` and accepted the first hit, which meant passing the
+package directory itself looked valid - the glob matched
+`Microsoft.Web.WebView2.nuspec` - and then handed JUCE a path with no
+`build/native/include` in it. It now requires a directory containing
+`build/native/include/WebView2.h`. The failure message also fires before
+`juce_add_gui_app`, so it names the two fixes instead of surfacing as a JUCE
+internal error three hundred lines into the log.
+
+Verified: fresh `build/_wv2_fresh` configured from nothing with only
+`NC_WEBVIEW2_PACKAGE_LOCATION` in the environment - exit 0, 243.8 s,
+`WebView2 package: ...Microsoft.Web.WebView2.1.0.4314.35`, `Found WebView2`,
+`ChordStudio sources: ... (vendored, 25 files)`. The existing `build` directory
+still configures (its cache already holds the variable, which takes precedence).
+The three resolver branches were exercised directly with `cmake -P`: no variable
+and no NuGet package, a variable pointing at a directory with no package, and a
+variable pointing at the package directory itself - each fails with its own
+message; the correct parent directory prints the package line.
+
+Not verified: a full hub build out of the fresh directory (configure only), and CI,
+which still configures nothing - this fixes the configure step, it does not give
+CI a job.

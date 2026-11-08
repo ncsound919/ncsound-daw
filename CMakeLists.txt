@@ -75,6 +75,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/JUCE/CMakeLists.txt")
     add_subdirectory(third_party/JUCE)
     add_subdirectory(plugins/chopstation)
     add_subdirectory(plugins/eightoheight)
+    # The hub UI needs the WebView2 package at configure time. Resolve it from a
+    # documented source rather than a path that only exists in one build cache.
+    include(WebView2Deps)
+
     add_subdirectory(app)
 else()
     message(STATUS "JUCE not found in third_party/JUCE - skipping plugin targets")

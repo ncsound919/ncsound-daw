@@ -89,11 +89,11 @@ path remains.
 `NCMixRackTests` build from it, `ctest -R mix_rack` passes, and a one-byte edit
 to a vendored file fails configure on the hash. Not verified: a build of the
 *plug-ins* from a truly clean clone (the JUCE clone is a manual step) and CI,
-which still builds nothing but the engine. A fresh build directory also fails
-later, for an unrelated reason found while testing this: WebView2's package path
-lives only in `build/CMakeCache.txt`, so `juce_add_gui_app` cannot configure
-without `-DJUCE_WEBVIEW2_PACKAGE_LOCATION` (see `docs/DEPENDENCIES.md`). That,
-not the ChordStudio pin, is what still blocks a clean configure.
+which still builds nothing but the engine. A fresh build directory also exposed a
+second unpinned dependency, since fixed: WebView2's package path existed only in
+`build/CMakeCache.txt`, so `juce_add_gui_app` could not configure from scratch.
+`cmake/WebView2Deps.cmake` now resolves it from a documented environment variable
+and a fresh directory configures without cache edits (243.8 s, exit 0).
 
 ---
 
