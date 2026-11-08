@@ -565,7 +565,9 @@ which is why the test checks `getActiveEditor()` and not just the window count.
 Verified: build clean (127/127); the four cases pass with 19 assertions, through
 real `DocumentWindow`s on this desktop - so a native window can be created and
 destroyed inside the console test process, which was the open question. The full
-`mix_rack` suite was started after the change.
+`mix_rack` suite passes after the change too: 1/1 in 173.1 s - the fastest
+run yet, with four more cases than the 418.9 s run, which settles the timing
+question from the snapshot entry: that was machine load, not a regression.
 
 Not verified: the piano roll. `PianoRollWindow` lives in an anonymous namespace
 inside `ArrangeView.cpp`, so no test can name it; covering it needs an
