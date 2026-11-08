@@ -162,7 +162,11 @@ void EightOHeightProcessor::prepareToPlay (double newSampleRate, int samplesPerB
     monoLowState.fill (0.0f);
 
     const auto subsonic = subsonicParam != nullptr ? subsonicParam->load() : 30.0f;
-    subsonicCoefficient = 1.0f - static_cast<float> (
+    // One-pole DC blocker: the pole coefficient is exp (-2*pi*fc/fs).
+    // 1 - exp (...) is the complementary *lowpass* coefficient, and putting it
+    // in this recursion turns the stage into a differentiator that mutes the
+    // voice: a 55 Hz tone came out at -90 dB before this was corrected.
+    subsonicCoefficient = static_cast<float> (
         std::exp (-2.0 * juce::MathConstants<double>::pi * subsonic / sampleRate));
 
     const auto crossover = monoCrossoverParam != nullptr ? monoCrossoverParam->load() : 120.0f;
@@ -565,7 +569,7 @@ void EightOHeightProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     }
 
     // Subsonic filter so nothing below the speaker's job reaches the clipper.
-    subsonicCoefficient = 1.0f - static_cast<float> (
+    subsonicCoefficient = static_cast<float> (
         std::exp (-2.0 * juce::MathConstants<double>::pi * latched.subsonicHz / sampleRate));
 
     for (int channel = 0; channel < juce::jmin (2, channels); ++channel)
