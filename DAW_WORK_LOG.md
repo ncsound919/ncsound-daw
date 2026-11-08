@@ -601,3 +601,50 @@ now checks the window width and that the content is non-empty.
 
 Not verified: the piano roll's own editing behaviour is still untested - this
 covers window lifetime only - and nothing has watched these windows on screen.
+
+
+## Release readiness, phases A4 and B - 8 November 2026
+
+The rest of the remaining steps, run as far as a terminal can take them.
+
+**A4 - soak, verifier blocked.** Ten cycles of `pluginval --strictness-level 5`
+over both built Debug VST3s: twenty runs, zero failures. Application Verifier
+did not run: the elevated `appverif -enable Basics -for NCMixRackTests.exe`
+returns "Layer [Basics] not registered. Maybe you forgot to install the provider
+dll containing it?", so the provider is missing from this machine and the check
+needs an SDK feature installed before it can be discharged. Memory flatness is
+therefore unmeasured - the soak proves the plug-ins keep loading and validating,
+not that their footprint is stable.
+
+**B1 - pluginval covers both plug-ins.** `ci.yml`'s push job now builds and
+validates Chop Station and 808 Designer at strictness 5, one path per line.
+`.github/workflows/nightly-pluginval.yml` runs both nightly at level 10, with
+`DISABLED_TESTS: Discrete parameter state restoration` set and the reason in the
+file: the documented `juce::AudioParameterBool` false positive at level 8 or
+above, and 808 Designer declares two of them (`Mono Lock` and `Character`).
+Locally pluginval 1.0.4 returned SUCCESS for both bundles at level 5.
+
+**B2 - blocked.** pluginval 1.0.4 has no acceptance or record option; `--help`
+lists `--validate`, `--run-tests` and `--data-file` only. The acceptance testing
+documented on `develop` - a config JSON plus a golden `.wav`, recorded with
+`--record-missing` - is not in the binary that exists, so the DSP-regression
+gate cannot be built against it. No configs were invented to look covered.
+
+**B3 - package gate.** `tools/verify-package.sh` takes a package tree or ZIP and
+asserts both bundles with their `Contents/x86_64-win` binary and
+`Contents/Resources/moduleinfo.json`, then that no `.exp`, `.lib`, `.pdb`,
+`.ilk`, `juceaide` or `include/` shipped. `.github/workflows/release.yml` builds
+the plug-ins on a `v*` tag, runs `cpack -G ZIP`, verifies the archive, uploads it
+as an artifact and attaches it to the release. Verified against the existing
+package: passes; against a copy with a `.lib` touched into the bundle: fails
+exit 1. All three workflow files parse as YAML.
+
+**Not done.** B4 (first clean-clone CI run) needs a runner; B5 (150% DPI and a
+keyboard-only pass) needs hosts and a display; the 8-hour soak and the memory
+graph need A4's verifier and a real session. Phase C is untouched: its first
+task is an owner decision (the JUCE licence and the ChordStudio GPL-3.0
+consequence), and C2-C4 depend on that answer.
+
+Verified after all of it: `ctest --test-dir build -j 4` passes **160/160** in
+157.0 s, including `mix_rack` (156.9 s), both plug-in suites and the four window
+cases.

@@ -409,4 +409,33 @@ private to `ArrangeView.cpp`, so it moved to `PianoRollWindow.{h,cpp}` and takes
 a `Component` rather than a `PianoRoll`, which lets the tests own a stub and
 keeps `PianoRoll.cpp` out of the test target.
 
-Remaining in Phase A: A4 (Application Verifier plus a load/unload soak).
+A4 is partly done. The load/unload soak ran: ten cycles of pluginval level 5
+over both built VST3s - twenty runs, zero failures. Application Verifier could
+not run. The elevated `appverif -enable Basics` call reports "Layer [Basics] not
+registered. Maybe you forgot to install the provider dll containing it?", so the
+verifier's provider is not installed on this machine and the check needs an SDK
+feature added before it can be discharged. The memory graph is unmeasured, not
+flat.
+
+### Status - 8 November 2026 (Phase B evidence)
+
+B1 is done. The push job now validates both plug-ins at strictness 5, and a
+nightly workflow runs level 10 with `DISABLED_TESTS: Discrete parameter state
+restoration` recorded in the file for the `juce::AudioParameterBool` false
+positive (808 Designer declares two, `Mono Lock` and `Character`). Both were also
+validated locally the same way on the Debug bundles: pluginval 1.0.4 returned
+SUCCESS for both at level 5.
+
+B3 is done. `tools/verify-package.sh` asserts both bundles, both
+`Contents/x86_64-win` binaries, both `Contents/Resources/moduleinfo.json`, and
+the absence of `.exp`/`.lib`/`.pdb`/`.ilk`/`juceaide`/`include/`; `release.yml`
+builds, packages, verifies and attaches the archive on a `v*` tag. Verified
+against the existing package ZIP (passes) and against a copy with a `.lib`
+planted in the bundle (fails, exit 1).
+
+B2 is blocked. pluginval 1.0.4 ships no acceptance or record option - `--help`
+lists only `--data-file` - so the render-versus-golden-file gate the research
+describes needs a pluginval newer than the current release tag.
+
+B4 and B5 need what this terminal does not have: a clean-clone CI run needs a
+runner, and the 150% DPI and keyboard-only pass needs hosts and a display.
