@@ -208,3 +208,30 @@ cd "C:/Users/Asus/Desktop/Plugins/VST DAW/ui"
 - No marker state is hardcoded in the ruler anymore; project data is authoritative.
 - MIDI metadata is generated from the engine's sanitized tempo map.
 - Changes are limited to the DAW workspace; unrelated untracked `telemetry-shield/` and existing `ui/` content were not modified by this logging step.
+
+## Verification update — 8 November 2026
+
+The open items recorded above are now closed or precisely scoped:
+
+- Full native suite: **160/160 ctest targets pass** (139.9 s, `-j 4`), including
+  `mix_rack` (139.8 s) and both plugin suites. `NCEightOHeightTests` is no longer
+  "Not Run".
+- `NCEightOHeightTests`: **2,638 assertions across 8 cases, all passing.**
+  Getting there required three real fixes:
+  1. `EightOHeightProcessor::releaseResources()` was declared and never defined,
+     so the plugin and its test binary could not link at all (`LNK2001`). ctest
+     reported the failure as "Not Run", which disguised a broken build as a skip.
+  2. The subsonic stage used `1 - exp(-2*pi*fc/fs)` — the complementary lowpass
+     coefficient — inside a DC-blocker recursion. At 55 Hz that is a gain of
+     about 2.8e-5, so the plugin rendered note-ons at roughly -90 dB: effectively
+     silent. The pole coefficient is `exp(-2*pi*fc/fs)`.
+  3. One case asserted that CC123 (All Notes Off) silences the pool immediately.
+     CC123 releases and rings out by design (`allNotesOff(allowTail)`) and by MIDI
+     convention; CC120 (All Sound Off) is the panic. The case now covers both.
+- UI: `tsc -b --noEmit` clean, `vitest` 43/43, `vite build` succeeds
+  (471.78 kB JS / 144.88 kB gzip, 123.61 kB CSS).
+
+Still unproven, and not claimed: an interactive session against a real project,
+audio output on real hardware, 150 % DPI, clean-VM install, an 8-hour soak, and
+survival of a third-party plugin crash. There is still no installer in the tree,
+and the app build depends on an unpinned out-of-repo `../../ChordStudio-master`.
