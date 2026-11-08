@@ -1,0 +1,255 @@
+# Plan — Release completion (validated, reproducible, legally shippable)
+
+**Status:** Plan for approval. No implementation started beyond what is noted as landed.
+**Date:** 2026-11-08
+**Research:** [`../../research/2026-11-08-release-readiness-research.md`](../../research/2026-11-08-release-readiness-research.md)
+**Baseline:** 160/160 ctest, UI 43/43 + lint 0 errors, `cpack -G ZIP` produces a
+verified 14 MB archive. Those are the three things that already hold.
+
+The workflow this follows is research → plan → execute → verify → record. The
+`gsd-sdk` / `.planning/` toolchain is not installed in this repository, so the
+gates below are run by hand and evidence is appended to `DAW_WORK_LOG.md`; see
+§9 for how each gate is discharged.
+
+---
+
+## 0. What "completion" means here
+
+Completion is **not** "all axes 10/10". Use and Code quality can be measured and
+are close. Style and Innovation are owner/product judgements that no patch
+settles. Completion means:
+
+1. A stranger can install it, and a host can load it, on a clean machine.
+2. CI reproduces every byte of the release from a clean clone.
+3. Nothing in the shipped artifact is legally exposed.
+4. The code can absorb the next feature without a 3,000-line file fight.
+
+**Exit criteria for 1.0:**
+- [ ] Clean-clone CI builds app + both plug-ins and packages them, with no path
+      outside the repository.
+- [ ] pluginval strictness 5 green for **both** VST3s, plus acceptance renders.
+- [ ] Signed installer installs to the standard VST3 location on a clean VM,
+      uninstalls without orphans, and both plug-ins scan and load in two hosts.
+- [ ] JUCE and font licensing decided in writing, with `LICENSE`,
+      `THIRD-PARTY-NOTICES.md` and a root `README.md` present.
+- [ ] 150% DPI verified in three hosts, no clipping and no double-scaling.
+- [ ] No source file above the size budget in §4.
+
+---
+
+## 1. Phases, in dependency order
+
+| # | Phase | Blocks | Can an agent finish it alone? |
+|---|-------|--------|-------------------------------|
+| 1 | Dependency determinism | everything | yes |
+| 2 | Validation matrix | release | yes |
+| 3 | Legal/IP decisions | distribution | no — owner decides, agent implements |
+| 4 | Structural refactor | velocity | yes, in slices |
+| 5 | UI at 150% + accessibility | release | mostly — needs a real display/host |
+| 6 | Installer + signing | release | partly — needs a certificate |
+| 7 | Operational readiness | post-1.0 | partly |
+
+Phase 1 comes first because every later gate ("CI builds it", "clean VM") is
+meaningless while the app build reads `../../ChordStudio-master`.
+
+---
+
+## 2. Phase 1 — Dependency determinism
+
+`app/CMakeLists.txt:4` hardcodes `set(NC_PLUGINS_ROOT ".../../../ChordStudio-master")`.
+CI cannot reproduce the app, and a fresh clone cannot configure it.
+
+**Tasks**
+1.1 Convert `NC_PLUGINS_ROOT` into a pinned dependency:
+    - if ChordStudio is publishable: `FetchContent_Declare(chordstudio
+      GIT_REPOSITORY <url> GIT_TAG <full-commit-sha>)`, no tag;
+    - if not: a git submodule at `third_party/chordstudio`, pinned to a commit,
+      with `NC_PLUGINS_ROOT` defaulting to it;
+    - keep an override (`-DNC_PLUGINS_ROOT=<path>`) plus
+      `FETCHCONTENT_SOURCE_DIR_CHORDSTUDIO` for offline work.
+1.2 Fail loudly and early when the root is missing: a `message(FATAL_ERROR)`
+    naming the option, instead of a configure that half-succeeds.
+1.3 Document the pin (commit, date, why) in `docs/DEPENDENCIES.md`.
+1.4 Pin JUCE the same way: it already resolves 8.0.17 via CPM, so record the
+    exact version and add it to the same doc.
+
+**Verification**
+```bash
+git clone <repo> /tmp/clean && cd /tmp/clean
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release   # must configure with no sibling checkout
+cmake --build build --target NCChopStation_VST3 NCEightOHeight_VST3
+grep -rn '\.\./\.\./' CMakeLists.txt app/CMakeLists.txt   # must be empty
+```
+**Exit criteria:** clean clone configures and builds both plug-ins; the
+dependency commit is recorded; no absolute or sibling path remains.
+
+---
+
+## 3. Phase 2 — Validation matrix
+
+Today `pluginval` covers Chop Station only, at strictness 5 with
+`--skip-gui-tests`; the 808 is unvalidated and nothing guards DSP output.
+
+**Tasks**
+3.1 Add the 808 to the existing job (`plugins:` takes one path per line).
+3.2 Add a nightly job at strictness 10. If the 808 uses
+    `juce::AudioParameterBool`, set
+    `DISABLED_TESTS: Discrete parameter state restoration` (documented false
+    positive) and record why in the workflow file.
+3.3 Add acceptance renders: one config per plug-in, reference checked in,
+    `Tracktion/pluginval/acceptance@v2`.
+3.4 Add a package-content assertion script (`tools/verify-package.sh`) so the
+    checks done by hand today are enforced: both `.vst3` binaries, both
+    `moduleinfo.json`, no `*.exp/*.lib/*.pdb`, no `juceaide`, no `include/`.
+3.5 `release.yml`: tag → Release build → `cpack` → `verify-package.sh` → upload
+    artifact → attach to the GitHub release.
+
+**Verification:** the three jobs pass on a tag; `verify-package.sh` fails if a
+linker artefact is reintroduced (test it by adding one deliberately).
+
+**Exit criteria:** both plug-ins validated in CI; acceptance tests fail a
+deliberately broken render; release artifact is produced by CI, not by hand.
+
+---
+
+## 4. Phase 3 — Legal and IP (owner gates, agent implements)
+
+**Decisions needed before any public distribution:**
+3.1 **JUCE licence.** Closed-source distribution requires a paid JUCE licence
+    (JUCE 8 is AGPLv3 or commercial, and the EULA puts the obligation on the
+    product owner). Record the chosen tier in `docs/LICENSING.md`.
+3.2 **Fonts.** `din-neuzeit-light.ttf` and `motter-corpus-condensed.ttf` are
+    Monotype faces; document-embedding rights do not cover app embedding. Either
+    buy app-embedding licences or replace them (Archivo/Inter are already
+    bundled and OFL).
+3.3 Root `LICENSE`, `THIRD-PARTY-NOTICES.md` (JUCE, VST3 SDK, WebView2, CPM
+    deps, fonts), `README.md` (what it is, how to build, how to install).
+3.4 A release checklist item: "no new asset ships without a licence line".
+
+**Verification:** files exist; every file in `ui/src/fonts/` has a matching
+notice entry or is OFL; a human signs off. No test can prove this.
+
+**Exit criteria:** written decision for JUCE and each font; notices committed.
+
+---
+
+## 5. Phase 4 — Structural refactor
+
+Current sizes: `AudioEngine.cpp` 3,608 · `ArrangeView.cpp` 3,039 ·
+`MainComponent.cpp` 2,616 · `Widgets.cpp` 1,125.
+
+**Method** (no behaviour change, one slice per commit):
+4.1 Write down the seams first: for `AudioEngine`, the natural units are
+    transport/clock, graph build + latency (PDC), render/export, MIDI dispatch,
+    device I/O. For `ArrangeView`: clip hit-testing and edits, painting, drag
+    state. For `MainComponent`: menu/command wiring, panel hosting, settings.
+4.2 Characterization first: for each seam add a test that exercises the public
+    API at the boundary (the 160 ctest targets already cover a lot; fill gaps
+    before moving code, not after).
+4.3 Move code, not behaviour: extract a unit, keep the original function as a
+    thin caller, build + `ctest` green, commit. Files move one at a time.
+4.4 Budget: no translation unit above ~800 lines when the phase ends.
+
+**Verification**
+```bash
+ctest --test-dir build -j 4 --output-on-failure   # 160/160 after every slice
+wc -l app/Source/*.cpp | sort -rn | head
+```
+**Exit criteria:** the three files are split along the seams above, suite green
+at every commit, no public header churn beyond includes.
+
+**Why not now:** this is a multi-session change with real regression risk and no
+interactive app to exercise afterwards; slicing it under a green suite is the
+only honest way to do it.
+
+---
+
+## 6. Phase 5 — UI at 150% and accessibility
+
+**Tasks**
+6.1 DPI matrix: 100 / 125 / 150 / 200% in Reaper, Cubase and Renoise (Renoise
+    is the known double-scaling case for JUCE 8.0.13+), plus Ableton with
+    "Auto-Scale Plug-in Window" on and off.
+6.2 Verify the pinned JUCE (8.0.17) contains the content-scale fix rather than
+    re-introducing a workaround; record the result.
+6.3 WebView2: moving the window between monitors with different scaling, and
+    host DPI-awareness mismatch (its init failure mode).
+6.4 Accessibility pass: visible focus rings, complete tab order, every control
+    reachable by keyboard, `prefers-reduced-motion` honoured, contrast checked.
+    Add an automated axe-core run to the UI test suite for the static cases.
+6.5 Refresh captures in `docs/` and re-score `docs/UI-REVIEW.md`.
+
+**Verification:** a screenshot per host per scale stored in `docs/captures/`,
+axe violations 0, keyboard-only pass recorded. **A visual change not looked at
+is not verified** — this phase cannot be signed off from a terminal.
+
+**Exit criteria:** no clipping, no double-scaled editors, keyboard-only session
+possible end to end.
+
+---
+
+## 7. Phase 6 — Installer and signing
+
+**Tasks**
+7.1 Installer: extend the CPack rules already landed (NSIS64 auto-enables when
+    `makensis` exists) or add an Inno Setup script — Inno is the friendlier
+    format, NSIS is more scriptable; pick one and record why.
+7.2 Install targets: `%CommonProgramFiles%\VST3\` for the plug-in bundles,
+    per-user `Documents`/`AppData` only for user data. Copy the **whole bundle
+    directory**, never the inner DLL.
+7.3 Signing: sign the installer **and** both plug-in binaries with `signtool`,
+    `/fd SHA256 /tr <RFC3161 url> /td SHA256`. Timestamping is mandatory —
+    untimestamped signatures expire with the certificate.
+7.4 Certificate: Azure Artifact Signing (~$9.99/mo; orgs USA/CA/EU/UK,
+    individuals USA/CA) or an OV certificate. EV no longer bypasses SmartScreen
+    (removed 2024), so do not pay for it for that reason. Same identity every
+    release so reputation accumulates.
+7.5 Clean-VM test in Windows Sandbox: install → scan in two hosts → uninstall →
+    assert no leftover files and no orphaned registry entries.
+
+**Verification**
+```bash
+signtool verify /pa /v ncsound-daw-<version>.exe
+signtool verify /pa /v "VST3/808 Designer.vst3/Contents/x86_64-win/808 Designer.vst3"
+```
+**Exit criteria:** signed installer installs and uninstalls cleanly on a VM,
+both plug-ins load in two hosts, `signtool verify` passes on all three binaries.
+
+---
+
+## 8. Phase 7 — Operational readiness (post-1.0, listed for completeness)
+
+Crash reporting (opt-in, with a privacy note), an update check, an 8-hour soak
+with the transport running and plug-ins loaded, a performance budget (CPU % per
+plug-in at 48 kHz/128 samples), a user guide, and a support/issue process.
+
+---
+
+## 9. Verification loop and evidence
+
+Every phase follows the same loop, and the loop is the deliverable as much as the
+code:
+
+1. **Research** — recorded in `docs/superpowers/research/` with sources.
+2. **Plan** — this file; each task names its command.
+3. **Execute** — one slice per commit, tests written before moves.
+4. **Verify** — run the phase's commands, capture the actual output.
+5. **Record** — append to `DAW_WORK_LOG.md`: what was run, what passed, what was
+   *not* verified and why. No claim without a command.
+
+**Gate rules**
+- A check that could not run is reported as a limitation, never as a pass.
+- Filtering output through a pipe preserves the exit status (`pipefail` or an
+  explicit status capture) — a piped `tail` has already hidden one failure here.
+- Native builds need the vcvars wrapper (`build/_nc_plugin_tests.cmd`,
+  `build/_nc_pkg_build.cmd`); plain Git Bash has no `windows.h`.
+
+---
+
+## 10. Cannot be verified from this machine
+
+Listed so nobody reads them as done: a clean-VM install, any host load test, the
+150/200% DPI matrix, SmartScreen behaviour, an 8-hour soak, code-signing
+verification against a real certificate, and anything requiring the JUCE or font
+licence paperwork. These need either hardware the agent does not drive or an
+owner decision.
