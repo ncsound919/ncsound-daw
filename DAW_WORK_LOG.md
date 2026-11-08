@@ -480,3 +480,34 @@ checks rather than a runtime detector.
 Still open from the audit: the retired tempo/midi/automation snapshots grow
 without bound (that needs a reclamation design, not a patch), and the export
 path still sleeps on the message thread between blocks.
+
+
+
+## Snapshot reclamation - 8 November 2026
+
+Replacing a tempo map, the MIDI clip list or an automation lane hands the old
+snapshot to a retired list, because an audio callback that loaded the old
+pointer before the swap may still be reading it. Nothing ever freed those lists
+- they were cleared only when the device stopped - so a long editing session
+grew without bound: one tempo map per BPM drag, one lane per automation move.
+
+Each retired snapshot is now stamped with the audio-block counter at the moment
+it was replaced, and `reclaimRetiredSnapshots()` frees it once a later callback
+has started. That is safe because callbacks run one at a time: if a block has
+started after the swap, the block that could have held the old pointer has
+returned. The counter is bumped with release and read with acquire, so the
+message thread cannot free memory a callback is still touching. With no device
+open there is no callback at all, so the first poll frees everything. The poll
+runs from `pollRetiredInserts()`, the message-thread tick that already collects
+retired inserts, so no new timer was added.
+
+Verified: `NCSoundHub` and `NCMixRackTests` build clean (127/127);
+`ctest -R mix_rack` passes 1/1. The new case, "replaced tempo and MIDI
+snapshots are reclaimed", makes 10,000 BPM edits and 2,000 MIDI clip
+replacements and then asserts the retained lists drain to zero; run on its own
+it passes in 3 s. The suite's total wall time was 223.5 s before this change and
+418.9 s on this run - the new case is 3 s of that, so the difference is not
+attributable to the reclamation, but I did not isolate it either.
+
+Not verified: no soak run and no memory graph from a real session yet, which is
+A4 in the plan.

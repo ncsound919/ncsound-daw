@@ -78,7 +78,7 @@ public:
     // Tempo map + markers (Task 2) and MIDI clips (Task 4). Snapshots are
     // published lock-free: the message thread replaces the owned snapshot,
     // the audio callback only reads the live pointer. Retired snapshots are
-    // freed on device stop along with automation lanes.
+    // freed by reclaimRetiredSnapshots() once no callback can still read them.
     //==========================================================================
     void setTempoMap (nc::engine::TempoMap map);
     nc::engine::TempoMap tempoMap() const;
@@ -622,7 +622,8 @@ private:
     };
 
     /** A published lane: the audio thread reads `live`, the message thread owns
-        `owned`. Replaced lanes are retired and freed only when the device stops. */
+        `owned`. Replaced lanes are retired and freed once no callback can still
+        be reading them, or when the device stops. */
     struct AutomationSlot
     {
         std::unique_ptr<AutomationLane> owned;

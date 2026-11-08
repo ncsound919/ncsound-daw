@@ -378,3 +378,14 @@ snapshot fix touches the same retire path the new tests cover. B can start once
 A1-A2 are in. C1 can be decided in parallel at any time, but C2-C4 should not
 start until it is decided - the answer changes the notices, the README and the
 installer text.
+
+
+### Status - 8 November 2026 (Phase A)
+
+A1 is done: replaced snapshots are stamped with the audio-block counter and
+freed once a later callback has started, with a test that drives 10k tempo edits
+and 2k MIDI replacements and asserts the lists drain to zero.
+
+Remaining in Phase A: A2 (remove the export-path sleep), A3 (lifetime tests for
+editor and piano-roll windows), A4 (Application Verifier plus a load/unload
+soak).
