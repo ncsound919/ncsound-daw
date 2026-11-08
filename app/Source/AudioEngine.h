@@ -11,6 +11,7 @@
 #include "Automation.h"
 
 #include <nc/engine/AudioSuite.hpp>
+#include <nc/engine/Export.hpp>
 #include <nc/engine/MidiClip.hpp>
 #include <nc/engine/MidiPitch.hpp>
 #include <nc/engine/MidiSchedule.hpp>
@@ -56,6 +57,7 @@ public:
         float gainDb = 0.0f;
         float fadeInBars = 0.0f;
         float fadeOutBars = 0.0f;
+        float crossfadeBars = 0.0f; // equal-power overlap; 0 = linear fades
     };
 
     AudioEngine();
@@ -252,6 +254,21 @@ public:
     juce::String mixRackStateJson() const;
     bool restoreMixRackStateJson (const juce::String& state);
     juce::String deviceDescription() const { return deviceInfo; }
+    /** Device manager for the settings panel. The selector component applies
+        device, rate and buffer changes live; the engine re-prepares on the
+        audio-device callbacks. Message thread. */
+    juce::AudioDeviceManager& audioDeviceManager() { return deviceManager; }
+
+    /** Swaps which engine an aux return runs. Aux 0 is the reverb send and aux
+        1 the delay send; each hosts the stock Overlay engine or its swap target
+        (Nexus Reverb / Temporal Delay). Message thread. */
+    void setAuxEngine (int aux, AuxBus::Engine engine);
+    AuxBus::Engine auxEngine (int aux) const;
+    juce::String auxEngineName (int aux) const;
+    static juce::String auxEngineNameOf (AuxBus::Engine engine)
+    {
+        return AuxBus::engineName (engine);
+    }
 
     // Facts the chrome reports. Nothing here is estimated.
     double currentSampleRate() const { return sampleRate.load(); }
@@ -282,6 +299,18 @@ public:
         report a truncated project instead of losing it silently. */
     int setTimelineClips (std::vector<TimelineClip> clips);
 
+    /** Message-thread mirror of the schedule last accepted, so a UI can project
+        the timeline without touching the audio callback's queue. Written only
+        by setTimelineClips; never read on the audio thread. */
+    const std::vector<TimelineClip>& timelineClips() const { return timelineMirror; }
+
+    /** Peak envelope for the part of an asset a clip actually plays, so a UI can
+        draw the real waveform instead of a placeholder. Returns `bins` values in
+        0..1, or empty when the audio is not resident (a streamed long import
+        only keeps a read-ahead window). Message thread. */
+    std::vector<float> assetPeakEnvelope (int assetId, double startSeconds,
+                                          double lengthSeconds, int bins) const;
+
     /** AudioSuite: renders a processed copy of an asset into a new asset and
         returns its id, or -1. The source asset is never modified. */
     int processAsset (int sourceAssetId, const juce::String& nameSuffix,
@@ -298,6 +327,8 @@ public:
     void setLoopEnabled (bool on);
     bool isLoopEnabled() const { return loopEnabled.load(); }
     void setLoopBars (double startBar, double endBar);
+    double getLoopStartBar() const { return loopStartBar.load(); }
+    double getLoopEndBar() const { return loopEndBar.load(); }
 
     /** Last bar any timeline clip reaches, so an export can cover the session
         without guessing. Message thread. */
@@ -314,6 +345,28 @@ public:
                       double endBar,
                       int bitDepth,
                       juce::String& error);
+
+    /** Variant export: WAV/FLAC/MP3/AIFF, TPDF dither on bit-depth reduction,
+        optional LUFS normalisation to the target, loudness measured and
+        available via lastExportLoudness(). Two-pass (measure -> gain/dither ->
+        write) over an in-memory stereo buffer, capped at 30 minutes. */
+    bool renderToFile (const juce::File& destination,
+                       double startBar,
+                       double endBar,
+                       const nc::engine::export_::ExportOptions& options,
+                       juce::String& error);
+
+    /** One file per active track over the same range/rate/dither as the mix.
+        Each stem solos one track (all others muted) and restores the prior
+        mute/solo state afterwards. Returns files written; error on failure. */
+    int exportStems (const juce::File& folder,
+                     double startBar,
+                     double endBar,
+                     const nc::engine::export_::ExportOptions& options,
+                     std::vector<juce::File>& written,
+                     juce::String& error);
+
+    nc::engine::export_::LoudnessResult lastExportLoudness() const { return lastLoudness; }
 
     //==========================================================================
     // Recording. Capture is input-aligned (Ardour's disk-writer rule): the
@@ -443,6 +496,7 @@ private:
         float gainDb = 0.0f;
         float fadeInBars = 0.0f;
         float fadeOutBars = 0.0f;
+        float crossfadeBars = 0.0f;
     };
 
     enum class CommandType : juce::uint8 { clear, add };
@@ -484,6 +538,7 @@ private:
         double lengthSeconds = 0.0;
         double fadeInSeconds = 0.0;
         double fadeOutSeconds = 0.0;
+        double crossfadeSeconds = 0.0;
         float gain = 1.0f;
     };
 
@@ -619,6 +674,8 @@ private:
     std::vector<CatalogEntry> loadableInstrumentEntries() const;
 
     std::atomic<double> contentEnd { 1.0 };
+    std::vector<TimelineClip> timelineMirror;
+    nc::engine::export_::LoudnessResult lastLoudness;
     std::atomic<bool> loopEnabled { true };
     std::atomic<double> loopStartBar { 1.0 };
     std::atomic<double> loopEndBar { 17.0 };
@@ -657,6 +714,8 @@ private:
     juce::AudioBuffer<float> auxBBuffer;
     AuxBus auxReverb;
     AuxBus auxDelay;
+    std::atomic<int> auxReverbEngine { static_cast<int> (AuxBus::Engine::overlayReverb) };
+    std::atomic<int> auxDelayEngine { static_cast<int> (AuxBus::Engine::overlayDelay) };
 
     JUCE_DECLARE_NON_COPYABLE (AudioEngine)
 };

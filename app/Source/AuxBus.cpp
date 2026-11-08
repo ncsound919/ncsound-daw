@@ -1,55 +1,46 @@
 #include "AuxBus.h"
 
+#include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace nc
 {
+namespace
+{
+constexpr int combCount = 4;
+constexpr int maxAllpassCount = 3;
+constexpr int channelCount = 2;
+} // namespace
+
 struct AuxBus::Impl
 {
-    // Schroeder reverb: 4 parallel combs (feedback) + 2 series allpasses.
-    // Prime-ish delay lengths in samples (at 44.1k, rounded per rate).
+    // Reverb: per-channel comb bank feeding a series allpass chain.
     std::vector<std::vector<float>> comb;
     std::vector<int> combWrite;
+    std::vector<float> combDamp;
+
     std::vector<std::vector<float>> allpass;
     std::vector<int> allpassWrite;
-    std::vector<int> combDelay;
-    std::vector<int> allpassDelay;
 
-    // Stereo delay: per-channel circular buffer + one-pole feedback lowpass.
+    int combsPerChannel = combCount;
+    int allpassesPerChannel = 2;
+    float combFeedback = 0.84f;
+    float dampingCoefficient = 0.0f;
+
+    // Delay: per-channel circular line plus feedback lowpass.
     std::vector<std::vector<float>> delay;
-    std::vector<int> delayWrite;
-    std::vector<float> fbLowpass;
+    int delayWrite = 0;
+    int delayLength = 1;
+    int delayBaseSamples = 1;
+    std::vector<float> feedbackLowpass;
+    float delayFeedback = 0.42f;
+    bool pingPong = false;
+    float modulationDepth = 0.0f;
+    double lfoPhase = 0.0;
+    double flutterPhase = 0.0;
 
-    void prepareReverb (double rate)
-    {
-        const double scale = rate / 44100.0;
-        combDelay = { static_cast<int> (1116 * scale), static_cast<int> (1188 * scale),
-                      static_cast<int> (1277 * scale), static_cast<int> (1356 * scale) };
-        allpassDelay = { static_cast<int> (556 * scale), static_cast<int> (441 * scale) };
-
-        comb.assign (4, {});
-        combWrite.assign (4, 0);
-        for (int i = 0; i < 4; ++i)
-            comb[static_cast<size_t> (i)].assign (static_cast<size_t> (juce::jmax (1, combDelay[static_cast<size_t> (i)])), 0.0f);
-
-        allpass.assign (2, {});
-        allpassWrite.assign (2, 0);
-        for (int i = 0; i < 2; ++i)
-            allpass[static_cast<size_t> (i)].assign (static_cast<size_t> (juce::jmax (1, allpassDelay[static_cast<size_t> (i)])), 0.0f);
-    }
-
-    void prepareDelay (double rate)
-    {
-        // Dotted 1/8 at 120 BPM = 375ms. Fixed time so the bus is stable on
-        // devices without a transport-locked clock contribution (tempo-synced
-        // 1/8 is the documented default; hosts can retune later).
-        const auto samples = juce::jmax (1, static_cast<int> (rate * 0.375));
-        delay.assign (2, std::vector<float> (static_cast<size_t> (samples), 0.0f));
-        delayWrite.assign (2, 0);
-        fbLowpass.assign (2, 0.0f);
-    }
-
-    void resetAll()
+    void clearAll()
     {
         for (auto& line : comb)
             std::fill (line.begin(), line.end(), 0.0f);
@@ -57,63 +48,245 @@ struct AuxBus::Impl
             std::fill (line.begin(), line.end(), 0.0f);
         for (auto& line : delay)
             std::fill (line.begin(), line.end(), 0.0f);
-        std::fill (fbLowpass.begin(), fbLowpass.end(), 0.0f);
+
         std::fill (combWrite.begin(), combWrite.end(), 0);
         std::fill (allpassWrite.begin(), allpassWrite.end(), 0);
-        std::fill (delayWrite.begin(), delayWrite.end(), 0);
+        std::fill (combDamp.begin(), combDamp.end(), 0.0f);
+        std::fill (feedbackLowpass.begin(), feedbackLowpass.end(), 0.0f);
+        delayWrite = 0;
+        lfoPhase = 0.0;
+        flutterPhase = 0.0;
     }
 
-    float processComb (int index, float input)
+    void prepareReverb (double rate, Engine engine)
     {
-        auto& line = comb[static_cast<size_t> (index)];
-        auto& w = combWrite[static_cast<size_t> (index)];
-        const float delayed = line[static_cast<size_t> (w)];
-        line[static_cast<size_t> (w)] = input + delayed * 0.84f;
-        w = (w + 1) % static_cast<int> (line.size());
+        const auto nexus = engine == Engine::nexusReverb;
+        const auto scale = rate / 44100.0;
+
+        // Nexus is the long, diffused hall: later comb taps, more feedback,
+        // damping in the loop and a third allpass. Overlay is the tighter
+        // stock plate.
+        int combLengths[combCount] = { 1116, 1188, 1277, 1356 };
+        int allpassLengths[maxAllpassCount] = { 556, 441, 0 };
+
+        allpassesPerChannel = 2;
+        combFeedback = 0.84f;
+        dampingCoefficient = 0.0f;
+
+        if (nexus)
+        {
+            combLengths[0] = 1687;
+            combLengths[1] = 1777;
+            combLengths[2] = 1907;
+            combLengths[3] = 2087;
+            allpassLengths[2] = 341;
+            allpassesPerChannel = 3;
+            combFeedback = 0.90f;
+            dampingCoefficient = 0.30f;
+        }
+
+        comb.assign (static_cast<size_t> (channelCount * combCount), {});
+        combWrite.assign (static_cast<size_t> (channelCount * combCount), 0);
+        combDamp.assign (static_cast<size_t> (channelCount * combCount), 0.0f);
+
+        for (int channel = 0; channel < channelCount; ++channel)
+        {
+            for (int i = 0; i < combCount; ++i)
+            {
+                // The right channel is a few samples longer so the hall has
+                // width without any modulated delay line.
+                const auto spread = nexus && channel == 1 ? 11 : 0;
+                const auto length = juce::jmax (8, static_cast<int> (combLengths[i] * scale) + spread);
+                const auto index = static_cast<size_t> (channel * combCount + i);
+                comb[index].assign (static_cast<size_t> (length), 0.0f);
+            }
+        }
+
+        allpass.assign (static_cast<size_t> (channelCount * maxAllpassCount), {});
+        allpassWrite.assign (static_cast<size_t> (channelCount * maxAllpassCount), 0);
+
+        for (int channel = 0; channel < channelCount; ++channel)
+        {
+            for (int i = 0; i < allpassesPerChannel; ++i)
+            {
+                const auto spread = nexus && channel == 1 ? 7 : 0;
+                const auto length = juce::jmax (8, static_cast<int> (allpassLengths[i] * scale) + spread);
+                const auto index = static_cast<size_t> (channel * maxAllpassCount + i);
+                allpass[index].assign (static_cast<size_t> (length), 0.0f);
+            }
+        }
+    }
+
+    void prepareDelay (double rate, Engine engine)
+    {
+        const auto temporal = engine == Engine::temporalDelay;
+
+        // Dotted 1/8 at 120 BPM = 375 ms. Temporal Delay modulates the read
+        // position (tape wow and flutter) and cross-feeds the two channels.
+        delayBaseSamples = juce::jmax (8, static_cast<int> (rate * 0.375));
+        modulationDepth = temporal ? static_cast<float> (rate * 0.0012) : 0.0f;
+        delayFeedback = temporal ? 0.52f : 0.42f;
+        pingPong = temporal;
+
+        // Headroom for the modulation swing so the read never wraps twice.
+        delayLength = delayBaseSamples + static_cast<int> (rate * 0.01) + 8;
+        delay.assign (channelCount, std::vector<float> (static_cast<size_t> (delayLength), 0.0f));
+        feedbackLowpass.assign (channelCount, 0.0f);
+        delayWrite = 0;
+    }
+
+    float readLinear (const std::vector<float>& line, double position) const
+    {
+        const auto size = static_cast<double> (line.size());
+
+        while (position < 0.0)
+            position += size;
+
+        while (position >= size)
+            position -= size;
+
+        const auto index = static_cast<int> (position);
+        const auto fraction = static_cast<float> (position - index);
+        const auto next = (index + 1) % static_cast<int> (line.size());
+
+        return line[static_cast<size_t> (index)]
+             + (line[static_cast<size_t> (next)] - line[static_cast<size_t> (index)]) * fraction;
+    }
+
+    float processComb (int channel, int index, float input)
+    {
+        const auto slot = static_cast<size_t> (channel * combCount + index);
+        auto& line = comb[slot];
+        auto& write = combWrite[slot];
+        const auto delayed = line[static_cast<size_t> (write)];
+
+        auto feedback = delayed;
+
+        if (dampingCoefficient > 0.0f)
+        {
+            combDamp[slot] += dampingCoefficient * (delayed - combDamp[slot]);
+            feedback = combDamp[slot];
+        }
+
+        line[static_cast<size_t> (write)] = input + feedback * combFeedback;
+        write = (write + 1) % static_cast<int> (line.size());
         return delayed;
     }
 
-    float processAllpass (int index, float input)
+    float processAllpass (int channel, int index, float input)
     {
-        auto& line = allpass[static_cast<size_t> (index)];
-        auto& w = allpassWrite[static_cast<size_t> (index)];
-        const float delayed = line[static_cast<size_t> (w)];
-        const float out = -input * 0.5f + delayed;
-        line[static_cast<size_t> (w)] = input + delayed * 0.5f;
-        w = (w + 1) % static_cast<int> (line.size());
-        return out;
+        const auto slot = static_cast<size_t> (channel * maxAllpassCount + index);
+        auto& line = allpass[slot];
+        auto& write = allpassWrite[slot];
+        const auto delayed = line[static_cast<size_t> (write)];
+        const auto output = -input * 0.5f + delayed;
+        line[static_cast<size_t> (write)] = input + delayed * 0.5f;
+        write = (write + 1) % static_cast<int> (line.size());
+        return output;
     }
 
-    float processDelay (int channel, float input)
+    float processReverbFrame (int channel, float input)
+    {
+        float wet = 0.0f;
+
+        for (int i = 0; i < combsPerChannel; ++i)
+            wet += processComb (channel, i, input);
+
+        wet *= 1.0f / static_cast<float> (combCount);
+
+        for (int i = 0; i < allpassesPerChannel; ++i)
+            wet = processAllpass (channel, i, wet);
+
+        return wet;
+    }
+
+    float processOverlayDelay (int channel, float input)
     {
         auto& line = delay[static_cast<size_t> (channel)];
-        auto& w = delayWrite[static_cast<size_t> (channel)];
-        const float delayed = line[static_cast<size_t> (w)];
-        float& lp = fbLowpass[static_cast<size_t> (channel)];
-        lp += 0.25f * (delayed - lp);
-        line[static_cast<size_t> (w)] = input + lp * 0.42f;
-        w = (w + 1) % static_cast<int> (line.size());
+        const auto delayed = line[static_cast<size_t> (delayWrite)];
+        auto& lowpass = feedbackLowpass[static_cast<size_t> (channel)];
+        lowpass += 0.25f * (delayed - lowpass);
+        line[static_cast<size_t> (delayWrite)] = input + lowpass * delayFeedback;
+        delayWrite = (delayWrite + 1) % delayLength;
         return delayed;
     }
+
+    void processTemporalDelay (float& left, float& right, const double rate)
+    {
+        // Tape wow at 0.55 Hz plus a faster flutter term, both scaled in samples.
+        lfoPhase += 0.55 / rate;
+
+        if (lfoPhase > 1.0)
+            lfoPhase -= 1.0;
+
+        flutterPhase += 6.3 / rate;
+
+        if (flutterPhase > 1.0)
+            flutterPhase -= 1.0;
+
+        const auto modulation = modulationDepth
+                              * static_cast<float> (std::sin (lfoPhase * 6.283185307179586)
+                                                    + 0.35 * std::sin (flutterPhase * 6.283185307179586));
+
+        const auto readPosition = static_cast<double> (delayWrite - delayBaseSamples) - modulation;
+
+        auto readLeft = readLinear (delay[0], readPosition);
+        auto readRight = readLinear (delay[1], readPosition);
+
+        // Damp the cross-feedback so repeats darken as they bounce.
+        feedbackLowpass[0] += 0.22f * (readLeft - feedbackLowpass[0]);
+        feedbackLowpass[1] += 0.22f * (readRight - feedbackLowpass[1]);
+
+        delay[0][static_cast<size_t> (delayWrite)] = left + feedbackLowpass[1] * delayFeedback;
+        delay[1][static_cast<size_t> (delayWrite)] = right + feedbackLowpass[0] * delayFeedback;
+
+        delayWrite = (delayWrite + 1) % delayLength;
+
+        left = readLeft;
+        right = readRight;
+    }
 };
+
+const char* AuxBus::engineName (Engine engine) noexcept
+{
+    switch (engine)
+    {
+        case Engine::overlayReverb: return "Overlay Reverb";
+        case Engine::nexusReverb:   return "Nexus Reverb";
+        case Engine::overlayDelay:  return "Overlay Delay";
+        case Engine::temporalDelay: return "Temporal Delay";
+    }
+
+    return "Overlay Reverb";
+}
 
 AuxBus::AuxBus() : impl (std::make_unique<Impl>()) {}
 
 AuxBus::~AuxBus() = default;
 
-void AuxBus::prepare (double sampleRate, int maxBlockSize, Kind kindToUse)
+void AuxBus::prepare (double rate, int maxBlockSize, Engine engineToUse)
 {
-    kind = kindToUse;
-    sampleRate = sampleRate > 0.0 ? sampleRate : 48000.0;
+    engine = engineToUse;
+    sampleRate = rate > 0.0 ? rate : 48000.0;
     maxBlock = juce::jmax (1, maxBlockSize);
-    impl->resetAll();
+    prepared = false;
 
-    if (kind == Kind::reverb)
-        impl->prepareReverb (sampleRate);
+    impl->clearAll();
+
+    if (isReverb (engine))
+        impl->prepareReverb (sampleRate, engine);
     else
-        impl->prepareDelay (sampleRate);
+        impl->prepareDelay (sampleRate, engine);
 
     prepared = true;
+}
+
+void AuxBus::setEngine (Engine newEngine)
+{
+    if (newEngine == engine)
+        return;
+
+    prepare (sampleRate, maxBlock, newEngine);
 }
 
 void AuxBus::reset()
@@ -121,7 +294,7 @@ void AuxBus::reset()
     if (! prepared)
         return;
 
-    impl->resetAll();
+    impl->clearAll();
 }
 
 void AuxBus::process (juce::AudioBuffer<float>& buffer, int numSamples)
@@ -129,36 +302,49 @@ void AuxBus::process (juce::AudioBuffer<float>& buffer, int numSamples)
     if (! prepared || buffer.getNumChannels() == 0 || numSamples <= 0)
         return;
 
-    const auto numChannels = juce::jmin (buffer.getNumChannels(), 2);
+    const auto channels = juce::jmin (buffer.getNumChannels(), 2);
 
-    for (int sample = 0; sample < numSamples; ++sample)
+    if (isReverb (engine))
     {
-        for (int channel = 0; channel < numChannels; ++channel)
+        for (int channel = 0; channel < channels; ++channel)
         {
-            float input = buffer.getSample (channel, sample);
-            float output = input;
+            auto* data = buffer.getWritePointer (channel);
 
-            if (kind == Kind::reverb)
+            for (int i = 0; i < numSamples; ++i)
             {
-                float combSum = 0.0f;
-                for (int i = 0; i < 4; ++i)
-                    combSum += impl->processComb (i, input);
-
-                float wet = combSum * 0.25f;
-                wet = impl->processAllpass (0, wet);
-                wet = impl->processAllpass (1, wet);
-                output = wet;
+                const auto output = impl->processReverbFrame (channel, data[i]);
+                data[i] = std::isfinite (output) ? output : 0.0f;
             }
-            else
-            {
-                output = impl->processDelay (channel, input);
-            }
+        }
 
-            // NaN guard: a hostile send can't poison the master bus.
-            if (! std::isfinite (output))
-                output = 0.0f;
+        return;
+    }
 
-            buffer.setSample (channel, sample, output);
+    if (engine == Engine::temporalDelay && channels > 1)
+    {
+        auto* left = buffer.getWritePointer (0);
+        auto* right = buffer.getWritePointer (1);
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            auto wetLeft = left[i];
+            auto wetRight = right[i];
+            impl->processTemporalDelay (wetLeft, wetRight, sampleRate);
+            left[i] = std::isfinite (wetLeft) ? wetLeft : 0.0f;
+            right[i] = std::isfinite (wetRight) ? wetRight : 0.0f;
+        }
+
+        return;
+    }
+
+    for (int channel = 0; channel < channels; ++channel)
+    {
+        auto* data = buffer.getWritePointer (channel);
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const auto output = impl->processOverlayDelay (channel, data[i]);
+            data[i] = std::isfinite (output) ? output : 0.0f;
         }
     }
 }

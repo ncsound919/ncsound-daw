@@ -156,6 +156,8 @@ target_sources(NCSoundHub PRIVATE
     Source/InspectorPanel.h
     Source/MixerPanel.cpp
     Source/MixerPanel.h
+    Source/SettingsWindow.cpp
+    Source/SettingsWindow.h
     Source/PluginHost.cpp
     Source/PluginCatalog.cpp
     Source/PluginCatalog.h

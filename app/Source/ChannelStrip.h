@@ -39,7 +39,6 @@ private:
     int index = 0;
     bool selected = false;
     bool hovering = false;
-    bool armed = false;
 
     std::array<Slot, 5> insertSlots { Slot (0), Slot (1), Slot (2), Slot (3), Slot (4) };
     Knob panKnob { "PAN", 46 };

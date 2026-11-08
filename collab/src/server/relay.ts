@@ -5,6 +5,8 @@
  */
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { readFileSync, existsSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import { hostname as osHostname, networkInterfaces } from 'node:os';
 import { WebSocketServer, WebSocket } from 'ws';
 import {
@@ -16,9 +18,22 @@ import {
   type ServerToClient,
 } from '../protocol';
 
+interface PersistedSession {
+  id: string;
+  token: string;
+  code: string;
+  codeExpiresAt: number;
+  ended: boolean;
+  guests: Array<{ id: string; name: string; role: string; token: string }>;
+}
+
 export interface RelayOptions {
   port?: number;
   host?: string;
+  /** JSON file for session metadata persistence. Live sockets are never
+   *  persisted — this only lets a restarted relay resume session codes,
+   *  tokens and rosters so guests can `host.resume` / `guest.join`. */
+  sessionFile?: string;
   maxFailuresPerMin?: number;
   /** Upgrade attempts per IP per minute. Default 120. */
   maxUpgradesPerMin?: number;
@@ -233,6 +248,47 @@ export async function createRelay(options: RelayOptions = {}): Promise<Relay> {
   const codes = new Map<string, string>();
   const conns = new Map<WebSocket, Conn>();
 
+  const persist = (): void => {
+    if (!options.sessionFile) return;
+    const list: PersistedSession[] = [...sessions.values()].map((s) => ({
+      id: s.id,
+      token: s.token,
+      code: s.code,
+      codeExpiresAt: s.codeExpiresAt,
+      ended: s.ended,
+      guests: [...s.guests.values()].map((g) => ({ id: g.id, name: g.name, role: g.role, token: g.token })),
+    }));
+    void writeFile(options.sessionFile, JSON.stringify(list), 'utf-8').catch(() => {
+      // Persistence is best-effort: a read-only store must not kill the relay.
+    });
+  };
+
+  if (options.sessionFile) {
+    try {
+      const raw = JSON.parse(readFileSync(options.sessionFile, 'utf-8')) as PersistedSession[];
+      for (const saved of raw) {
+        if (!saved || !saved.id || !saved.token || saved.ended) continue;
+        const session: Session = {
+          id: saved.id,
+          token: saved.token,
+          code: saved.code,
+          codeExpiresAt: saved.codeExpiresAt,
+          host: null,
+          guests: new Map(saved.guests.map((g) => [
+            g.id,
+            { id: g.id, name: g.name, role: g.role as Role, token: g.token, conn: null } satisfies Guest,
+          ])),
+          pending: new Map(),
+          ended: false,
+        };
+        sessions.set(session.id, session);
+        if (session.code) codes.set(session.code, session.id);
+      }
+    } catch {
+      // First run (no file) is the normal path.
+    }
+  }
+
   // DNS-rebinding defence: the Host header must name this machine (or an
   // explicitly configured domain), not an attacker-controlled hostname.
   const allowedHostnames = localHostnames(bindHost);
@@ -347,6 +403,7 @@ export async function createRelay(options: RelayOptions = {}): Promise<Relay> {
     session.code = code;
     session.codeExpiresAt = Date.now() + codeTtlMs;
     codes.set(code, session.id);
+    persist();
   };
 
   const endSession = (session: Session, notifyHost = true): void => {
@@ -366,6 +423,7 @@ export async function createRelay(options: RelayOptions = {}): Promise<Relay> {
     codes.delete(session.code);
     sessions.delete(session.id);
     session.host = null;
+    persist();
 
     for (const ws of targets) {
       send(ws, { t: 'session.ended' });
@@ -468,6 +526,7 @@ export async function createRelay(options: RelayOptions = {}): Promise<Relay> {
     conn.guestId = undefined;
 
     send(conn, { t: 'host.created', sessionId: id, token, code: session.code, codeExpiresAt: session.codeExpiresAt });
+    persist();
   };
 
   const hostSession = (conn: Conn): Session | undefined => {

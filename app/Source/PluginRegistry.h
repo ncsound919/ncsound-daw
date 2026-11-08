@@ -30,6 +30,11 @@ struct PluginInfo
     juce::String vst3BundleName;
     PluginStatus status = PluginStatus::external;
 
+    /** Ships in the box. A stock row is always visible in the browser and is
+        never hidden by an empty scan, so a fresh install still has the whole
+        core instrument and effect set. */
+    bool stock = false;
+
     bool isInstrument() const { return kind == "instrument"; }
 };
 

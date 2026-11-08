@@ -94,6 +94,9 @@ TEST_CASE ("an armed track captures what arrives at its input", "[record]")
     juce::String error;
     REQUIRE (engine.startRecording (error));
     REQUIRE (engine.isRecording());
+    // Arming a track also opens its input monitor for the take; the UI has no
+    // separate monitor switch yet, so recording must not leave it silent.
+    REQUIRE (engine.isTrackMonitor (0));
 
     // A ramp, so the take can be checked sample by sample rather than by length.
     std::vector<float> left (static_cast<size_t> (blockSize));
@@ -120,6 +123,7 @@ TEST_CASE ("an armed track captures what arrives at its input", "[record]")
 
     REQUIRE (takes.size() == 1);
     REQUIRE_FALSE (engine.isRecording());
+    REQUIRE_FALSE (engine.isTrackMonitor (0));
     REQUIRE (takes[0].track == 0);
     REQUIRE (takes[0].file.existsAsFile());
 

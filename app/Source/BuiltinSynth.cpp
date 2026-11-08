@@ -75,6 +75,7 @@ void BuiltinSynth::setPreset (PresetId id)
 void BuiltinSynth::prepare (double sampleRate, int blockSize)
 {
     synth.setCurrentPlaybackSampleRate (juce::jmax (1.0, sampleRate));
+    character.prepare (juce::jmax (1.0, sampleRate));
     (void) blockSize;
 }
 
@@ -96,6 +97,28 @@ void BuiltinSynth::process (juce::AudioBuffer<float>& buffer,
 
     synth.renderNextBlock (buffer, midi, 0, buffer.getNumSamples());
 
+    // The instrument prints through its character stage before anything else
+    // sees it, which is the point of baking the preamp into the instrument
+    // rather than leaving it as a separate insert.
+    if (buffer.getNumChannels() > 1)
+    {
+        character.processBlock (buffer.getWritePointer (0), buffer.getWritePointer (1),
+                                buffer.getNumSamples());
+    }
+    else if (buffer.getNumChannels() == 1)
+    {
+        auto* mono = buffer.getWritePointer (0);
+        character.beginBlock();
+
+        for (int i = 0; i < buffer.getNumSamples(); ++i)
+        {
+            float left = mono[i];
+            float right = mono[i];
+            character.processSample (left, right);
+            mono[i] = 0.5f * (left + right);
+        }
+    }
+
     for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
     {
         auto* samples = buffer.getWritePointer (channel);
@@ -113,10 +136,11 @@ bool BuiltinSynth::getState (nc::engine::PluginSlotState& state) const
     state.descriptionXml.clear();
     state.bypassed = bypassed;
 
-    // Versioned blob: int version, int presetId, then the preset fields.
-    // A 4-byte blob is the legacy wave-only state and still loads.
+    // Versioned blob: int version, int presetId, then the preset fields, then
+    // the character section (v3). A 4-byte blob is the legacy wave-only state
+    // and still loads.
     juce::MemoryBlock memory;
-    const auto version = 2;
+    const auto version = 3;
     const auto presetInt = static_cast<int> (presetId);
     const auto waveInt = static_cast<int> (preset.wave);
     memory.append (static_cast<const void*> (&version), sizeof (version));
@@ -128,6 +152,17 @@ bool BuiltinSynth::getState (nc::engine::PluginSlotState& state) const
     memory.append (static_cast<const void*> (&preset.sustain), sizeof (preset.sustain));
     memory.append (static_cast<const void*> (&preset.releaseMs), sizeof (preset.releaseMs));
     memory.append (static_cast<const void*> (&preset.level), sizeof (preset.level));
+
+    const auto settings = character.currentSettings();
+    const auto characterOnInt = settings.on ? 1 : 0;
+    const auto circuitInt = static_cast<int> (settings.circuit);
+    memory.append (static_cast<const void*> (&characterOnInt), sizeof (characterOnInt));
+    memory.append (static_cast<const void*> (&circuitInt), sizeof (circuitInt));
+    memory.append (static_cast<const void*> (&settings.driveDb), sizeof (settings.driveDb));
+    memory.append (static_cast<const void*> (&settings.iron), sizeof (settings.iron));
+    memory.append (static_cast<const void*> (&settings.tone), sizeof (settings.tone));
+    memory.append (static_cast<const void*> (&settings.outputDb), sizeof (settings.outputDb));
+
     state.stateBase64 = memory.toBase64Encoding().toStdString();
     return true;
 }
@@ -180,7 +215,7 @@ bool BuiltinSynth::setState (const nc::engine::PluginSlotState& state)
 
     readInt (version);
 
-    if (version != 2)
+    if (version != 2 && version != 3)
         return false;
 
     readInt (presetInt);
@@ -191,6 +226,28 @@ bool BuiltinSynth::setState (const nc::engine::PluginSlotState& state)
     readFloat (sustain);
     readFloat (releaseMs);
     readFloat (level);
+
+    if (version >= 3)
+    {
+        int characterOnInt = 0;
+        int circuitInt = 0;
+        float driveDb = 6.0f, iron = 0.3f, tone = 0.0f, outputDb = 0.0f;
+        readInt (characterOnInt);
+        readInt (circuitInt);
+        readFloat (driveDb);
+        readFloat (iron);
+        readFloat (tone);
+        readFloat (outputDb);
+
+        engine::CharacterSettings settings;
+        settings.on = characterOnInt > 0;
+        settings.circuit = static_cast<engine::CharacterCircuit> (juce::jlimit (0, engine::numCharacterCircuits - 1, circuitInt));
+        settings.driveDb = driveDb;
+        settings.iron = iron;
+        settings.tone = tone;
+        settings.outputDb = outputDb;
+        character.setSettings (settings);
+    }
 
     presetId = static_cast<PresetId> (juce::jlimit (0, 2, presetInt));
     preset.wave = static_cast<Wave> (juce::jlimit (0, 2, waveInt));

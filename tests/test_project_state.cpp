@@ -185,3 +185,49 @@ TEST_CASE ("absolute and parent-traversing asset paths are dropped (CWE-22)")
     REQUIRE (clean.clips[0].assetPath == "Media/kick.wav");
     REQUIRE (clean.clips[1].assetPath == "sub/snare.wav");
 }
+
+TEST_CASE ("comp take indices clamp to the comping ceiling on load")
+{
+    ProjectDocument doc;
+    auto clip = makeClip ("takes");
+    clip.compTake = 9999;
+    doc.clips = { clip };
+
+    REQUIRE (sanitize (doc).clips[0].compTake
+             == static_cast<int> (comping::CompLane::maxTakes) - 1);
+}
+
+TEST_CASE ("clip and track gain, pan and fades are sanitised like every audio value")
+{
+    ProjectDocument doc;
+    auto clip = makeClip ("hot");
+    clip.gainDb = std::nan ("");
+    clip.fadeInBars = -2.0;
+    clip.fadeOutBars = 99.0;
+    doc.clips = { clip };
+
+    doc.tracks.resize (1);
+    doc.tracks[0].gainDb = std::nan ("");
+    doc.tracks[0].pan = 5.0;
+
+    const auto clean = sanitize (doc);
+
+    REQUIRE (std::isfinite (clean.clips[0].gainDb));
+    REQUIRE (clean.clips[0].gainDb == 0.0);
+    REQUIRE (clean.clips[0].fadeInBars == 0.0);
+    REQUIRE (clean.clips[0].fadeOutBars <= clean.clips[0].lengthBars * 0.45);
+    REQUIRE (std::isfinite (clean.tracks[0].gainDb));
+    REQUIRE (clean.tracks[0].gainDb == 0.0);
+    REQUIRE (clean.tracks[0].pan == 1.0);
+}
+
+TEST_CASE ("an older schema is upgraded to the current version when sanitised")
+{
+    ProjectDocument doc;
+    doc.version = 8;
+    REQUIRE (sanitize (doc).version == projectSchemaVersion);
+
+    ProjectDocument future;
+    future.version = projectSchemaVersion + 1;
+    REQUIRE (sanitize (future).version == projectSchemaVersion + 1); // still refused by isLoadable
+}

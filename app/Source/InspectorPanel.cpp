@@ -95,8 +95,8 @@ InspectorPanel::InspectorPanel (AudioEngine& engineToUse)
     recordButton.setCompact (true);
     recordButton.onClick = [this]
     {
-        armed[static_cast<size_t> (trackIndex)] = recordButton.getToggleState();
-        recordButton.repaint();
+        engine.setRecordArmed (trackIndex, recordButton.getToggleState());
+        recordButton.setToggleState (engine.isRecordArmed (trackIndex), juce::dontSendNotification);
     };
 
     muteButton.setClickingTogglesState (true);
@@ -167,7 +167,7 @@ void InspectorPanel::setTrack (int newTrack)
     widthKnob.setValueText (juce::String (juce::roundToInt (engine.trackWidth (trackIndex) * 100.0f)) + "%");
 
     gainFader.setValue (juce::jlimit (0.0, 1.0, engine.trackGain (trackIndex) / 1.2));
-    recordButton.setToggleState (armed[static_cast<size_t> (trackIndex)], juce::dontSendNotification);
+    recordButton.setToggleState (engine.isRecordArmed (trackIndex), juce::dontSendNotification);
     muteButton.setToggleState (engine.trackMuted (trackIndex), juce::dontSendNotification);
     soloButton.setToggleState (engine.trackSolo (trackIndex), juce::dontSendNotification);
 
@@ -190,6 +190,7 @@ void InspectorPanel::syncFromEngine()
                              : name);
     }
 
+    recordButton.setToggleState (engine.isRecordArmed (trackIndex), juce::dontSendNotification);
     muteButton.setToggleState (engine.trackMuted (trackIndex), juce::dontSendNotification);
     soloButton.setToggleState (engine.trackSolo (trackIndex), juce::dontSendNotification);
     sendAKnob.setValue (engine.trackSendA (trackIndex));

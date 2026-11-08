@@ -3,9 +3,11 @@
 #include <nc/engine/ProjectState.hpp>
 
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -112,16 +114,62 @@ private:
         }
     }
 
+    /** Strict JSON number grammar: -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?
+        strtod() alone also accepts NaN, Infinity, hex and leading zeros, which
+        are not JSON and let hostile files smuggle values past the reader. A
+        syntactically valid token that overflows still becomes +-inf here; the
+        field readers treat non-finite numbers as their fallback. */
     bool parseNumber (Value& out)
     {
-        const auto* begin = input->c_str() + position;
-        char* end = nullptr;
-        const auto value = std::strtod (begin, &end);
+        const auto size = input->size();
+        auto i = position;
 
-        if (end == begin)
+        const auto digitAt = [&] (size_t at) { return at < size && (*input)[at] >= '0' && (*input)[at] <= '9'; };
+        const auto skipDigits = [&] { while (digitAt (i)) ++i; };
+
+        if (i < size && (*input)[i] == '-')
+            ++i;
+
+        if (! digitAt (i))
             return false;
 
-        position += static_cast<size_t> (end - begin);
+        if ((*input)[i] == '0')
+        {
+            ++i;
+            if (digitAt (i)) // leading zero: 01 is not JSON
+                return false;
+        }
+        else
+        {
+            skipDigits();
+        }
+
+        if (i < size && (*input)[i] == '.')
+        {
+            ++i;
+            if (! digitAt (i))
+                return false;
+            skipDigits();
+        }
+
+        if (i < size && ((*input)[i] == 'e' || (*input)[i] == 'E'))
+        {
+            ++i;
+            if (i < size && ((*input)[i] == '+' || (*input)[i] == '-'))
+                ++i;
+            if (! digitAt (i))
+                return false;
+            skipDigits();
+        }
+
+        const auto token = input->substr (position, i - position);
+        char* end = nullptr;
+        const auto value = std::strtod (token.c_str(), &end);
+
+        if (end == nullptr || *end != '\0')
+            return false;
+
+        position = i;
         out.type = Value::Type::number;
         out.number = value;
         return true;
@@ -339,6 +387,12 @@ inline void writeString (std::string& out, const std::string& value)
 inline void writeNumber (std::string& out, double value)
 {
     char buffer[64];
+
+    // "nan"/"inf" are not JSON tokens; a value that slipped past sanitise()
+    // must not make the saved file unreadable.
+    if (! std::isfinite (value))
+        value = 0.0;
+
     std::snprintf (buffer, sizeof (buffer), "%.15g", value);
     out += buffer;
 }
@@ -501,6 +555,10 @@ inline std::string toJson (const ProjectDocument& document)
         json::writeNumber (out, clip.fadeInBars);
         out += ",\"fadeOutBars\":";
         json::writeNumber (out, clip.fadeOutBars);
+        out += ",\"crossfadeBars\":";
+        json::writeNumber (out, clip.crossfadeBars);
+        out += ",\"compTake\":";
+        out += std::to_string (clip.compTake);
 
         if (clip.isMidi)
         {
@@ -608,12 +666,26 @@ namespace detail
 inline double numberField (const json::Value& object, const char* key, double fallback)
 {
     const auto* value = object.find (key);
-    return value != nullptr && value->type == json::Value::Type::number ? value->number : fallback;
+
+    if (value == nullptr || value->type != json::Value::Type::number || ! std::isfinite (value->number))
+        return fallback;
+
+    return value->number;
 }
 
+/** Clamps before the cast: converting a double outside the int range (1e20,
+    +inf, a hostile file) is undefined behaviour on the loader thread. */
 inline int intField (const json::Value& object, const char* key, int fallback)
 {
-    return static_cast<int> (numberField (object, key, static_cast<double> (fallback)));
+    const auto value = numberField (object, key, static_cast<double> (fallback));
+
+    if (value <= static_cast<double> (std::numeric_limits<int>::min()))
+        return std::numeric_limits<int>::min();
+
+    if (value >= static_cast<double> (std::numeric_limits<int>::max()))
+        return std::numeric_limits<int>::max();
+
+    return static_cast<int> (value);
 }
 
 inline PitchStack pitchField (const json::Value& object, const char* key)
@@ -777,6 +849,8 @@ inline std::optional<ProjectDocument> fromJson (const std::string& text)
             clip.gainDb = detail::numberField (entry, "gainDb", 0.0);
             clip.fadeInBars = detail::numberField (entry, "fadeInBars", 0.0);
             clip.fadeOutBars = detail::numberField (entry, "fadeOutBars", 0.0);
+            clip.crossfadeBars = detail::numberField (entry, "crossfadeBars", 0.0);
+            clip.compTake = detail::intField (entry, "compTake", 0);
 
             if (clip.isMidi)
             {

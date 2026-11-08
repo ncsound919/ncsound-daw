@@ -32,6 +32,9 @@ nc_add_library(nc_engine
         engine/include/nc/engine/Markers.hpp
         engine/include/nc/engine/ClipEdit.hpp
         engine/include/nc/engine/UndoStack.hpp
+        engine/include/nc/engine/Export.hpp
+        engine/include/nc/engine/Autosave.hpp
+        engine/include/nc/engine/Comping.hpp
         engine/include/nc/engine/MidiClip.hpp
         engine/include/nc/engine/MidiSchedule.hpp
         engine/include/nc/engine/MidiScheduler.hpp)
@@ -71,6 +74,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/JUCE/CMakeLists.txt")
 
     add_subdirectory(third_party/JUCE)
     add_subdirectory(plugins/chopstation)
+    add_subdirectory(plugins/eightoheight)
     add_subdirectory(app)
 else()
     message(STATUS "JUCE not found in third_party/JUCE - skipping plugin targets")

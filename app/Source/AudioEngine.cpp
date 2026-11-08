@@ -1236,6 +1236,10 @@ void AudioEngine::createDemoAssets()
 
 int AudioEngine::setTimelineClips (std::vector<TimelineClip> newClips)
 {
+    // The UI projection reads this mirror, so it only carries clips the engine
+    // actually accepted -- a rejected asset must not appear on the timeline.
+    timelineMirror.clear();
+
     Command clear;
     clear.type = CommandType::clear;
 
@@ -1267,10 +1271,12 @@ int AudioEngine::setTimelineClips (std::vector<TimelineClip> newClips)
         add.clip.gainDb = clip.gainDb;
         add.clip.fadeInBars = juce::jmax (0.0f, clip.fadeInBars);
         add.clip.fadeOutBars = juce::jmax (0.0f, clip.fadeOutBars);
+        add.clip.crossfadeBars = juce::jmax (0.0f, clip.crossfadeBars);
 
         if (! pushCommand (add))
             break;
 
+        timelineMirror.push_back (clip);
         endBar = juce::jmax (endBar, add.clip.startBar + add.clip.lengthBars);
         ++accepted;
     }
@@ -1278,6 +1284,52 @@ int AudioEngine::setTimelineClips (std::vector<TimelineClip> newClips)
     contentEnd.store (endBar);
 
     return static_cast<int> (newClips.size()) - accepted;
+}
+
+std::vector<float> AudioEngine::assetPeakEnvelope (int assetId, double startSeconds,
+                                                   double lengthSeconds, int bins) const
+{
+    std::vector<float> peaks;
+
+    if (bins <= 0 || ! juce::isPositiveAndBelow (assetId, static_cast<int> (assets.size())))
+        return peaks;
+
+    const auto& asset = *assets[static_cast<size_t> (assetId)];
+    const auto frames = asset.buffer.getNumSamples();
+
+    // A streamed import keeps only a window resident; drawing half a waveform on
+    // the timeline would misrepresent the clip, so it gets none.
+    if (asset.streamed || frames <= 0 || asset.sampleRate <= 0.0)
+        return peaks;
+
+    const auto start = juce::jlimit (0, juce::jmax (0, frames - 1),
+                                     static_cast<int> (std::floor (startSeconds * asset.sampleRate)));
+    const auto wanted = juce::jmax (1, static_cast<int> (std::floor (lengthSeconds * asset.sampleRate)));
+    const auto length = juce::jmax (1, juce::jmin (wanted, frames - start));
+    const auto step = juce::jmax (1, length / bins);
+
+    peaks.reserve (static_cast<size_t> (bins));
+
+    for (int bin = 0; bin < bins; ++bin)
+    {
+        const auto from = start + bin * step;
+
+        if (from >= frames)
+        {
+            peaks.push_back (0.0f);
+            continue;
+        }
+
+        const auto count = juce::jmin (step, frames - from);
+        float peak = 0.0f;
+
+        for (int ch = 0; ch < asset.buffer.getNumChannels(); ++ch)
+            peak = juce::jmax (peak, asset.buffer.getMagnitude (ch, from, count));
+
+        peaks.push_back (juce::jlimit (0.0f, 1.0f, peak));
+    }
+
+    return peaks;
 }
 
 bool AudioEngine::pushCommand (const Command& command)
@@ -1331,8 +1383,40 @@ void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
     masterRack.prepare (sampleRate.load(), maxBlock);
     preparedRackCount.store (active);
     inserts.prepare (sampleRate.load(), maxBlock, active);
-    auxReverb.prepare (sampleRate.load(), maxBlock, AuxBus::Kind::reverb);
-    auxDelay.prepare (sampleRate.load(), maxBlock, AuxBus::Kind::delay);
+    auxReverb.prepare (sampleRate.load(), maxBlock,
+                       static_cast<AuxBus::Engine> (auxReverbEngine.load()));
+    auxDelay.prepare (sampleRate.load(), maxBlock,
+                      static_cast<AuxBus::Engine> (auxDelayEngine.load()));
+}
+
+void AudioEngine::setAuxEngine (int aux, AuxBus::Engine newEngine)
+{
+    if (aux == 0 && ! AuxBus::isReverb (newEngine))
+        return;
+
+    if (aux == 1 && AuxBus::isReverb (newEngine))
+        return;
+
+    if (aux == 0)
+    {
+        auxReverbEngine.store (static_cast<int> (newEngine));
+        auxReverb.setEngine (newEngine);
+    }
+    else if (aux == 1)
+    {
+        auxDelayEngine.store (static_cast<int> (newEngine));
+        auxDelay.setEngine (newEngine);
+    }
+}
+
+AuxBus::Engine AudioEngine::auxEngine (int aux) const
+{
+    return static_cast<AuxBus::Engine> ((aux == 0 ? auxReverbEngine : auxDelayEngine).load());
+}
+
+juce::String AudioEngine::auxEngineName (int aux) const
+{
+    return AuxBus::engineName (auxEngine (aux));
 }
 
 void AudioEngine::audioDeviceStopped()
@@ -1484,6 +1568,7 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
         render.lengthSeconds = lengthSeconds;
         render.fadeInSeconds = juce::jlimit (0.0, lengthSeconds, clip.fadeInBars * secondsPerBar);
         render.fadeOutSeconds = juce::jlimit (0.0, lengthSeconds, clip.fadeOutBars * secondsPerBar);
+        render.crossfadeSeconds = juce::jlimit (0.0, lengthSeconds, clip.crossfadeBars * secondsPerBar);
         render.gain = juce::Decibels::decibelsToGain (clip.gainDb);
     }
 
@@ -1573,10 +1658,17 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
             const auto frame1 = juce::jmin (frame0 + 1, sourceFrames - 1);
             const auto fraction = static_cast<float> (sourceFrame - static_cast<double> (frame0));
 
-            const auto fade = static_cast<float> (engine::clipGainAt (localSeconds,
-                                                                      clip.lengthSeconds,
-                                                                      clip.fadeInSeconds,
-                                                                      clip.fadeOutSeconds));
+            // Equal-power when a crossfade is set (constant loudness through
+            // the overlap); linear otherwise, preserving legacy fades.
+            const auto fade = clip.crossfadeSeconds > 0.0
+                                  ? engine::clipGainCrossfadeAt (localSeconds,
+                                                                  clip.lengthSeconds,
+                                                                  juce::jmax (clip.crossfadeSeconds, clip.fadeInSeconds),
+                                                                  juce::jmax (clip.crossfadeSeconds, clip.fadeOutSeconds))
+                                  : engine::clipGainAt (localSeconds,
+                                                         clip.lengthSeconds,
+                                                         clip.fadeInSeconds,
+                                                         clip.fadeOutSeconds);
             const auto gain = clip.gain * fade;
 
             // RAM or streamed window: one accessor serves both, so a
@@ -2364,8 +2456,8 @@ void AudioEngine::prepareForRender (double rate, int maxBlock)
     masterRack.prepare (rate, block);
     preparedRackCount.store (active);
     inserts.prepare (rate, block, active);
-    auxReverb.prepare (rate, block, AuxBus::Kind::reverb);
-    auxDelay.prepare (rate, block, AuxBus::Kind::delay);
+    auxReverb.prepare (rate, block, static_cast<AuxBus::Engine> (auxReverbEngine.load()));
+    auxDelay.prepare (rate, block, static_cast<AuxBus::Engine> (auxDelayEngine.load()));
 }
 
 bool AudioEngine::renderToWav (const juce::File& destination,
@@ -2374,7 +2466,33 @@ bool AudioEngine::renderToWav (const juce::File& destination,
                                int bitDepth,
                                juce::String& error)
 {
+    nc::engine::export_::ExportOptions options;
+    options.format = nc::engine::export_::Format::wav;
+    options.bitDepth = bitDepth;
+    // renderToWav predates ExportOptions and is documented as writing at the
+    // engine rate; ExportOptions defaults to 48 kHz, which silently resampled
+    // the mixdown on a 44.1 kHz session.
+    const auto sessionRate = sampleRate.load();
+    options.sampleRate = sessionRate > 0.0
+                             ? static_cast<int> (std::lround (sessionRate))
+                             : 48000;
+    // Legacy call sites wrote undithered WAV; keep that contract here and
+    // let renderToFile() be the dithered/loudness path for new UI.
+    options.dither = false;
+    return renderToFile (destination, startBar, endBar, options, error);
+}
+
+bool AudioEngine::renderToFile (const juce::File& destination,
+                                double startBar,
+                                double endBar,
+                                const nc::engine::export_::ExportOptions& askedOptions,
+                                juce::String& error)
+{
     error.clear();
+
+    // A failed render must not leave the previous export's loudness report
+    // behind; callers read lastExportLoudness() after a false return too.
+    lastLoudness = {};
 
     if (destination == juce::File())
     {
@@ -2388,56 +2506,74 @@ bool AudioEngine::renderToWav (const juce::File& destination,
         return false;
     }
 
-    const auto rate = sampleRate.load() > 0.0 ? sampleRate.load() : 48000.0;
+    const auto options = nc::engine::export_::sanitizeOptions (askedOptions);
+    const auto rate = options.sampleRate > 0 ? static_cast<double> (options.sampleRate)
+                                             : (sampleRate.load() > 0.0 ? sampleRate.load() : 48000.0);
     constexpr int blockSize = 512;
 
-    // The device callback owns mixBuffer/trackBlock and the render scratch, so
-    // it is muted for the offline pass. Detaching it instead would restart the
-    // device, and audioDeviceAboutToStart() resets the transport on the way in.
-    offlineRender.store (true, std::memory_order_release);
+    // Musical range comes from the tempo map, not the current BPM: with a
+    // tempo change the constant-BPM conversion writes the wrong number of
+    // seconds and cuts or pads the export.
+    const auto map = tempoMap();
+    const auto startSeconds = engine::ppqToSeconds (map, engine::clipStartBeat (startBar));
+    const auto endSeconds = engine::ppqToSeconds (map, engine::clipStartBeat (endBar));
+    const auto lengthFrames = static_cast<int64_t> (std::llround ((endSeconds - startSeconds) * rate));
 
-    // Let a block that is already in flight finish before resizing the scratch.
-    const auto settleMs = static_cast<int> (2000.0 * juce::jmax (1, bufferSize.load()) / rate) + 20;
-    juce::Thread::sleep (settleMs);
+    if (lengthFrames <= 0)
+    {
+        error = "The export range is shorter than one sample.";
+        return false;
+    }
+
+    if (lengthFrames > nc::limits::maxAssetFrames (rate))
+    {
+        error = "The export range exceeds the 30-minute render ceiling.";
+        return false;
+    }
+
+    // Copy appends prepareForRender + restore verbatim so transport/device
+    // behaviour is identical to the legacy WAV path.
+    offlineRender.store (true, std::memory_order_release);
 
     const auto previousPosition = positionSamples.load();
     const auto previousPlaying = playing.load();
     const auto previousLoop = loopEnabled.load();
     const auto previousMetronome = metronome.load();
+    const auto previousRate = sampleRate.load();
+    const auto previousBufferSize = juce::jmax (1, bufferSize.load());
 
-    prepareForRender (rate, blockSize);
+    // Everything below can return early (or throw while growing the render
+    // buffers). Leaving offlineRender set or the borrowed export rate in place
+    // would silence the device for the rest of the session, so the session is
+    // put back from a scope guard instead of at every return.
+    struct RestoreSession
+    {
+        std::function<void()> restore;
+        ~RestoreSession() { restore(); }
+    };
 
-    const auto restore = [this, previousPosition, previousPlaying, previousLoop, previousMetronome]
+    RestoreSession restoreSession;
+    restoreSession.restore = [this, previousPosition, previousPlaying, previousLoop,
+                              previousMetronome, previousRate, previousBufferSize]
     {
         playing.store (previousPlaying);
         loopEnabled.store (previousLoop);
         metronome.store (previousMetronome);
-        offlineRender.store (false, std::memory_order_release);
 
-        // Last writes win. A device-open reset raised while the engine was muted
-        // (audioDeviceAboutToStart() raises one) is consumed by the callback and
-        // zeroes the playhead, so clear it and restore the position afterwards.
+        // prepareForRender() replaced the device rate with the export rate;
+        // re-prepare the racks and scratch at the rate the device runs at.
+        prepareForRender (previousRate > 0.0 ? previousRate : 48000.0, previousBufferSize);
         resetRequested.store (false);
         seekRequested.store (false);
         positionSamples.store (previousPosition);
+        offlineRender.store (false, std::memory_order_release);
     };
 
-    const auto tempo = bpm.load();
-    const auto startSeconds = engine::barToSeconds (startBar, tempo);
-    const auto endSeconds = engine::barToSeconds (endBar, tempo);
-    const auto lengthFrames = static_cast<int64_t> (
-        std::llround ((endSeconds - startSeconds) * rate));
+    const auto settleMs = static_cast<int> (2000.0 * juce::jmax (1, bufferSize.load()) / rate) + 20;
+    juce::Thread::sleep (settleMs);
 
-    if (lengthFrames <= 0)
-    {
-        restore();
-        error = "The export range is shorter than one sample.";
-        return false;
-    }
+    prepareForRender (rate, blockSize);
 
-    // Every track is delayed to the worst chain, then the native master rack and
-    // the master insert add their own. planRender() is the rule the latency
-    // tests already cover: pre-roll that many frames, drop exactly as many.
     const auto chainLatency = inserts.worstTrackLatency()
                               + juce::jmax (0, masterRack.latencySamples())
                               + inserts.masterLatency();
@@ -2447,30 +2583,8 @@ bool AudioEngine::renderToWav (const juce::File& destination,
 
     positionSamples.store (startFrame - plan.prerollFrames);
     playing.store (true);
-    loopEnabled.store (false);   // an export is the range, not the loop
-    metronome.store (false);     // the click never prints
-
-    std::unique_ptr<juce::FileOutputStream> stream (destination.createOutputStream());
-
-    if (stream == nullptr)
-    {
-        restore();
-        error = "The destination could not be opened for writing.";
-        return false;
-    }
-
-    juce::WavAudioFormat wav;
-    std::unique_ptr<juce::AudioFormatWriter> writer (
-        wav.createWriterFor (stream.get(), rate, 2, bitDepth, {}, 0));
-
-    if (writer == nullptr)
-    {
-        restore();
-        error = "The WAV writer could not be created at that sample rate and depth.";
-        return false;
-    }
-
-    stream.release();   // the writer owns the stream from here
+    loopEnabled.store (false);
+    metronome.store (false);
 
     juce::AudioBuffer<float> block (2, blockSize);
     float* channels[2] { block.getWritePointer (0), block.getWritePointer (1) };
@@ -2478,6 +2592,12 @@ bool AudioEngine::renderToWav (const juce::File& destination,
     auto toDrop = plan.dropFrames;
     auto remaining = plan.prerollFrames + lengthFrames;
     auto framesWritten = static_cast<int64_t> (0);
+
+    // Pass 1: render to memory so loudness can be measured before writing.
+    std::vector<float> leftBuffer;
+    std::vector<float> rightBuffer;
+    leftBuffer.reserve (static_cast<size_t> (lengthFrames));
+    rightBuffer.reserve (static_cast<size_t> (lengthFrames));
 
     while (remaining > 0)
     {
@@ -2500,18 +2620,13 @@ bool AudioEngine::renderToWav (const juce::File& destination,
 
         if (usable > 0)
         {
-            const float* from[2] { left, right };
-            writer->writeFromFloatArrays (from, 2, usable);
+            leftBuffer.insert (leftBuffer.end(), left, left + usable);
+            rightBuffer.insert (rightBuffer.end(), right, right + usable);
             framesWritten += usable;
         }
 
         remaining -= frames;
     }
-
-    writer->flush();
-    writer.reset();
-
-    restore();
 
     if (framesWritten < lengthFrames)
     {
@@ -2519,7 +2634,263 @@ bool AudioEngine::renderToWav (const juce::File& destination,
         return false;
     }
 
+    // Measure, optionally normalise onto the LUFS target under the true-peak
+    // ceiling, then dither once on bit-depth reduction.
+    lastLoudness = nc::engine::export_::measureLoudness (leftBuffer.data(), rightBuffer.data(),
+                                                          leftBuffer.size(), rate);
+
+    if (options.normalizeToTarget && ! lastLoudness.silent)
+    {
+        auto gainDb = nc::engine::export_::gainDbForTarget (lastLoudness, options.lufsTarget);
+        // The ceiling limits how far the render may be pushed up; using
+        // gainDbForTruePeak() here (it never returns a positive gain) turned
+        // every normalisation boost into a no-op.
+        gainDb = std::min (gainDb, nc::engine::export_::maxBoostForTruePeak (
+                                       lastLoudness, options.truePeakCeilingDb));
+        const auto gain = static_cast<float> (juce::Decibels::decibelsToGain (static_cast<float> (gainDb)));
+
+        for (auto& s : leftBuffer)
+            s *= gain;
+        for (auto& s : rightBuffer)
+            s *= gain;
+
+        lastLoudness = nc::engine::export_::measureLoudness (leftBuffer.data(), rightBuffer.data(),
+                                                              leftBuffer.size(), rate);
+    }
+
+    if (options.dither && options.bitDepth < 32)
+    {
+        nc::engine::export_::DitherRng rng;
+        rng.seed (0xC0FFEEu + static_cast<uint32_t> (lengthFrames));
+        nc::engine::export_::applyTpdfDither (leftBuffer.data(), leftBuffer.size(), options.bitDepth, rng);
+        nc::engine::export_::applyTpdfDither (rightBuffer.data(), rightBuffer.size(), options.bitDepth, rng);
+    }
+
+    std::unique_ptr<juce::FileOutputStream> stream (destination.createOutputStream());
+
+    if (stream == nullptr)
+    {
+        lastLoudness = {};
+        error = "The destination could not be opened for writing.";
+        return false;
+    }
+
+    std::unique_ptr<juce::AudioFormatWriter> writer;
+
+    if (options.format == nc::engine::export_::Format::wav)
+    {
+        juce::WavAudioFormat wav;
+        writer.reset (wav.createWriterFor (stream.get(), rate, 2, options.bitDepth, {}, 0));
+    }
+    else
+    {
+        // FLAC/MP3/AIFF via the registered format manager. MP3 depends on
+        // the bundled LAME encoder being present; without it the writer is
+        // null and the export fails with an actionable message.
+        if (auto* format = formats.findFormatForFileExtension (
+                juce::String (nc::engine::export_::formatExtension (options.format))))
+        {
+            writer.reset (format->createWriterFor (stream.get(), rate, 2, options.bitDepth, {}, 0));
+        }
+    }
+
+    if (writer == nullptr)
+    {
+        lastLoudness = {};
+        error = juce::String (nc::engine::export_::formatName (options.format))
+                + " writer could not be created at that sample rate and depth. "
+                  "Try WAV or FLAC.";
+        return false;
+    }
+
+    stream.release();
+
+    // Write in blocks so the writer's internal buffering matches the render.
+    constexpr int writeBlock = 4096;
+    auto writeOk = true;
+
+    for (size_t offset = 0; offset < leftBuffer.size(); offset += writeBlock)
+    {
+        const auto count = static_cast<int> (juce::jmin<size_t> (writeBlock, leftBuffer.size() - offset));
+        const float* from[2] { leftBuffer.data() + offset, rightBuffer.data() + offset };
+        writeOk = writer->writeFromFloatArrays (from, 2, count) && writeOk;
+    }
+
+    writer->flush();
+    writer.reset();
+
+    if (! writeOk)
+    {
+        lastLoudness = {};
+        error = "The file could not be written completely; check disk space and permissions.";
+        return false;
+    }
+
     return true;
+}
+
+int AudioEngine::exportStems (const juce::File& folder,
+                              double startBar,
+                              double endBar,
+                              const nc::engine::export_::ExportOptions& askedOptions,
+                              std::vector<juce::File>& written,
+                              juce::String& error)
+{
+    written.clear();
+    error.clear();
+
+    if (folder == juce::File())
+    {
+        error = "No stems folder was chosen.";
+        return 0;
+    }
+
+    // createOutputStream() never creates parent folders, so a fresh or
+    // user-typed stems path failed for every track with "could not be opened".
+    if (! folder.isDirectory() && ! folder.createDirectory())
+    {
+        error = "The stems folder could not be created.";
+        return 0;
+    }
+
+    const auto options = nc::engine::export_::sanitizeOptions (askedOptions);
+    const auto active = juce::jlimit (0, trackCount, activeTrackCount.load());
+    std::vector<bool> previousMuted;
+    std::vector<bool> previousSolo;
+    previousMuted.reserve (static_cast<size_t> (active));
+    previousSolo.reserve (static_cast<size_t> (active));
+
+    for (int track = 0; track < active; ++track)
+    {
+        previousMuted.push_back (trackMuted (track));
+        previousSolo.push_back (trackSolo (track));
+    }
+
+    // Mute is ignored for soloed tracks, so a solo anywhere in the session
+    // would leak into every stem (and silence the stem the solo excludes).
+    // Clear solo for the pass and restore it afterwards.
+    for (int track = 0; track < active; ++track)
+        tracks[static_cast<size_t> (track)].soloed.store (false);
+
+    int failures = 0;
+
+    const auto hasMaterial = [this, startBar, endBar] (int track)
+    {
+        const auto overlaps = [startBar, endBar] (double clipStart, double clipLen)
+        {
+            return clipStart < endBar && clipStart + clipLen > startBar;
+        };
+
+        const auto& clips = timelineClips();
+        for (const auto& clip : clips)
+        {
+            if (clip.track == track && overlaps (clip.startBar, clip.lengthBars))
+                return true;
+        }
+
+        for (const auto& clip : midiClips())
+        {
+            if (clip.track == track && overlaps (clip.startBar, clip.lengthBars))
+                return true;
+        }
+
+        return false;
+    };
+
+    for (int track = 0; track < active; ++track)
+    {
+        for (int other = 0; other < active; ++other)
+            tracks[static_cast<size_t> (other)].muted.store (other == track ? false : true);
+
+        juce::String trackError;
+        auto stem = folder.getChildFile (juce::String (nc::engine::export_::stemFileName (
+            options.baseName, track, sessionTracks()[static_cast<size_t> (track)].name.toStdString(),
+            options.format)));
+
+        // A track with no clips in range is silence by definition: write it
+        // directly instead of a full mix render (the 16-pass cost). Hidden
+        // intent: mute/solo state must not change the fast path.
+        bool fastSilence = ! hasMaterial (track);
+
+        if (fastSilence)
+        {
+            const auto rate = options.sampleRate > 0 ? static_cast<double> (options.sampleRate)
+                                                     : (sampleRate.load() > 0.0 ? sampleRate.load() : 48000.0);
+            const auto tempo = bpm.load();
+            const auto frames = static_cast<int64_t> (std::llround (
+                (engine::barToSeconds (endBar, tempo) - engine::barToSeconds (startBar, tempo)) * rate));
+
+            if (frames < 0)
+            {
+                ++failures;
+                error = stem.getFileName() + ": export range is empty.";
+                continue;
+            }
+
+            std::unique_ptr<juce::FileOutputStream> stream (stem.createOutputStream());
+
+            if (stream == nullptr)
+            {
+                ++failures;
+                error = stem.getFileName() + ": could not be opened.";
+                continue;
+            }
+
+            juce::WavAudioFormat wav;
+            auto writer = std::unique_ptr<juce::AudioFormatWriter> (
+                wav.createWriterFor (stream.get(), rate, 2, options.bitDepth, {}, 0));
+
+            if (writer == nullptr)
+            {
+                ++failures;
+                error = stem.getFileName() + ": could not be written.";
+                continue;
+            }
+
+            stream.release();
+            juce::AudioBuffer<float> silence (2, 4096);
+            silence.clear();
+            auto remaining = frames;
+            bool ok = true;
+
+            while (remaining > 0 && ok)
+            {
+                const auto chunk = static_cast<int> (std::min<int64_t> (remaining, silence.getNumSamples()));
+                ok = writer->writeFromAudioSampleBuffer (silence, 0, chunk);
+                remaining -= chunk;
+            }
+
+            writer.reset();
+
+            if (! ok)
+            {
+                ++failures;
+                error = stem.getFileName() + ": write failed.";
+            }
+            else
+            {
+                written.push_back (stem);
+            }
+
+            continue;
+        }
+
+        if (renderToFile (stem, startBar, endBar, options, trackError))
+            written.push_back (stem);
+        else
+        {
+            ++failures;
+            error = stem.getFileName() + ": " + trackError;
+        }
+    }
+
+    for (int track = 0; track < active; ++track)
+    {
+        tracks[static_cast<size_t> (track)].muted.store (previousMuted[static_cast<size_t> (track)]);
+        tracks[static_cast<size_t> (track)].soloed.store (previousSolo[static_cast<size_t> (track)]);
+    }
+
+    return static_cast<int> (written.size());
 }
 
 //==============================================================================
@@ -2762,7 +3133,13 @@ bool AudioEngine::startRecording (juce::String& error)
         buffer.reset();
 
         if (recordArmed[static_cast<size_t> (track)].load (std::memory_order_relaxed))
+        {
             buffer.prepare (capacity);
+            // The native UI arms tracks but has no separate monitor switch yet.
+            // Monitoring follows the armed tracks while recording so the player
+            // hears the input through the same chain being captured.
+            trackMonitor[static_cast<size_t> (track)].store (true, std::memory_order_relaxed);
+        }
         else if (buffer.storage.getNumSamples() > 0)
             buffer.storage.setSize (0, 0);
     }
@@ -2845,6 +3222,9 @@ std::vector<AudioEngine::RecordedTake> AudioEngine::stopRecording (const juce::F
         error = "Not recording";
         return takes;
     }
+
+    for (auto& monitor : trackMonitor)
+        monitor.store (false, std::memory_order_relaxed);
 
     // Streaming takes are already on disk; deleting the writers flushes.
     // Note: the latency trim that the RAM path applies is not applied to

@@ -91,6 +91,12 @@ public:
 
     void closeButtonPressed() override
     {
+        if (auto* component = dynamic_cast<MainComponent*> (getContentComponent()))
+        {
+            if (! component->confirmClose())
+                return;
+        }
+
         juce::JUCEApplication::getInstance()->systemRequestedQuit();
     }
 

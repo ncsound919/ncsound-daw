@@ -167,3 +167,4 @@ TEST_CASE ("republishing a lane leaves the previous value readable", "[automatio
     // The newest lane wins immediately; the retired one is not freed yet.
     REQUIRE (std::abs (engine.automationValue (0, AutomationParam::Volume, 0.0) - 0.9f) < 1.0e-6f);
 }
+

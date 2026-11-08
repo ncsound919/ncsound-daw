@@ -1,5 +1,41 @@
 #include "ProjectFile.h"
 
+#include <cstdio>
+
+#if defined(_MSC_VER)
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
+namespace
+{
+/** fsync the file on disk so a power loss after "Saved" does not lose it.
+    JUCE FileOutputStream flushes buffers but never reaches disk; this is the
+    durable close. Best-effort: failure to sync never fails the save. */
+bool syncFileToDisk (const juce::File& file) noexcept
+{
+#if defined(_MSC_VER)
+    const auto handle = ::CreateFileA (file.getFullPathName().toRawUTF8(), GENERIC_READ,
+                                       FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                       OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE)
+        return false;
+    const auto ok = (::FlushFileBuffers (handle) != 0);
+    ::CloseHandle (handle);
+    return ok;
+#else
+    const auto fd = ::open (file.getFullPathName().toRawUTF8(), O_RDONLY);
+    if (fd < 0)
+        return false;
+    const auto ok = (::fsync (fd) == 0);
+    ::close (fd);
+    return ok;
+#endif
+}
+} // namespace
+
 std::optional<nc::engine::ProjectDocument> loadProjectDocument (const juce::File& file, juce::String& error)
 {
     error.clear();
@@ -54,5 +90,6 @@ bool saveProjectDocument (const juce::File& file, const nc::engine::ProjectDocum
         return false;
     }
 
+    syncFileToDisk (file);
     return true;
 }

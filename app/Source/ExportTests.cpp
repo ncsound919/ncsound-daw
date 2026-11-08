@@ -1,6 +1,7 @@
 #include "AudioEngine.h"
 
 #include <nc/engine/ClipTimeline.hpp>
+#include <nc/engine/Export.hpp>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -147,4 +148,225 @@ TEST_CASE ("an empty export range is refused and writes no file", "[export]")
     REQUIRE_FALSE (engine.renderToWav (file, 3.0, 3.0, 24, error));
     REQUIRE (error.isNotEmpty());
     REQUIRE_FALSE (file.existsAsFile());
+}
+
+TEST_CASE ("variant export writes FLAC and reports LUFS loudness", "[export]")
+{
+    nc::AudioEngine engine;
+    engine.setBpm (120.0);
+    REQUIRE (scheduleDemoClip (engine, 2.0));
+
+    nc::engine::export_::ExportOptions options;
+    options.format = nc::engine::export_::Format::flac;
+    options.bitDepth = 24;
+    options.dither = true;
+    options.sampleRate = static_cast<int> (engine.currentSampleRate());
+
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                          .getChildFile ("nc-mixdown.flac");
+    file.deleteFile();
+
+    juce::String error;
+    REQUIRE (engine.renderToFile (file, 1.0, 3.0, options, error));
+    REQUIRE (file.existsAsFile());
+    REQUIRE (file.getSize() > 64);
+
+    const auto rendered = readWav (file);
+    REQUIRE (rendered.isReadable());
+    REQUIRE (rendered.channels == 2);
+
+    const auto loudness = engine.lastExportLoudness();
+    REQUIRE_FALSE (loudness.silent);
+    REQUIRE (loudness.durationSeconds > 0.0);
+}
+
+TEST_CASE ("stems export writes one file per active track", "[export]")
+{
+    nc::AudioEngine engine;
+    engine.setBpm (120.0);
+    REQUIRE (scheduleDemoClip (engine, 1.0));
+
+    const auto folder = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                            .getChildFile ("nc-stems");
+    folder.deleteRecursively();
+
+    nc::engine::export_::ExportOptions options;
+    options.format = nc::engine::export_::Format::wav;
+    options.bitDepth = 24;
+    options.dither = true;
+
+    std::vector<juce::File> written;
+    juce::String error;
+    const auto count = engine.exportStems (folder, 1.0, 2.0, options, written, error);
+
+    REQUIRE (count == nc::AudioEngine::demoTrackCount);
+    REQUIRE (written.size() == static_cast<size_t> (nc::AudioEngine::demoTrackCount));
+
+    for (const auto& stem : written)
+        REQUIRE (stem.existsAsFile());
+}
+
+TEST_CASE ("export restores the session sample rate it borrowed", "[export]")
+{
+    nc::AudioEngine engine;
+    engine.setBpm (120.0);
+    REQUIRE (scheduleDemoClip (engine, 1.0));
+
+    juce::Thread::sleep (300);
+    engine.suspendAudioCallbackForTesting();
+
+    const auto sessionRate = engine.currentSampleRate();
+    REQUIRE (sessionRate > 0.0);
+
+    nc::engine::export_::ExportOptions options;
+    options.format = nc::engine::export_::Format::wav;
+    options.bitDepth = 24;
+    options.sampleRate = sessionRate > 44100.0 ? 44100 : 48000;
+
+    const auto file = tempWav ("nc-mixdown-rate-restore.wav");
+    juce::String error;
+    REQUIRE (engine.renderToFile (file, 1.0, 1.5, options, error));
+    INFO ("renderToFile said: " << error);
+
+    const auto rendered = readWav (file);
+    REQUIRE (rendered.isReadable());
+    REQUIRE (rendered.sampleRate == options.sampleRate);
+
+    // prepareForRender() rewrites the engine rate; a 44.1 kHz export must not
+    // leave a 48 kHz session running its racks and transport at 44.1.
+    REQUIRE (engine.currentSampleRate() == sessionRate);
+}
+
+TEST_CASE ("export range follows the tempo map", "[export]")
+{
+    nc::AudioEngine engine;
+
+    nc::engine::TempoMap map;
+    map.points.push_back ({ 0.0, 120.0 });
+    map.points.push_back ({ 4.0, 60.0 }); // bar 2 drops to 60 BPM
+    engine.setTempoMap (map);
+
+    REQUIRE (scheduleDemoClip (engine, 2.0));
+
+    juce::Thread::sleep (300);
+    engine.suspendAudioCallbackForTesting();
+
+    nc::engine::export_::ExportOptions options;
+    options.sampleRate = static_cast<int> (engine.currentSampleRate());
+
+    const auto file = tempWav ("nc-mixdown-tempo-map.wav");
+    juce::String error;
+    REQUIRE (engine.renderToFile (file, 1.0, 3.0, options, error));
+    INFO ("renderToFile said: " << error);
+
+    const auto rendered = readWav (file);
+    REQUIRE (rendered.isReadable());
+
+    // 0..4 PPQ at 120 = 2 s, 4..8 PPQ at 60 = 4 s. A constant-120 export would
+    // write 4 s and cut the second bar off.
+    const auto expected = nc::engine::ppqToSeconds (map, 8.0) * rendered.sampleRate;
+    REQUIRE (static_cast<double> (rendered.audio.getNumSamples()) == Catch::Approx (expected).margin (2.0));
+}
+
+TEST_CASE ("stems ignore an unrelated solo and restore it", "[export]")
+{
+    nc::AudioEngine engine;
+    engine.setBpm (120.0);
+    REQUIRE (scheduleDemoClip (engine, 1.0));
+
+    juce::Thread::sleep (300);
+    engine.suspendAudioCallbackForTesting();
+
+    // Solo a track that has no material. Mute is ignored for soloed tracks, so
+    // the stem pass must clear the solo flags or every stem goes silent.
+    engine.setTrackSolo (1, true);
+
+    const auto folder = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                            .getChildFile ("nc-stems-solo");
+    folder.deleteRecursively();
+
+    nc::engine::export_::ExportOptions options;
+    options.format = nc::engine::export_::Format::wav;
+    options.bitDepth = 24;
+
+    std::vector<juce::File> written;
+    juce::String error;
+    const auto count = engine.exportStems (folder, 1.0, 2.0, options, written, error);
+
+    REQUIRE (count == nc::AudioEngine::demoTrackCount);
+    REQUIRE (written.size() == static_cast<size_t> (count));
+
+    const auto track0 = readWav (written.front());
+    REQUIRE (track0.isReadable());
+    REQUIRE (track0.audio.getMagnitude (0, track0.audio.getNumSamples()) > 0.001f);
+
+    REQUIRE (engine.trackSolo (1));
+}
+
+TEST_CASE ("LUFS normalisation can boost when the true-peak ceiling allows it", "[export]")
+{
+    nc::AudioEngine engine;
+    engine.setBpm (120.0);
+    REQUIRE (scheduleDemoClip (engine, 1.0));
+    engine.setTrackGain (0, 0.05f); // ~ -26 dBFS: plenty of headroom
+
+    juce::Thread::sleep (300);
+    engine.suspendAudioCallbackForTesting();
+
+    juce::String error;
+
+    nc::engine::export_::ExportOptions quiet;
+    quiet.sampleRate = static_cast<int> (engine.currentSampleRate());
+    REQUIRE (engine.renderToFile (tempWav ("nc-quiet.wav"), 1.0, 2.0, quiet, error));
+    const auto quietLoudness = engine.lastExportLoudness();
+    REQUIRE_FALSE (quietLoudness.silent);
+
+    auto normalised = quiet;
+    normalised.normalizeToTarget = true;
+    normalised.lufsTarget = -14.0;
+    normalised.truePeakCeilingDb = -1.0;
+
+    REQUIRE (engine.renderToFile (tempWav ("nc-normalised.wav"), 1.0, 2.0, normalised, error));
+    INFO ("renderToFile said: " << error);
+
+    const auto loud = engine.lastExportLoudness();
+    REQUIRE_FALSE (loud.silent);
+
+    // gainDbForTruePeak() returns <= 0, so clamping with it made every boost a
+    // no-op; the ceiling has to be applied as a maximum boost instead. This
+    // material's crest factor is wide enough that the ceiling, not -14 LUFS,
+    // is what stops the boost, so that is the value to pin.
+    REQUIRE (loud.integratedLufs > quietLoudness.integratedLufs + 6.0);
+
+    const auto ceilingLimited = quietLoudness.integratedLufs
+                                + (-1.0 - quietLoudness.truePeakDbTp);
+    REQUIRE (loud.integratedLufs == Catch::Approx (juce::jmin (-14.0, ceilingLimited)).margin (0.5));
+    REQUIRE (loud.truePeakDbTp <= -1.0 + 0.3);
+}
+
+TEST_CASE ("a failed export clears the previous loudness report", "[export]")
+{
+    nc::AudioEngine engine;
+    engine.setBpm (120.0);
+    REQUIRE (scheduleDemoClip (engine, 1.0));
+
+    juce::Thread::sleep (300);
+    engine.suspendAudioCallbackForTesting();
+
+    juce::String error;
+    REQUIRE (engine.renderToWav (tempWav ("nc-ok.wav"), 1.0, 2.0, 24, error));
+    REQUIRE_FALSE (engine.lastExportLoudness().silent);
+
+    // Destination is an existing directory: createOutputStream fails for
+    // every writer, so the render must report failure and clear LUFS
+    // rather than leave the previous file's numbers readable.
+    const auto blocked = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                             .getChildFile ("nc-export-blocked");
+    blocked.deleteRecursively();
+    REQUIRE (blocked.createDirectory());
+
+    REQUIRE_FALSE (engine.renderToWav (blocked, 1.0, 2.0, 24, error));
+    REQUIRE_FALSE (error.isEmpty());
+    REQUIRE (engine.lastExportLoudness().frames == 0);
+    REQUIRE (engine.lastExportLoudness().silent);
 }

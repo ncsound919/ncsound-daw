@@ -3,6 +3,8 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_gui_extra/juce_gui_extra.h>
 
+#include <nc/engine/Autosave.hpp>
+
 #include <array>
 #include <optional>
 #include <memory>
@@ -33,6 +35,9 @@ public:
     void mouseMove (const juce::MouseEvent&) override;
     void mouseExit (const juce::MouseEvent&) override;
 
+    /** Dirty-close guard for the main window; public for Main.cpp. */
+    bool confirmClose();
+
 private:
     enum class View { arrange, mix };
 
@@ -53,11 +58,24 @@ private:
     double recordStartBar = 1.0;
     void writeProject (const juce::File& file);
     void readProject (const juce::File& file);
+    void requestNewSession();
+    void discardToEmptySession();
+    bool hasUnsavedSessionWork() const;
+
+    juce::File cleanExitMarker();
+    void writeCleanExitMarker();
+    void clearCleanExitMarker();
+    void checkCrashRecovery();
+    void openSettings();
+    void markDirty();
+    void maybeAutosave();
+    bool saveAutosaveSibling();
     void setStatus (juce::String message, bool alert = false, double seconds = 5.0);
     void setPitchViewOpen (bool shouldOpen);
     juce::WebBrowserComponent::Options buildWebOptions();
     std::optional<juce::WebBrowserComponent::Resource> getWebResource (const juce::String& path);
     juce::var buildState() const;
+    juce::var buildTransport() const;
     juce::var buildPitch() const;
     void pushState();
     void paintHeader (juce::Graphics&);
@@ -92,6 +110,17 @@ private:
     juce::String statusMessage;
     bool statusAlert = false;
     double statusUntil = 0.0;
+
+    // Autosave journal. `lastEditMillis` is wall-clock now when the undo
+    // depth advances (dirty proxy); the `.autosave` sibling is written by
+    // maybeAutosave() on the 30 Hz timer after the debounce + interval.
+    int64_t lastSaveMillis = 0;
+    int64_t lastEditMillis = 0;
+    int64_t lastAutosaveMillis = 0;
+    std::size_t lastSeenUndoDepth = 0;
+
+    // Slot written by the last manual-save rotation; -1 means none yet.
+    int lastBackupIndex = -1;
 
     std::array<juce::Rectangle<int>, 5> menuAreas;
     juce::Rectangle<int> headerArea, logoArea, headerRightArea, cpuArea,

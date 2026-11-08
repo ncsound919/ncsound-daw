@@ -3,6 +3,7 @@
 #include "MixRackEditor.h"
 #include "MixologyBridge.h"
 #include "MixPlan.h"
+#include "SettingsWindow.h"
 
 #include <thread>
 #include "ProjectFile.h"
@@ -211,19 +212,17 @@ MainComponent::MainComponent (juce::File registryFile)
     });
 
     newButton.setCompact (true);
-    newButton.setTooltip ("New session (not wired in this build)");
+    newButton.setTooltip ("New session (prompts to save first)");
     newButton.onClick = [this]
     {
-        engine.setPlaying (false);
-        engine.resetPosition();
-        setStatus ("New session is not wired in this build / transport returned to bar 1", true);
+        requestNewSession();
     };
 
     settingsButton.setCompact (true);
-    settingsButton.setTooltip ("Preferences (not wired in this build)");
+    settingsButton.setTooltip ("Audio settings (device, rate, buffer, MIDI input)");
     settingsButton.onClick = [this]
     {
-        setStatus ("Preferences are not wired in this build / audio follows the system device");
+        openSettings();
     };
 
     auto& look = juce::LookAndFeel::getDefaultLookAndFeel();
@@ -236,6 +235,9 @@ MainComponent::MainComponent (juce::File registryFile)
     look.setColour (juce::TooltipWindow::textColourId, theme::paper);
     look.setColour (juce::TooltipWindow::outlineColourId, theme::lineStrong);
     look.setColour (juce::ScrollBar::thumbColourId, theme::panelHi);
+
+    checkCrashRecovery();
+    clearCleanExitMarker();
 
     statusMessage = defaultStatusText();
     setView (View::arrange);
@@ -651,6 +653,275 @@ void MainComponent::finishRecording()
     setStatus ("TAKES PLACED / " + juce::String (placed) + " OF " + juce::String (static_cast<int> (takes.size())));
 }
 
+bool MainComponent::hasUnsavedSessionWork() const
+{
+    // Anything on the timeline, or any edit since the last save, is work the
+    // user would lose. A fresh untouched demo session still counts as content
+    // worth confirming over, so New never silently wipes the timeline.
+    if (arrange.clipCount() > 0 || ! engine.midiClips().empty())
+        return true;
+
+    if (arrange.undoDepth() > 0 || lastEditMillis > lastSaveMillis)
+        return true;
+
+    for (auto track = 0; track < AudioEngine::trackCount; ++track)
+    {
+        if (! engine.trackAutomation (track, AutomationParam::Volume).empty()
+            || ! engine.trackAutomation (track, AutomationParam::Pan).empty())
+            return true;
+    }
+
+    return false;
+}
+
+juce::File MainComponent::cleanExitMarker()
+{
+    return juce::File::getSpecialLocation (juce::File::userHomeDirectory)
+        .getChildFile ("NCSound").getChildFile ("clean-exit.txt");
+}
+
+void MainComponent::writeCleanExitMarker()
+{
+    const auto marker = cleanExitMarker();
+    marker.getParentDirectory().createDirectory();
+    marker.replaceWithText (currentProjectFile.getFullPathName());
+}
+
+void MainComponent::clearCleanExitMarker()
+{
+    // The marker's absence on the next launch means "did not shut down
+    // cleanly" (crash, kill, or power loss). This constructor clears it so a
+    // second launch during the same session does not prompt again.
+    cleanExitMarker().deleteFile();
+}
+
+void MainComponent::checkCrashRecovery()
+{
+    // checkCrashRecovery() runs before the marker is cleared in this build:
+    // if the marker file still exists from the previous run, the app exited
+    // cleanly (or never ran). If it is missing and an autosave sibling exists
+    // next to a remembered project, offer recovery.
+    const auto marker = cleanExitMarker();
+    auto previousProject = marker.existsAsFile() ? marker.loadFileAsString().trim() : juce::String();
+
+    juce::File autosaveFile;
+
+    if (previousProject.isNotEmpty())
+    {
+        const juce::File projectFile = juce::File (previousProject);
+        autosaveFile = projectFile.getParentDirectory().getChildFile (juce::String (
+            nc::engine::autosave::autosaveFileName (projectFile.getFileName().toStdString())));
+    }
+    else
+    {
+        // No clean-exit marker (first launch, or the previous session crashed
+        // before writing one). Fall back to the most recent autosave in the
+        // music library from the last day.
+        const auto library = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
+        juce::Time newest;
+        for (const auto& entry : library.findChildFiles (juce::File::findFiles, false, "*.autosave.ncsproject"))
+        {
+            const auto modified = entry.getLastModificationTime();
+            if (modified > newest
+                && (juce::Time::getCurrentTime() - modified).inHours() < 24)
+            {
+                newest = modified;
+                autosaveFile = entry;
+            }
+        }
+        if (autosaveFile == juce::File())
+            return;
+        previousProject = autosaveFile.getParentDirectory()
+                              .getChildFile (juce::String (autosaveFile.getFileName()).replace (".autosave", ""))
+                              .getFullPathName();
+    }
+
+    if (! autosaveFile.existsAsFile())
+        return;
+
+    const juce::File projectFile = juce::File (previousProject);
+
+    // Only offer recovery when the autosave is newer than the project.
+    if (projectFile.existsAsFile() && autosaveFile.getLastModificationTime() <= projectFile.getLastModificationTime())
+        return;
+
+    auto dialog = std::make_shared<juce::AlertWindow> ("Recover session",
+                                                       "The previous session did not shut down cleanly and an autosave from "
+                                                       + autosaveFile.getFileName() + " is newer than the saved project.\n\n"
+                                                       "Recover it?",
+                                                       juce::AlertWindow::QuestionIcon, this);
+    dialog->addButton ("Recover", 1, juce::KeyPress (juce::KeyPress::returnKey, 0, 0));
+    dialog->addButton ("Dismiss", 0, juce::KeyPress (juce::KeyPress::escapeKey, 0, 0));
+
+    dialog->enterModalState (true,
+                             juce::ModalCallbackFunction::create (
+                                 [dialog, safe = juce::Component::SafePointer<MainComponent> (this), autosaveFile = autosaveFile] (int modalResult) mutable
+                                 {
+                                     if (safe != nullptr && modalResult == 1)
+                                     {
+                                         safe->readProject (autosaveFile);
+                                         safe->setStatus ("RECOVERED FROM AUTOSAVE / " + autosaveFile.getFileName());
+                                     }
+                                 }));
+}
+
+bool MainComponent::confirmClose()
+{
+    if (engine.isRecording() || engine.isMidiRecording())
+    {
+        setStatus ("STOP RECORDING FIRST", true);
+        return false;
+    }
+
+    if (! hasUnsavedSessionWork())
+    {
+        writeCleanExitMarker();
+        return true;
+    }
+
+    auto dialog = std::make_unique<juce::AlertWindow> ("Unsaved changes",
+                                                       "This session has unsaved work. Save before quitting?",
+                                                       juce::AlertWindow::QuestionIcon, this);
+    dialog->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey, 0, 0));
+    dialog->addButton ("Discard", 2);
+    dialog->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey, 0, 0));
+
+    // AlertWindow has no runModalLoop; enterModalState + a nested dispatch
+    // loop is the JUCE way to read the choice synchronously here.
+    int result = 0;
+    dialog->enterModalState (true,
+                             juce::ModalCallbackFunction::create (
+                                 [&result, dialog = dialog.get()] (int modalResult) mutable
+                                 {
+                                     result = modalResult;
+                                     dialog->exitModalState (modalResult);
+                                 }));
+    juce::MessageManager::getInstance()->runDispatchLoop();
+    if (result == 1)
+    {
+        if (currentProjectFile == juce::File())
+        {
+            setStatus ("NO PROJECT FILE YET / USE SAVE SESSION AS", true);
+            return false;
+        }
+
+        writeProject (currentProjectFile);
+        writeCleanExitMarker();
+        return true;
+    }
+
+    if (result == 2)
+    {
+        // Discard: no marker write (clean exit still counts as intentional).
+        writeCleanExitMarker();
+        return true;
+    }
+
+    return false;
+}
+
+void MainComponent::requestNewSession()
+{
+    if (engine.isRecording() || engine.isMidiRecording())
+    {
+        setStatus ("STOP RECORDING FIRST / a take is being captured", true);
+        return;
+    }
+
+    if (! hasUnsavedSessionWork())
+    {
+        discardToEmptySession();
+        return;
+    }
+
+    auto dialog = std::make_shared<juce::AlertWindow> ("New session",
+                                                       "Save the current session before clearing the timeline?",
+                                                       juce::AlertWindow::QuestionIcon, this);
+    dialog->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey, 0, 0));
+    dialog->addButton ("Discard", 2);
+    dialog->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey, 0, 0));
+
+    dialog->enterModalState (true,
+                             juce::ModalCallbackFunction::create (
+                                 [dialog, safe = juce::Component::SafePointer<MainComponent> (this)] (int modalResult) mutable
+                                 {
+                                     if (safe == nullptr || modalResult == 0)
+                                         return; // Cancel: leave everything alone.
+
+                                     if (modalResult == 2)
+                                     {
+                                         safe->discardToEmptySession();
+                                         return;
+                                     }
+
+                                     // Save, then clear. With no project file yet,
+                                     // route through Save As first.
+                                     if (safe->currentProjectFile != juce::File())
+                                     {
+                                         safe->writeProject (safe->currentProjectFile);
+                                         safe->discardToEmptySession();
+                                         return;
+                                     }
+
+                                     auto chooser = std::make_shared<juce::FileChooser> ("Save project as",
+                                         juce::File::getSpecialLocation (juce::File::userMusicDirectory)
+                                             .getChildFile ("Untitled.ncsproject"),
+                                         "*.ncsproject");
+
+                                     chooser->launchAsync (juce::FileBrowserComponent::saveMode
+                                                               | juce::FileBrowserComponent::canSelectFiles
+                                                               | juce::FileBrowserComponent::warnAboutOverwriting,
+                                                           [safe, chooser] (const juce::FileChooser& fc)
+                                                           {
+                                                               if (safe == nullptr || fc.getResult() == juce::File())
+                                                                   return; // Save As cancelled: keep the session.
+
+                                                               auto file = fc.getResult();
+
+                                                               if (file.getFileExtension().isEmpty())
+                                                                   file = file.withFileExtension ("ncsproject");
+
+                                                               safe->writeProject (file);
+                                                               safe->discardToEmptySession();
+                                                           });
+                                 }));
+}
+
+void MainComponent::discardToEmptySession()
+{
+    engine.setPlaying (false);
+    engine.resetPosition();
+    engine.setLoopBars (1.0, 17.0);
+
+    arrange.clearSession();
+    engine.setTimelineClips ({});
+    engine.setMidiClips ({});
+
+    for (auto track = 0; track < AudioEngine::trackCount; ++track)
+    {
+        engine.clearTrackAutomation (track, AutomationParam::Volume);
+        engine.clearTrackAutomation (track, AutomationParam::Pan);
+        engine.setRecordArmed (track, false);
+        engine.setTrackMonitor (track, false);
+    }
+
+    currentProjectFile = juce::File();
+    lastSaveMillis = 0;
+    lastEditMillis = 0;
+    lastAutosaveMillis = 0;
+    lastSeenUndoDepth = 0;
+
+    mixer.syncFromEngine();
+    arrange.refresh();
+    setStatus ("NEW SESSION / timeline cleared", false, 4.0);
+}
+
+void MainComponent::openSettings()
+{
+    new SettingsWindow (engine);
+    setStatus ("AUDIO SETTINGS / device, sample rate and buffer apply live", false, 4.0);
+}
+
 void MainComponent::timerCallback()
 {
     ++tick;
@@ -674,6 +945,11 @@ void MainComponent::timerCallback()
         browser.setScanState (true, engine.pluginCatalog().scanProgress());
 
     const auto playing = engine.isPlaying();
+
+    // The React workspace reads transport at panel rate; model state only
+    // travels on change, so this stays one small message per tick.
+    if (webView != nullptr && webView->isVisible())
+        webView->emitEventIfBrowserIsVisible ("transportChanged", buildTransport());
 
     // Idle the meters and the header when the transport is parked, instead of
     // repainting the whole surface 30 times a second at rest.
@@ -711,6 +987,84 @@ void MainComponent::timerCallback()
         hoverMenu = -1;
         repaint (headerArea);
     }
+
+    markDirty();
+    maybeAutosave();
+}
+
+void MainComponent::markDirty()
+{
+    // Dirty proxy: the undo depth only grows on real edits, so advancing
+    // depth means the session changed since the last journal. Redo moves
+    // depth the other way and is covered the next time it advances.
+    const auto depth = arrange.undoDepth();
+
+    if (depth != lastSeenUndoDepth)
+    {
+        lastSeenUndoDepth = depth;
+        lastEditMillis = static_cast<int64_t> (juce::Time::getMillisecondCounterHiRes());
+    }
+}
+
+void MainComponent::maybeAutosave()
+{
+    if (currentProjectFile == juce::File())
+        return;
+
+    const auto now = static_cast<int64_t> (juce::Time::getMillisecondCounterHiRes());
+
+    if (! nc::engine::autosave::shouldAutosave (now, lastSaveMillis, lastEditMillis,
+                                                lastAutosaveMillis, nc::engine::autosave::Policy {}))
+        return;
+
+    if (saveAutosaveSibling())
+    {
+        lastAutosaveMillis = now;
+        setStatus ("AUTOSAVED / " + currentProjectFile.getFileName() + ".autosave (manual save stays authoritative)", false, 4.0);
+    }
+}
+
+bool MainComponent::saveAutosaveSibling()
+{
+    // Autosave writes the *current session* to the .autosave sibling. It
+    // never overwrites the real project. The document build mirrors
+    // writeProject() minus the media collection step: autosave must not
+    // move user files, only journal the clip list.
+    nc::engine::ProjectDocument document;
+    document.bpm = engine.getBpm();
+    document.tempoMap = engine.tempoMap();
+    document.markers = engine.markers();
+    document.globalPitch = engine.globalPitchStack();
+    document.activeTrackCount = engine.getActiveTrackCount();
+
+    for (auto track = 0; track < document.activeTrackCount; ++track)
+    {
+        nc::engine::TrackState state;
+        state.name = trackName (track).toStdString();
+        state.gainDb = juce::Decibels::gainToDecibels (static_cast<double> (engine.trackGain (track)), -60.0);
+        state.pan = engine.trackPan (track);
+        state.muted = engine.trackMuted (track);
+        state.soloed = engine.trackSolo (track);
+        state.sendA = engine.trackSendA (track);
+        state.sendB = engine.trackSendB (track);
+        state.width = engine.trackWidth (track);
+        state.pitch = engine.trackPitchStack (track);
+        state.instrumentPitch = engine.instrumentPitchStack (track);
+
+        for (int slot = 0; slot < 4; ++slot)
+            state.inserts[static_cast<size_t> (slot)] = engine.trackInsertState (track, slot);
+
+        state.instrument = engine.trackInstrumentState (track);
+        document.tracks.push_back (std::move (state));
+    }
+
+    arrange.writeClipsToDocument (document, currentProjectFile);
+
+    const auto autosaveName = nc::engine::autosave::autosaveFileName (currentProjectFile.getFileName().toStdString());
+    const auto autosaveFile = currentProjectFile.getParentDirectory().getChildFile (juce::String (autosaveName));
+
+    juce::String error;
+    return saveProjectDocument (autosaveFile, document, error);
 }
 
 //==============================================================================
@@ -773,7 +1127,12 @@ void MainComponent::openMenu (int menuIndex)
             menu.addSeparator();
             menu.addItem (1005, "Import Audio...");
             menu.addItem (1006, "Collect Media...");
-            menu.addItem (1004, "Export Mixdown...");
+            menu.addSectionHeader ("EXPORT");
+            menu.addItem (1004, "Mixdown WAV (24-bit, dithered)...");
+            menu.addItem (1010, "Mixdown FLAC (24-bit, dithered)...");
+            menu.addItem (1011, "Mixdown MP3 (320k, dithered)...");
+            menu.addItem (1012, "Mixdown LUFS-normalised (-14 LUFS)...");
+            menu.addItem (1013, "Stems (one file per track)...");
             menu.addSeparator();
             menu.addSectionHeader ("AGENT");
             menu.addItem (1008, "Apply Mix Plan...");
@@ -786,7 +1145,7 @@ void MainComponent::openMenu (int menuIndex)
         {
             menu.addSectionHeader ("EDIT");
             menu.addItem (2001, "Undo", arrange.canUndo());
-            menu.addItem (2002, "Redo", false);
+            menu.addItem (2002, "Redo", arrange.canRedo());
             menu.addSeparator();
             menu.addItem (2003, "Split at Playhead", arrange.hasSelectedClip());
             menu.addItem (2006, "Duplicate Clip", arrange.hasSelectedClip());
@@ -847,7 +1206,7 @@ void MainComponent::openMenu (int menuIndex)
             menu.addItem (3002, "Mix", true, view == View::mix);
             menu.addSeparator();
             menu.addItem (3003, "Plug-in Browser", true, browserOpen);
-            menu.addItem (3006, "Pitch UI (React)", true, pitchOpen);
+            menu.addItem (3006, "React Workspace", true, pitchOpen);
             menu.addSeparator();
             menu.addItem (3004, "Zoom In");
             menu.addItem (3005, "Zoom Out");
@@ -903,9 +1262,7 @@ void MainComponent::handleMenuResult (int result)
     switch (result)
     {
         case 1001:
-            engine.setPlaying (false);
-            engine.resetPosition();
-            setStatus ("New session is not wired in this build / transport returned to bar 1", true);
+            requestNewSession();
             break;
 
         case 1002:
@@ -955,20 +1312,37 @@ void MainComponent::handleMenuResult (int result)
         }
         case 1005: importAudioFile(); break;
         case 1004:
+        case 1010:
+        case 1011:
+        case 1012:
         {
             // The session's own range, plus a bar so a master reverb tail rings out.
             const auto lastBar = juce::jmax (1.0, engine.contentEndBar()) + 1.0;
 
+            nc::engine::export_::ExportOptions options;
+            options.dither = true;
+            options.bitDepth = 24;
+            options.sampleRate = static_cast<int> (engine.currentSampleRate());
+            options.format = result == 1010 ? nc::engine::export_::Format::flac
+                             : result == 1011 ? nc::engine::export_::Format::mp3
+                                              : nc::engine::export_::Format::wav;
+            options.normalizeToTarget = result == 1012;
+            if (result == 1011)
+                options.bitDepth = 32; // MP3 encoder takes float; dithered anyway
+            options.baseName = "mixdown";
+
+            const juce::String extension (nc::engine::export_::formatExtension (options.format));
+
             auto chooser = std::make_shared<juce::FileChooser> (
-                "Export mixdown",
+                "Export mixdown " + juce::String (nc::engine::export_::formatName (options.format)),
                 juce::File::getSpecialLocation (juce::File::userMusicDirectory)
-                    .getChildFile ("mixdown.wav"),
-                "*.wav");
+                    .getChildFile ("mixdown." + extension),
+                "*." + extension);
 
             chooser->launchAsync (juce::FileBrowserComponent::saveMode
                                       | juce::FileBrowserComponent::canSelectFiles
                                       | juce::FileBrowserComponent::warnAboutOverwriting,
-                                  [safe = juce::Component::SafePointer<MainComponent> (this), chooser, lastBar] (const juce::FileChooser& fc)
+                                  [safe = juce::Component::SafePointer<MainComponent> (this), chooser, lastBar, options, extension] (const juce::FileChooser& fc)
                                   {
                                       if (safe == nullptr)
                                           return;
@@ -978,17 +1352,68 @@ void MainComponent::handleMenuResult (int result)
                                       if (file == juce::File())
                                           return;
 
-                                      if (! file.hasFileExtension ("wav"))
-                                          file = file.withFileExtension ("wav");
+                                      if (! file.hasFileExtension (extension))
+                                          file = file.withFileExtension (extension);
 
                                       juce::String error;
-                                      const auto rendered = safe->engine.renderToWav (file, 1.0, lastBar, 24, error);
+                                      const auto rendered = safe->engine.renderToFile (file, 1.0, lastBar, options, error);
+                                      const auto loudness = safe->engine.lastExportLoudness();
 
-                                      safe->setStatus (rendered
-                                                           ? "Mixdown written: " + file.getFileName()
-                                                           : "Export failed: " + error,
-                                                       ! rendered,
-                                                       4.0);
+                                      juce::String status;
+
+                                      if (rendered)
+                                      {
+                                          status = "Mixdown written: " + file.getFileName();
+
+                                          if (! loudness.silent)
+                                              status << " / " << juce::String (loudness.integratedLufs, 1, 2)
+                                                     << " LUFS / " << juce::String (loudness.truePeakDbTp, 1, 2) << " dBTP";
+                                      }
+                                      else
+                                      {
+                                          status = "Export failed: " + error;
+                                      }
+
+                                      safe->setStatus (status, ! rendered, 6.0);
+                                  });
+            break;
+        }
+        case 1013:
+        {
+            const auto lastBar = juce::jmax (1.0, engine.contentEndBar()) + 1.0;
+
+            nc::engine::export_::ExportOptions options;
+            options.format = nc::engine::export_::Format::wav;
+            options.bitDepth = 24;
+            options.dither = true;
+            options.sampleRate = static_cast<int> (engine.currentSampleRate());
+            options.baseName = "stems";
+
+            auto chooser = std::make_shared<juce::FileChooser> ("Choose the stems folder",
+                                                                  juce::File::getSpecialLocation (juce::File::userMusicDirectory),
+                                                                  "*");
+
+            chooser->launchAsync (juce::FileBrowserComponent::openMode
+                                      | juce::FileBrowserComponent::canSelectDirectories,
+                                  [safe = juce::Component::SafePointer<MainComponent> (this), chooser, lastBar, options] (const juce::FileChooser& fc)
+                                  {
+                                      if (safe == nullptr)
+                                          return;
+
+                                      const auto folder = fc.getResult();
+
+                                      if (folder == juce::File())
+                                          return;
+
+                                      std::vector<juce::File> written;
+                                      juce::String error;
+                                      const auto count = safe->engine.exportStems (folder, 1.0, lastBar, options, written, error);
+
+                                      safe->setStatus (count > 0
+                                                               ? "STEMS WRITTEN / " + juce::String (count) + " FILES IN " + folder.getFileName()
+                                                               : "STEMS FAILED / " + error,
+                                                         count == 0,
+                                                         6.0);
                                   });
             break;
         }
@@ -1254,10 +1679,18 @@ void MainComponent::handleMenuResult (int result)
             break;
 
         case 2001:
-            setStatus (arrange.undo() ? "Undo / last clip edit reverted" : "Nothing to undo", ! arrange.canUndo(), 3.0);
+            setStatus (arrange.undo() ? "Undo / last clip edit reverted (" + juce::String (arrange.undoDepth()) + " left)"
+                                      : "Nothing to undo",
+                       ! arrange.canUndo(),
+                       3.0);
             break;
 
-        case 2002: setStatus ("Redo is not wired in this build / undo is one step", true); break;
+        case 2002:
+            setStatus (arrange.redo() ? "Redo / clip edit reapplied (" + juce::String (arrange.redoDepth()) + " left)"
+                                      : "Nothing to redo",
+                       ! arrange.canRedo(),
+                       3.0);
+            break;
         case 2003: arrange.splitSelectedAtPlayhead(); break;
         case 2006: arrange.duplicateSelected(); break;
         case 2007: arrange.deleteSelected(); break;
@@ -1278,7 +1711,7 @@ void MainComponent::handleMenuResult (int result)
             break;
         }
         case 2004: setStatus ("All clips already visible in this preview session"); break;
-        case 2005: setStatus ("Preferences are not wired in this build / audio follows the system device"); break;
+        case 2005: openSettings(); break;
 
         case 2300:
         case 2301:
@@ -1546,26 +1979,38 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
 
     if (key.getModifiers().isCommandDown())
     {
-        if (key.getTextCharacter() == 'z' || key.getTextCharacter() == 'Z')
+        const auto commandCharacter = juce::CharacterFunctions::toLowerCase (key.getTextCharacter());
+
+        if (commandCharacter == 'z' && ! key.getModifiers().isShiftDown())
         {
             const auto undone = arrange.undo();
             setStatus (undone ? "Undo / last clip edit reverted" : "Nothing to undo", ! undone, 3.0);
             return true;
         }
 
-        if (key.getTextCharacter() == 's' || key.getTextCharacter() == 'S')
+        // Ctrl+Shift+Z and Ctrl+Y are both the standard redo keys.
+        if ((commandCharacter == 'z' && key.getModifiers().isShiftDown()) || commandCharacter == 'y')
         {
-            setStatus ("Saving is not wired in this build / nothing was written to disk", true);
+            const auto redone = arrange.redo();
+            setStatus (redone ? "Redo / clip edit reapplied" : "Nothing to redo", ! redone, 3.0);
             return true;
         }
 
-        if (key.getTextCharacter() == 'b' || key.getTextCharacter() == 'B')
+        if (commandCharacter == 's')
+        {
+            if (currentProjectFile == juce::File())
+                setStatus ("NO PROJECT FILE YET / USE SAVE SESSION AS", true);
+            else
+                writeProject (currentProjectFile);
+
+            return true;
+        }
+
+        if (commandCharacter == 'b')
         {
             setBrowserOpen (! browserOpen);
             return true;
         }
-
-        const auto commandCharacter = juce::CharacterFunctions::toLowerCase (key.getTextCharacter());
 
         if (commandCharacter == 'e')
         {
@@ -1590,6 +2035,57 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
+    // Clip-by-keyboard (arrange view only, like Pro Tools/Cubase):
+    // Tab/Shift+Tab cycles clips, arrows nudge, Shift+arrows trims,
+    // Alt+Up/Down moves track, ,/. cycles comp takes, C toggles crossfade.
+    if (view == View::arrange)
+    {
+        if (key.getModifiers().isAltDown()
+            && (code == juce::KeyPress::upKey || code == juce::KeyPress::downKey))
+        {
+            const auto delta = code == juce::KeyPress::upKey ? -1 : 1;
+            if (arrange.moveSelectedTrack (delta))
+            {
+                setStatus ("Clip moved to " + trackName (arrange.getSelectedTrack()), false, 2.0);
+                return true;
+            }
+            return false;
+        }
+
+        const auto shift = key.getModifiers().isShiftDown();
+
+        if (code == juce::KeyPress::tabKey)
+        {
+            const auto ok = shift ? arrange.selectPrevClip() : arrange.selectNextClip();
+            if (ok)
+                setStatus ("Selected clip / Tab cycles, arrows nudge, Shift+arrows trim", false, 2.0);
+            return ok;
+        }
+
+        if (code == juce::KeyPress::leftKey || code == juce::KeyPress::rightKey)
+        {
+            const auto bars = code == juce::KeyPress::leftKey ? -1 : 1;
+            bool ok;
+
+            if (shift)
+                ok = arrange.trimSelectedRight (bars);
+            else
+                ok = arrange.nudgeSelected (bars);
+
+            if (ok)
+                setStatus (shift ? "Clip trimmed / Shift+Right lengthens" : "Clip nudged / Left/Right moves by 1 bar", false, 2.0);
+            return ok;
+        }
+
+        if (key.getTextCharacter() == ',' || key.getTextCharacter() == '.')
+        {
+            const auto ok = arrange.cycleSelectedCompTake (key.getTextCharacter() == ',' ? -1 : 1);
+            if (ok)
+                setStatus ("Comp take cycled (,) to switch takes", false, 2.0);
+            return ok;
+        }
+    }
+
     const auto character = juce::CharacterFunctions::toLowerCase (key.getTextCharacter());
 
     switch (character)
@@ -1604,6 +2100,11 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         case 'g': arrange.setTool (3); setStatus ("Clip gain tool / drag up or down"); return true;
         case 'x': arrange.setTool (4); setStatus ("Split tool / click a clip to cut at that bar"); return true;
         case 'e': arrange.setTool (5); setStatus ("Erase tool / click a clip"); return true;
+
+        case 'c':
+            if (arrange.applyCrossfadeSelected())
+                setStatus ("Crossfade toggled / equal-power overlap (C again removes)", false, 2.0);
+            return arrange.hasSelectedClip();
 
         case '[': arrange.zoomOut(); return true;
         case ']': arrange.zoomIn(); return true;
@@ -1723,6 +2224,25 @@ void MainComponent::writeProject (const juce::File& file)
 
     document.mixRack = engine.mixRackStateJson().toStdString();
 
+    // Rotate the file that is about to be replaced into the next backup slot,
+    // keeping Policy::maxBackups siblings. A failed copy must not block the
+    // real save; the backup is best-effort by design.
+    if (file.existsAsFile())
+    {
+        const auto policy = nc::engine::autosave::Policy {};
+        const auto index = nc::engine::autosave::nextBackupIndex (lastBackupIndex, policy.maxBackups);
+
+        if (index >= 0)
+        {
+            const auto backupName = nc::engine::autosave::backupFileName (
+                file.getFileName().toStdString(), index);
+            const auto backup = file.getParentDirectory().getChildFile (juce::String (backupName));
+
+            if (file.copyFileTo (backup))
+                lastBackupIndex = index;
+        }
+    }
+
     juce::String error;
 
     if (! saveProjectDocument (file, document, error))
@@ -1732,6 +2252,11 @@ void MainComponent::writeProject (const juce::File& file)
     }
 
     currentProjectFile = file;
+    const auto now = static_cast<int64_t> (juce::Time::getMillisecondCounterHiRes());
+    lastSaveMillis = now;
+    lastEditMillis = now;
+    lastAutosaveMillis = 0;
+    lastSeenUndoDepth = arrange.undoDepth();
     setStatus ("SAVED " + file.getFileName() + " / "
                + juce::String (static_cast<int> (document.clips.size())) + " CLIPS");
 }
@@ -1875,6 +2400,11 @@ void MainComponent::readProject (const juce::File& file)
     auto missing = 0;
     const auto restored = arrange.readClipsFromDocument (*document, file, missing);
     currentProjectFile = file;
+    const auto now = static_cast<int64_t> (juce::Time::getMillisecondCounterHiRes());
+    lastSaveMillis = now;
+    lastEditMillis = now;
+    lastAutosaveMillis = 0;
+    lastSeenUndoDepth = arrange.undoDepth();
     setView (View::arrange);
     auto note = juce::String();
 

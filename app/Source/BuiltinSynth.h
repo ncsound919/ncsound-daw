@@ -2,6 +2,8 @@
 
 #include "HostedInsert.h"
 
+#include <nc/engine/AnalogCharacter.hpp>
+
 #include <juce_audio_processors/juce_audio_processors.h>
 
 namespace nc
@@ -43,6 +45,11 @@ public:
     juce::String name() const override { return "PolySynth (Built-in)"; }
     bool getState (nc::engine::PluginSlotState&) const override;
     bool setState (const nc::engine::PluginSlotState&) override;
+
+    /** The analog character section every stock instrument carries: one gain
+        stage, drive, iron and a tilt, all off by default. */
+    engine::CharacterSettings characterSettings() const { return character.currentSettings(); }
+    void setCharacterSettings (const engine::CharacterSettings& settings) { character.setSettings (settings); }
 
     void setPreset (PresetId id);
     void setWave (Wave newWave) { preset.wave = newWave; applyPresetToVoices(); }
@@ -86,6 +93,7 @@ private:
     Preset preset;
     PresetId presetId = PresetId::bass;
     bool bypassed = false;
+    engine::AnalogCharacter character;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (BuiltinSynth)
 };

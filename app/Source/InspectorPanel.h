@@ -45,7 +45,6 @@ private:
     HardwareButton muteButton { HardwareButton::Icon::none, "M" };
     HardwareButton soloButton { HardwareButton::Icon::none, "S" };
 
-    std::array<bool, AudioEngine::trackCount> armed {};
     // Sends/width are owned by AudioEngine (see InspectorPanel.cpp). These
     // members are legacy UI defaults from the pre-engine wiring; kept with
     // full-size arrays so no index can go OOB. setTrack pulls from the engine.

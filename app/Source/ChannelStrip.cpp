@@ -106,7 +106,8 @@ ChannelStrip::ChannelStrip (AudioEngine& engineToUse, int trackIndex)
     recordButton.setClickingTogglesState (true);
     recordButton.onClick = [this]
     {
-        armed = recordButton.getToggleState();
+        engine.setRecordArmed (index, recordButton.getToggleState());
+        recordButton.setToggleState (engine.isRecordArmed (index), juce::dontSendNotification);
     };
 
     muteButton.setCompact (true);
@@ -125,6 +126,7 @@ ChannelStrip::ChannelStrip (AudioEngine& engineToUse, int trackIndex)
 
     muteButton.setToggleState (engine.trackMuted (index), juce::dontSendNotification);
     soloButton.setToggleState (engine.trackSolo (index), juce::dontSendNotification);
+    recordButton.setToggleState (engine.isRecordArmed (index), juce::dontSendNotification);
 }
 
 auto ChannelStrip::spec() const -> const TrackSpec&
@@ -146,6 +148,7 @@ void ChannelStrip::setSelected (bool shouldBeSelected)
 
 void ChannelStrip::syncFromEngine()
 {
+    recordButton.setToggleState (engine.isRecordArmed (index), juce::dontSendNotification);
     muteButton.setToggleState (engine.trackMuted (index), juce::dontSendNotification);
     soloButton.setToggleState (engine.trackSolo (index), juce::dontSendNotification);
     sendA = engine.trackSendA (index);

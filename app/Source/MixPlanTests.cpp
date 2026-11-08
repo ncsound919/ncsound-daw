@@ -532,7 +532,6 @@ TEST_CASE ("braces inside a plan string do not end the document", "[mixplan]")
     REQUIRE (plan.usable());
     REQUIRE (plan.plan.title == "lift {chorus}");
 }
-
 TEST_CASE ("the prompt carries the session, its units and the goal", "[mixplan]")
 {
     const auto prompt = nc::buildMixPlanPrompt ("vocal-forward chorus lift", 16);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <nc/engine/Comping.hpp>
 #include <nc/engine/Markers.hpp>
 #include <nc/engine/MidiClip.hpp>
 #include <nc/engine/PitchStack.hpp>
@@ -27,8 +28,15 @@ namespace nc::engine
     v7 adds per-track sends + width ("sendA"/"sendB"/"width"); older files
     load with 0/0/0.5 (no reverb/delay send, neutral width). v8 adds
     document-level automation lanes ("automation"); older files load with
-    no lanes (faders stay manual). */
-inline constexpr int projectSchemaVersion = 8;
+    no lanes (faders stay manual). v9 adds per-clip crossfade + comp take
+    ("crossfadeBars"/"compTake"); older files load with 0/0 (linear fades,
+    first take). */
+inline constexpr int projectSchemaVersion = 9;
+
+/** Clip/track gain and pan are user values, not free-form numbers: a hostile
+    file must not hand the mixer a NaN or a 1e9 dB boost. */
+inline constexpr double minGainDb = -60.0;
+inline constexpr double maxGainDb = 60.0;
 
 /** Per-slot cap for opaque plugin data. A hostile or truncated project must not
     make the loader hold an unbounded XML/state string. */
@@ -45,6 +53,8 @@ struct ClipState
     double gainDb = 0.0;
     double fadeInBars = 0.0;
     double fadeOutBars = 0.0;
+    double crossfadeBars = 0.0; // v9: equal-power overlap; 0 = linear fades
+    int compTake = 0;           // v9: active comp take (0 = first take)
     bool isMidi = false;     // true: notes below, no audio backing
     std::vector<MidiNote> notes; // clip-relative beats; MIDI clips only
     std::vector<MidiCC> ccs;     // controller events; MIDI clips only
@@ -75,6 +85,7 @@ struct AutomationLaneState
     std::string param = "volume"; // volume | pan (v8)
     std::vector<AutomationPointState> points;
 };
+
 
 struct TrackState
 {
@@ -182,6 +193,12 @@ inline bool isSafeRelativeAssetPath (const std::string& path) noexcept
     Idempotent: sanitising twice equals sanitising once. */
 inline ProjectDocument sanitize (ProjectDocument document)
 {
+    // An older file that now carries the current shape is upgraded when it is
+    // re-saved. A newer schema is left untouched so isLoadable() still refuses
+    // it instead of silently downgrading a document this build cannot read.
+    if (document.version < projectSchemaVersion)
+        document.version = projectSchemaVersion;
+
     document.globalPitch.clamp();
 
     if (! std::isfinite (document.bpm))
@@ -242,8 +259,18 @@ inline ProjectDocument sanitize (ProjectDocument document)
         clip.track = std::clamp (clip.track, 0, lastTrack);
         clip.startBar = std::clamp (clip.startBar, 1.0, maxBar);
         clip.lengthBars = std::clamp (clip.lengthBars, 1.0e-6, maxBar);
+        clip.crossfadeBars = std::isfinite (clip.crossfadeBars)
+                                 ? std::clamp (clip.crossfadeBars, 0.0, clip.lengthBars * 0.45)
+                                 : 0.0;
+        clip.compTake = std::clamp (clip.compTake, 0,
+                                    static_cast<int> (comping::CompLane::maxTakes) - 1);
         clip.sourceOffsetSeconds = std::isfinite (clip.sourceOffsetSeconds)
                                        ? std::max (0.0, clip.sourceOffsetSeconds) : 0.0;
+        clip.gainDb = std::isfinite (clip.gainDb) ? std::clamp (clip.gainDb, minGainDb, maxGainDb) : 0.0;
+        clip.fadeInBars = std::isfinite (clip.fadeInBars)
+                              ? std::clamp (clip.fadeInBars, 0.0, clip.lengthBars * 0.45) : 0.0;
+        clip.fadeOutBars = std::isfinite (clip.fadeOutBars)
+                               ? std::clamp (clip.fadeOutBars, 0.0, clip.lengthBars * 0.45) : 0.0;
 
         if (clip.isMidi)
         {
@@ -324,6 +351,8 @@ inline ProjectDocument sanitize (ProjectDocument document)
     {
         track.pitch.clamp();
         track.instrumentPitch.clamp();
+        track.gainDb = std::isfinite (track.gainDb) ? std::clamp (track.gainDb, minGainDb, maxGainDb) : 0.0;
+        track.pan = std::isfinite (track.pan) ? std::clamp (track.pan, -1.0, 1.0) : 0.0;
         track.sendA = std::isfinite (track.sendA) ? std::clamp (track.sendA, 0.0, 1.0) : 0.0;
         track.sendB = std::isfinite (track.sendB) ? std::clamp (track.sendB, 0.0, 1.0) : 0.0;
         track.width = std::isfinite (track.width) ? std::clamp (track.width, 0.0, 1.0) : 0.5;

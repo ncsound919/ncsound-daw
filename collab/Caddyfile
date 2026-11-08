@@ -1,0 +1,30 @@
+# TLS-terminating reverse proxy for the collab relay (PRODUCTION.md).
+# Caddy provisions and renews certificates automatically; the relay itself
+# only speaks plain HTTP on loopback and trusts the allowlists in the env.
+#
+# Usage:
+#   caddy run --config Caddyfile
+# then in the relay container/compose env set:
+#   ALLOWED_HOSTS=daw.example.com
+#   ALLOWED_ORIGINS=https://daw.example.com
+
+daw.example.com {
+	encode zstd gzip
+
+	reverse_proxy 127.0.0.1:8787 {
+		transport http {
+			# WebSocket upgrades are handled by the reverse proxy transport.
+		}
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		Cache-Control "no-store"
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'"
+	}
+
+	# Rate limiting is handled by the relay's WindowLimiter. The stock Caddy
+	# binary has no `rate_limit` directive (that needs the caddyserver/ratelimit
+	# module), so keeping it here would stop `caddy run --config` from starting.
+}

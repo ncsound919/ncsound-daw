@@ -1089,7 +1089,7 @@ void ArrangeView::paintTrackControls (juce::Graphics& g, juce::Rectangle<int> la
 
     drawSmallButton (g, mute, "M", engine.trackMuted (trackIndex), theme::mod);
     drawSmallButton (g, solo, "S", engine.trackSolo (trackIndex), theme::accentHot);
-    drawSmallButton (g, record, "R", armed[static_cast<size_t> (trackIndex)], theme::danger);
+    drawSmallButton (g, record, "R", engine.isRecordArmed (trackIndex), theme::danger);
 
     juce::ignoreUnused (lane);
 }
@@ -1302,8 +1302,127 @@ void ArrangeView::seekToX (int x)
 void ArrangeView::toggleArm (int track)
 {
     const auto index = juce::jlimit (0, shownTracks() - 1, track);
-    armed[static_cast<size_t> (index)] = ! armed[static_cast<size_t> (index)];
+    engine.setRecordArmed (index, ! engine.isRecordArmed (index));
     repaint (laneBounds (index));
+}
+
+namespace
+{
+int audioScheduleToNative (const std::vector<int>& kinds, int scheduleIndex)
+{
+    int seen = 0;
+
+    for (int i = 0; i < static_cast<int> (kinds.size()); ++i)
+    {
+        if (kinds[static_cast<size_t> (i)] == 0)
+            continue;
+
+        if (seen == scheduleIndex)
+            return i;
+
+        ++seen;
+    }
+
+    return -1;
+}
+} // namespace
+
+bool ArrangeView::webEditClip (int scheduleIndex, const juce::var& patch)
+{
+    std::vector<int> kinds;
+    kinds.reserve (clips.size());
+    for (const auto& clip : clips)
+        kinds.push_back (clip.kind);
+
+    const auto index = audioScheduleToNative (kinds, scheduleIndex);
+    auto* obj = patch.getDynamicObject();
+
+    if (index < 0 || obj == nullptr)
+        return false;
+
+    pushUndo();
+    auto& clip = clips[static_cast<size_t> (index)];
+    const auto oldStart = clip.startBar;
+    const auto secondsPerBar = 240.0 / juce::jmax (1.0, engine.getBpm());
+
+    if (obj->hasProperty ("startBar"))
+        clip.startBar = juce::jmax (1, (int) std::round ((double) obj->getProperty ("startBar")));
+
+    if (obj->hasProperty ("lengthBars"))
+        clip.lengthBars = juce::jmax (1, (int) std::round ((double) obj->getProperty ("lengthBars")));
+
+    if (obj->hasProperty ("gainDb"))
+        clip.gainDb = juce::jlimit (-24.0f, 12.0f, (float) (double) obj->getProperty ("gainDb"));
+
+    const auto length = static_cast<float> (clip.lengthBars);
+    if (obj->hasProperty ("fadeInBars"))
+        clip.fadeInBars = juce::jlimit (0.0f, length, (float) (double) obj->getProperty ("fadeInBars"));
+    if (obj->hasProperty ("fadeOutBars"))
+        clip.fadeOutBars = juce::jlimit (0.0f, length, (float) (double) obj->getProperty ("fadeOutBars"));
+
+    if (obj->hasProperty ("trimmed") && (bool) obj->getProperty ("trimmed"))
+        clip.sourceOffsetSeconds = juce::jmax (0.0, clip.sourceOffsetSeconds
+                                                       + (clip.startBar - oldStart) * secondsPerBar);
+
+    publishTimeline();
+    refresh();
+    return true;
+}
+
+bool ArrangeView::webSplitClip (int scheduleIndex, double bar)
+{
+    std::vector<int> kinds;
+    kinds.reserve (clips.size());
+    for (const auto& clip : clips)
+        kinds.push_back (clip.kind);
+
+    const auto index = audioScheduleToNative (kinds, scheduleIndex);
+    if (index < 0)
+        return false;
+
+    splitClip (index, juce::jmax (1, (int) std::round (bar)));
+    publishTimeline();
+    refresh();
+    return true;
+}
+
+bool ArrangeView::webDuplicateClip (int scheduleIndex)
+{
+    std::vector<int> kinds;
+    kinds.reserve (clips.size());
+    for (const auto& clip : clips)
+        kinds.push_back (clip.kind);
+
+    const auto index = audioScheduleToNative (kinds, scheduleIndex);
+    if (index < 0)
+        return false;
+
+    selectedClip = index;
+    return duplicateSelected();
+}
+
+bool ArrangeView::webDeleteClip (int scheduleIndex)
+{
+    std::vector<int> kinds;
+    kinds.reserve (clips.size());
+    for (const auto& clip : clips)
+        kinds.push_back (clip.kind);
+
+    const auto index = audioScheduleToNative (kinds, scheduleIndex);
+    if (index < 0)
+        return false;
+
+    selectedClip = index;
+    return deleteSelected();
+}
+
+void ArrangeView::webSetLoopRange (double startBar, double endBar)
+{
+    loopStartBar = juce::jlimit (1, nc::limits::maxBars, (int) std::round (startBar));
+    loopEndBar = juce::jlimit (loopStartBar + 1, nc::limits::maxBars + 1, (int) std::round (endBar));
+    engine.setLoopBars (loopStartBar, loopEndBar);
+    repaint (rulerArea);
+    repaint (laneArea);
 }
 
 void ArrangeView::splitClip (int clipIndex, int bar)
@@ -1327,10 +1446,12 @@ void ArrangeView::splitClip (int clipIndex, int bar)
     right.sourceOffsetSeconds = original.sourceOffsetSeconds
                               + static_cast<double> (bar - original.startBar) * secondsPerBar;
     right.fadeInBars = 0.0f;
+    right.crossfadeBars = 0.0f;
     right.fadeOutBars = juce::jmin (original.fadeOutBars, static_cast<float> (right.lengthBars) * 0.45f);
 
     original.lengthBars = bar - original.startBar;
     original.fadeOutBars = 0.0f;
+    original.crossfadeBars = 0.0f;
     original.fadeInBars = juce::jmin (original.fadeInBars, static_cast<float> (original.lengthBars) * 0.45f);
 
     // MIDI split: notes at/after the split move right and rebase to 0;
@@ -1531,6 +1652,7 @@ void ArrangeView::publishTimeline()
         next.gainDb = clip.gainDb;
         next.fadeInBars = clip.fadeInBars;
         next.fadeOutBars = clip.fadeOutBars;
+        next.crossfadeBars = clip.crossfadeBars;
         schedule.push_back (next);
     }
 
@@ -1877,6 +1999,8 @@ void ArrangeView::writeClipsToDocument (nc::engine::ProjectDocument& document, c
             state.gainDb = static_cast<double> (clip.gainDb);
             state.fadeInBars = static_cast<double> (clip.fadeInBars);
             state.fadeOutBars = static_cast<double> (clip.fadeOutBars);
+            state.crossfadeBars = static_cast<double> (clip.crossfadeBars);
+            state.compTake = clip.compTake;
             state.notes = clip.notes;
             state.ccs = clip.ccs;
             state.bends = clip.bends;
@@ -1908,6 +2032,8 @@ void ArrangeView::writeClipsToDocument (nc::engine::ProjectDocument& document, c
         state.gainDb = static_cast<double> (clip.gainDb);
         state.fadeInBars = static_cast<double> (clip.fadeInBars);
         state.fadeOutBars = static_cast<double> (clip.fadeOutBars);
+        state.crossfadeBars = static_cast<double> (clip.crossfadeBars);
+        state.compTake = clip.compTake;
         document.clips.push_back (std::move (state));
     }
 }
@@ -1917,6 +2043,7 @@ int ArrangeView::readClipsFromDocument (const nc::engine::ProjectDocument& docum
     const auto folder = projectFile.getParentDirectory();
     clips.clear();
     selectedClip = -1;
+    undoStack.clear();
     missing = 0;
     auto restored = 0;
 
@@ -1933,6 +2060,8 @@ int ArrangeView::readClipsFromDocument (const nc::engine::ProjectDocument& docum
             clip.gainDb = static_cast<float> (state.gainDb);
             clip.fadeInBars = static_cast<float> (state.fadeInBars);
             clip.fadeOutBars = static_cast<float> (state.fadeOutBars);
+            clip.crossfadeBars = static_cast<float> (state.crossfadeBars);
+            clip.compTake = state.compTake;
             clip.notes = state.notes;
             clip.ccs = state.ccs;
             clip.bends = state.bends;
@@ -1992,6 +2121,8 @@ int ArrangeView::readClipsFromDocument (const nc::engine::ProjectDocument& docum
         clip.gainDb = static_cast<float> (state.gainDb);
         clip.fadeInBars = static_cast<float> (state.fadeInBars);
         clip.fadeOutBars = static_cast<float> (state.fadeOutBars);
+        clip.crossfadeBars = static_cast<float> (state.crossfadeBars);
+        clip.compTake = state.compTake;
         clip.sourceOffsetSeconds = state.sourceOffsetSeconds;
         clip.assetId = assetId;
         clips.push_back (clip);
@@ -2003,21 +2134,150 @@ int ArrangeView::readClipsFromDocument (const nc::engine::ProjectDocument& docum
     return restored;
 }
 
+void ArrangeView::clearSession()
+{
+    clips.clear();
+    selectedClip = -1;
+    undoStack.clear();
+    publishTimeline();
+    repaint();
+}
+
 void ArrangeView::pushUndo()
 {
-    undoSnapshot = clips;
-    undoSelectedClip = selectedClip;
-    hasUndo = true;
+    undoStack.push (Snapshot { clips, selectedClip });
 }
 
 bool ArrangeView::undo()
 {
-    if (! hasUndo)
+    const auto restored = undoStack.undo (Snapshot { clips, selectedClip });
+
+    if (! restored.has_value())
         return false;
 
-    clips = undoSnapshot;
-    selectedClip = undoSelectedClip;
-    hasUndo = false;
+    clips = restored->clips;
+    selectedClip = restored->selectedClip;
+    publishTimeline();
+    repaint();
+    return true;
+}
+
+bool ArrangeView::redo()
+{
+    const auto restored = undoStack.redo (Snapshot { clips, selectedClip });
+
+    if (! restored.has_value())
+        return false;
+
+    clips = restored->clips;
+    selectedClip = restored->selectedClip;
+    publishTimeline();
+    repaint();
+    return true;
+}
+
+bool ArrangeView::selectNextClip()
+{
+    if (clips.empty())
+        return false;
+
+    selectedClip = selectedClip < 0 ? 0 : (selectedClip + 1) % static_cast<int> (clips.size());
+    repaint();
+    return true;
+}
+
+bool ArrangeView::selectPrevClip()
+{
+    if (clips.empty())
+        return false;
+
+    selectedClip = selectedClip < 0 ? static_cast<int> (clips.size()) - 1
+                                    : (selectedClip - 1 + static_cast<int> (clips.size()))
+                                          % static_cast<int> (clips.size());
+    repaint();
+    return true;
+}
+
+bool ArrangeView::nudgeSelected (int bars)
+{
+    if (selectedClip < 0 || selectedClip >= static_cast<int> (clips.size()) || bars == 0)
+        return false;
+
+    pushUndo();
+    auto& clip = clips[static_cast<size_t> (selectedClip)];
+    clip.startBar = juce::jlimit (1, nc::limits::maxBars, clip.startBar + bars);
+    publishTimeline();
+    repaint();
+    return true;
+}
+
+bool ArrangeView::trimSelectedLeft (int bars)
+{
+    if (selectedClip < 0 || selectedClip >= static_cast<int> (clips.size()) || bars == 0)
+        return false;
+
+    pushUndo();
+    auto& clip = clips[static_cast<size_t> (selectedClip)];
+    const auto delta = juce::jlimit (-(clip.startBar - 1), clip.lengthBars - 1, bars);
+    clip.startBar += delta;
+    clip.lengthBars -= delta;
+    clip.crossfadeBars = juce::jmin (clip.crossfadeBars, static_cast<float> (clip.lengthBars) * 0.45f);
+    const auto secondsPerBar = 240.0 / juce::jmax (1.0, engine.getBpm());
+    clip.sourceOffsetSeconds = juce::jmax (0.0, clip.sourceOffsetSeconds + delta * secondsPerBar);
+    publishTimeline();
+    repaint();
+    return true;
+}
+
+bool ArrangeView::trimSelectedRight (int bars)
+{
+    if (selectedClip < 0 || selectedClip >= static_cast<int> (clips.size()) || bars == 0)
+        return false;
+
+    pushUndo();
+    auto& clip = clips[static_cast<size_t> (selectedClip)];
+    clip.lengthBars = juce::jlimit (1, nc::limits::maxBars, clip.lengthBars + bars);
+    clip.crossfadeBars = juce::jmin (clip.crossfadeBars, static_cast<float> (clip.lengthBars) * 0.45f);
+    publishTimeline();
+    repaint();
+    return true;
+}
+
+bool ArrangeView::moveSelectedTrack (int deltaTracks)
+{
+    if (selectedClip < 0 || selectedClip >= static_cast<int> (clips.size()) || deltaTracks == 0)
+        return false;
+
+    pushUndo();
+    auto& clip = clips[static_cast<size_t> (selectedClip)];
+    clip.track = juce::jlimit (0, juce::jmax (0, shownTracks() - 1), clip.track + deltaTracks);
+    publishTimeline();
+    repaint();
+    return true;
+}
+
+bool ArrangeView::cycleSelectedCompTake (int delta)
+{
+    if (selectedClip < 0 || selectedClip >= static_cast<int> (clips.size()))
+        return false;
+
+    pushUndo();
+    auto& clip = clips[static_cast<size_t> (selectedClip)];
+    clip.compTake = juce::jmax (0, clip.compTake + delta);
+    publishTimeline();
+    repaint();
+    return true;
+}
+
+bool ArrangeView::applyCrossfadeSelected()
+{
+    if (selectedClip < 0 || selectedClip >= static_cast<int> (clips.size()))
+        return false;
+
+    pushUndo();
+    auto& clip = clips[static_cast<size_t> (selectedClip)];
+    const auto budget = static_cast<float> (clip.lengthBars) * 0.45f;
+    clip.crossfadeBars = clip.crossfadeBars > 0.0f ? 0.0f : juce::jmin (0.5f, budget);
     publishTimeline();
     repaint();
     return true;

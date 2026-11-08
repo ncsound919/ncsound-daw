@@ -219,3 +219,47 @@ TEST_CASE ("an empty project round trips")
     REQUIRE (restored->tracks.empty());
     REQUIRE (restored->bpm == 120.0);
 }
+
+TEST_CASE ("non-JSON number tokens are refused instead of parsed by strtod")
+{
+    REQUIRE_FALSE (json::Parser::parse ("NaN").has_value());
+    REQUIRE_FALSE (json::Parser::parse ("Infinity").has_value());
+    REQUIRE_FALSE (json::Parser::parse ("-Infinity").has_value());
+    REQUIRE_FALSE (json::Parser::parse ("0x10").has_value());
+    REQUIRE_FALSE (json::Parser::parse ("[01]").has_value());
+    REQUIRE_FALSE (fromJson ("{\"bpm\":NaN}").has_value());
+}
+
+TEST_CASE ("hostile numeric fields never overflow the int cast")
+{
+    const auto doc = fromJson ("{\"version\":9,\"bpm\":1e999,\"clips\":[{\"assetPath\":\"a.wav\",\"compTake\":1e20,\"track\":1e20}],"
+                              "\"tracks\":[{\"gainDb\":1e999}]}");
+
+    REQUIRE (doc.has_value());
+    REQUIRE (std::isfinite (doc->bpm)); // 1e999 parses to inf -> documented fallback
+
+    const auto clean = sanitize (*doc);
+    REQUIRE (clean.clips.size() == 1);
+    REQUIRE (clean.clips[0].compTake >= 0);
+    REQUIRE (clean.clips[0].compTake < static_cast<int> (comping::CompLane::maxTakes));
+    REQUIRE (clean.clips[0].track <= nc::limits::defaultActiveTracks - 1);
+    REQUIRE (clean.tracks.size() == 1);
+    REQUIRE (std::isfinite (clean.tracks[0].gainDb));
+}
+
+TEST_CASE ("a sanitised document writes only valid JSON numbers")
+{
+    ProjectDocument doc;
+    auto clip = richDocument().clips[0];
+    clip.gainDb = std::nan ("");
+    clip.fadeInBars = std::nan ("");
+    doc.clips = { clip };
+    doc.tracks = { TrackState {} };
+    doc.tracks[0].gainDb = std::nan ("");
+
+    const auto text = toJson (sanitize (doc));
+
+    REQUIRE (text.find ("nan") == std::string::npos);
+    REQUIRE (text.find ("inf") == std::string::npos);
+    REQUIRE (json::Parser::parse (text).has_value());
+}

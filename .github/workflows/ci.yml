@@ -5,14 +5,129 @@ on:
   pull_request:
 
 jobs:
-  windows:
+  engine:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        config: [Debug]
+        include:
+          - os: windows-latest
+            config: Release
+          # Release optimisations can change warnings/behaviour in the header
+          # engine too, and only GCC ever compiled it in Release before.
+          - os: ubuntu-latest
+            config: Release
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/CPM
+          key: ${{ runner.os }}-cpm-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-cpm-
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Configure (engine + tests)
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.config }}
+      - name: Build
+        run: cmake --build build --config ${{ matrix.config }}
+      - name: Test
+        run: ctest --test-dir build -C ${{ matrix.config }} --output-on-failure
+
+  native-windows:
+    runs-on: windows-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Web UI build (required for NCSoundHub BinaryData)
+        working-directory: ui
+        run: |
+          npm ci
+          npm run build
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Configure (full app)
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Test (engine + JUCE suites)
+        run: ctest --test-dir build -C Release --output-on-failure
+
+  pluginval:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Web UI build (required for NCSoundHub BinaryData)
+        working-directory: ui
+        run: |
+          npm ci
+          npm run build
       - uses: ilammy/msvc-dev-cmd@v1
-      - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
-      - name: Build
-        run: cmake --build build
-      - name: Test
-        run: ctest --test-dir build --output-on-failure
+      - name: Configure (full app)
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build ChopStation VST3
+        run: cmake --build build --config Release --target NCChopStation
+      - uses: Tracktion/pluginval/validate@v2
+        with:
+          plugins: build/plugins/chopstation/NCChopStation_artefacts/Release/VST3/Chop Station.vst3
+          strictness-level: 5
+          args: --skip-gui-tests
+
+  collab:
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - working-directory: collab
+        run: npm ci
+      - working-directory: collab
+        run: npm run typecheck
+      - working-directory: collab
+        run: npm test
+
+  collab-container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build relay image
+        run: docker build -t ncsound-collab -f collab/Dockerfile collab
+      - name: Smoke — health endpoint
+        run: |
+          docker run -d --name collab-smoke -p 8787:8787 ncsound-collab
+          sleep 8
+          curl -fsS http://127.0.0.1:8787/api/health
+          docker rm -f collab-smoke
+
+  ui:
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - working-directory: ui
+        run: npm ci
+      - working-directory: ui
+        run: npm run typecheck
+      - working-directory: ui
+        run: npm test
+      - working-directory: ui
+        run: npm run build

@@ -59,6 +59,6 @@ docs/superpowers/plans/pitch-test/REPORT.md (ChordStudio bench, copied pattern)
 
 ## Next steps
 
-1. UI: native `Widgets::Knob`×9 (MasterStrip global, ChannelStrip track+instrument) or React `PitchKnobs` copy (approve roadmap deviation).
+1. UI: **Done (React scaffold)** — `VST DAW/ui/` Vite app, `console-ui` sync target `vstaw-ui`, `PitchKnobs` (global/track/instrument), `bridge.ts` (getState/set*Pitch). Next: `app/Source/WebViewBridge.cpp` (JUCE WebView2 host) + `juce_add_binary_data` for `ui/dist`, then wire `AudioEngine` pitch fields to bridge routes.
 2. Audio: vendor `third_party/signalsmith-stretch/` + `StretchCache` for clips.
 3. Automation: extend `AutomationParam` with pitch lanes if wanted.

@@ -41,4 +41,13 @@ double clipGainAt (double localSeconds,
                    double lengthSeconds,
                    double fadeInSeconds,
                    double fadeOutSeconds) noexcept;
+
+/** Equal-power clip gain for crossfades (Pro Tools/Cubase default): the
+    fade-in rises as sin(t*PI/2) and the fade-out falls as cos(t*PI/2), so
+    uncorrelated material holds loudness through the overlap instead of
+    dipping ~3-6 dB the way linear crossfades do. Same guards as clipGainAt. */
+double clipGainCrossfadeAt (double localSeconds,
+                            double lengthSeconds,
+                            double fadeInSeconds,
+                            double fadeOutSeconds) noexcept;
 } // namespace nc::engine

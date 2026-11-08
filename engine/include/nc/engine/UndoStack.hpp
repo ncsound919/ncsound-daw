@@ -19,7 +19,24 @@ template <typename State>
 class UndoStack
 {
 public:
-    static constexpr std::size_t maxDepth = 100;
+    static constexpr std::size_t defaultMaxDepth = 100;
+
+    UndoStack() = default;
+    explicit UndoStack (std::size_t depthLimit) : maxDepth_ (depthLimit)
+    {
+        trimToDepth();
+    }
+
+    std::size_t maxDepthLimit() const noexcept { return maxDepth_; }
+
+    /** Deepens or shallows the history. Shrinking trims the oldest entries.
+        Not noexcept: trimming move-assigns State values, and a throwing State
+        must propagate instead of terminating. */
+    void setMaxDepth (std::size_t depthLimit)
+    {
+        maxDepth_ = depthLimit;
+        trimToDepth();
+    }
 
     void clear() noexcept
     {
@@ -31,10 +48,7 @@ public:
     void push (State before)
     {
         past_.push_back (std::move (before));
-
-        if (past_.size() > maxDepth)
-            past_.erase (past_.begin());
-
+        trimToDepth();
         future_.clear();
     }
 
@@ -68,6 +82,19 @@ public:
     std::size_t redoDepth() const noexcept { return future_.size(); }
 
 private:
+    void trimToDepth()
+    {
+        const auto trim = [] (std::vector<State>& stack, std::size_t limit) {
+            if (stack.size() > limit)
+                stack.erase (stack.begin(),
+                             stack.begin() + static_cast<std::ptrdiff_t> (stack.size() - limit));
+        };
+
+        trim (past_, maxDepth_);
+        trim (future_, maxDepth_);
+    }
+
+    std::size_t maxDepth_ = defaultMaxDepth;
     std::vector<State> past_;
     std::vector<State> future_;
 };

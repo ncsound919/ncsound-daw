@@ -1,6 +1,7 @@
 #pragma once
 
 #include <nc/engine/ProjectState.hpp>
+#include <nc/engine/UndoStack.hpp>
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -33,9 +34,28 @@ public:
     void zoomOut();
     void refresh();
 
-    // One level of undo. Erasing and splitting clips were irreversible.
+    // Multi-level undo/redo (engine UndoStack, depth 100 default).
+    // Every edit pushes the *before* state; drags push once at gesture start.
     bool undo();
-    bool canUndo() const { return hasUndo; }
+    bool redo();
+    bool canUndo() const { return undoStack.canUndo(); }
+    bool canRedo() const { return undoStack.canRedo(); }
+    std::size_t undoDepth() const { return undoStack.undoDepth(); }
+    std::size_t redoDepth() const { return undoStack.redoDepth(); }
+    void setUndoDepth (std::size_t depth) { undoStack.setMaxDepth (depth); }
+
+    // Keyboard clip editing (Pro Tools/Cubase pattern): Tab cycles clips,
+    // Left/Right nudges, Shift+Left/Right trims, Up/Down moves track,
+    // ,/. cycles comp takes, C toggles an equal-power crossfade.
+    // Each returns false when there is no selected clip to edit.
+    bool selectNextClip();
+    bool selectPrevClip();
+    bool nudgeSelected (int bars);
+    bool trimSelectedLeft (int bars);
+    bool trimSelectedRight (int bars);
+    bool moveSelectedTrack (int deltaTracks);
+    bool cycleSelectedCompTake (int delta);
+    bool applyCrossfadeSelected();
 
     // Opens the piano-roll editor for the selected MIDI clip (or the clip
     // under double-click). Edits are undoable and publish immediately.
@@ -46,7 +66,21 @@ public:
     bool splitSelectedAtPlayhead();
     bool duplicateSelected();
     bool deleteSelected();
+
+    // Web workspace write path. Indices address the *audio* schedule (the
+    // order publishTimeline() hands to AudioEngine), so MIDI clips in between
+    // cannot shift them. Each edit is undoable and republishes immediately.
+    bool webEditClip (int scheduleIndex, const juce::var& patch);
+    bool webSplitClip (int scheduleIndex, double bar);
+    bool webDuplicateClip (int scheduleIndex);
+    bool webDeleteClip (int scheduleIndex);
+    void webSetLoopRange (double startBar, double endBar);
     bool hasSelectedClip() const { return selectedClip >= 0; }
+    int clipCount() const { return static_cast<int> (clips.size()); }
+
+    /** Empties the timeline for a new session: clips, selection and undo all
+        go, and the engine schedule is republished empty. */
+    void clearSession();
 
     // Loads the file through the engine and places it on the selected track.
     bool importAudioFile (const juce::File& file);
@@ -89,11 +123,19 @@ private:
         float gainDb = 0.0f;
         float fadeInBars = 0.25f;
         float fadeOutBars = 0.25f;
+        float crossfadeBars = 0.0f; // equal-power overlap; 0 = linear fades
+        int compTake = 0;           // active comp take (0 = first)
         int assetId = -1;
         double sourceOffsetSeconds = 0.0;
         std::vector<nc::engine::MidiNote> notes; // MIDI clips: clip-relative beats
         std::vector<nc::engine::MidiCC> ccs;
         std::vector<nc::engine::MidiBend> bends;
+    };
+
+    struct Snapshot
+    {
+        std::vector<Clip> clips;
+        int selectedClip = -1;
     };
 
     enum class DragMode { none, move, trimLeft, trimRight, fadeIn, fadeOut, gain };
@@ -138,7 +180,6 @@ private:
     InspectorPanel inspector;
 
     std::vector<Clip> clips;
-    std::array<bool, AudioEngine::trackCount> armed {};
     int selectedTrack = 0;
     int selectedClip = -1;
     int hoverClip = -1;
@@ -173,9 +214,7 @@ private:
     double viewStartBar = 1.0;
     float lastPlayheadX = -1.0f;
 
-    std::vector<Clip> undoSnapshot;
-    int undoSelectedClip = -1;
-    bool hasUndo = false;
+    nc::engine::UndoStack<Snapshot> undoStack;
     bool wasPlaying = false;
 
     std::array<juce::Rectangle<int>, 6> toolRects;

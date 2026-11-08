@@ -89,6 +89,7 @@ Registry loadRegistry (const juce::File& jsonFile)
         plugin.note = property (*object, "note");
         plugin.vst3BundleName = property (*object, "vst3");
         plugin.status = parseStatus (property (*object, "status"));
+        plugin.stock = property (*object, "stock") == "1";
 
         if (plugin.id.isNotEmpty() && plugin.name.isNotEmpty())
             registry.plugins.push_back (std::move (plugin));
