@@ -193,8 +193,12 @@ TEST_CASE ("State survives a save and reload", "[eightoheight]")
              == Approx (4.0f).margin (0.01));
 }
 
-TEST_CASE ("All notes off silences the voice pool", "[eightoheight]")
+TEST_CASE ("All notes off tails out and all sound off silences at once", "[eightoheight]")
 {
+    // CC123 is a release: the 808 tail must ring out and then empty the pool.
+    // CC120 is the panic and must go silent on the same block. The earlier
+    // version of this case demanded instant silence from CC123, which no
+    // sampler-voice 808 does and which contradicted allNotesOff (allowTail).
     EightOHeightProcessor processor;
     prepare (processor);
 
@@ -207,11 +211,38 @@ TEST_CASE ("All notes off silences the voice pool", "[eightoheight]")
 
     REQUIRE (processor.activeVoiceCount() > 0);
 
-    juce::AudioBuffer<float> buffer (2, 256);
     juce::MidiBuffer allOff;
     allOff.addEvent (juce::MidiMessage::allNotesOff (1), 0);
-    processor.processBlock (buffer, allOff);
+
+    {
+        juce::AudioBuffer<float> tail (2, 256);
+        processor.processBlock (tail, allOff);
+        REQUIRE (peakOf (tail) > 1.0e-4f);
+    }
+
+    // Release is exponential, roughly 73 ms to -80 dB, so let it run out.
+    for (int block = 0; block < 32; ++block)
+    {
+        juce::AudioBuffer<float> tail (2, 512);
+        juce::MidiBuffer empty;
+        processor.processBlock (tail, empty);
+    }
 
     REQUIRE (processor.activeVoiceCount() == 0);
-    REQUIRE (peakOf (buffer) < 1.0e-6f);
+
+    {
+        auto on = noteOn (40);
+        juce::AudioBuffer<float> buffer (2, 128);
+        processor.processBlock (buffer, on);
+        REQUIRE (processor.activeVoiceCount() > 0);
+    }
+
+    juce::MidiBuffer panic;
+    panic.addEvent (juce::MidiMessage::allSoundOff (1), 0);
+
+    juce::AudioBuffer<float> quiet (2, 256);
+    processor.processBlock (quiet, panic);
+
+    REQUIRE (processor.activeVoiceCount() == 0);
+    REQUIRE (peakOf (quiet) < 1.0e-6f);
 }
