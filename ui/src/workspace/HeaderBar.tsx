@@ -23,6 +23,23 @@ export interface HeaderBarProps {
   mixologyPresets?: string[];
   onApplyMixology?: (index: number) => void;
   /** Import Audio hook; the menu item stays disabled without it. */
+  /** Session and export hooks; each menu entry stays disabled without its route. */
+  onOpenSession?: () => void;
+  onSaveSession?: () => void;
+  onSaveSessionAs?: () => void;
+  onMixdownWav?: () => void;
+  onExportStems?: () => void;
+  onCollectMedia?: () => void;
+  /** Master-insert hook; the remove entry stays disabled without it. */
+  onRemoveMasterPlugin?: () => void;
+  canRemoveMasterPlugin?: boolean;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  undoDepth?: number;
+  redoDepth?: number;
+  onTranscribeSelected?: () => void;
+  onSelectPrevious?: () => void;
+  onSelectNext?: () => void;
   onImportAudio?: () => void;
   onFit?: () => void;
 }
@@ -57,6 +74,21 @@ export function HeaderBar({
   onLoadMasterPlugin,
   mixologyPresets,
   onApplyMixology,
+  onOpenSession,
+  onSaveSession,
+  onSaveSessionAs,
+  onMixdownWav,
+  onExportStems,
+  onCollectMedia,
+  onRemoveMasterPlugin,
+  canRemoveMasterPlugin = false,
+  onUndo,
+  onRedo,
+  undoDepth = 0,
+  redoDepth = 0,
+  onTranscribeSelected,
+  onSelectPrevious,
+  onSelectNext,
   onImportAudio,
   onFit,
 }: HeaderBarProps) {
@@ -163,6 +195,10 @@ export function HeaderBar({
     onView(next.id);
     tabRefs.current[next.id]?.focus();
   };
+  // A host-wired entry when its route exists, otherwise an honest placeholder.
+  const wired = (label: string, run?: () => void): Item =>
+    run ? { label, run } : { label, disabled: true, hint: "Not wired to the bridge yet" };
+
 
   const menus: { name: string; entries: Entry[] }[] = [
     {
@@ -170,15 +206,22 @@ export function HeaderBar({
       entries: [
         { heading: "SESSION" },
         { label: "Reset Transport", run: onNewSession },
-        { label: "Open Session…", disabled: true, hint: "Not wired to the bridge yet" },
-        { label: "Save Session", disabled: true, hint: "Not wired to the bridge yet" },
-        ...(onImportAudio
-          ? [{ label: "Import Audio…", run: onImportAudio }]
-          : [{ label: "Import Audio…", disabled: true, hint: "Not wired to the bridge yet" }]),
+        wired("Open Session…", onOpenSession),
+        wired("Save Session", onSaveSession),
+        wired("Save Session As…", onSaveSessionAs),
+        wired("Import Audio…", onImportAudio),
+        wired("Collect Media…", onCollectMedia),
         "separator",
         { heading: "EXPORT" },
-        { label: "Mixdown WAV…", disabled: true, hint: "Not wired to the bridge yet" },
-        { label: "Export Stems…", disabled: true, hint: "Not wired to the bridge yet" },
+        wired("Mixdown WAV…", onMixdownWav),
+        wired("Export Stems…", onExportStems),
+        { label: "Mixdown FLAC…", disabled: true, hint: "Desktop app FILE → Export" },
+        { label: "Mixdown MP3…", disabled: true, hint: "Desktop app FILE → Export" },
+        { label: "Audition Stems…", disabled: true, hint: "Desktop app FILE → Export" },
+        "separator",
+        { heading: "AGENT" },
+        { label: "Apply Mix Plan…", disabled: true, hint: "Desktop app FILE → Agent" },
+        { label: "Ask Mix Assistant…", disabled: true, hint: "Desktop app FILE → Agent" },
       ],
     },
     {
@@ -202,16 +245,74 @@ export function HeaderBar({
           run: onDeleteSelected,
           disabled: !hasSelection || !onDeleteSelected,
           hint: hasSelection && onDeleteSelected ? undefined : "Select a clip first",
+        {
+          label: "Select All Clips",
+          disabled: true,
+          hint: "Desktop app EDIT → Select All",
+        },
+        "separator",
+        { heading: "UNDO" },
+        {
+          label: `Undo${undoDepth ? ` (${undoDepth})` : ""}`,
+          run: onUndo,
+          disabled: !onUndo || !undoDepth,
+          hint: !onUndo ? "Not wired to the bridge yet" : "Nothing to undo",
+        },
+        {
+          label: `Redo${redoDepth ? ` (${redoDepth})` : ""}`,
+          run: onRedo,
+          disabled: !onRedo || !redoDepth,
+          hint: !onRedo ? "Not wired to the bridge yet" : "Nothing to redo",
+        },
         },
         "separator",
         { heading: "MIDI" },
         { label: "Edit MIDI Clip", run: () => onView("piano") },
         { label: "Edit Automation Lanes", run: () => onView("automation") },
+        onTranscribeSelected
+          ? { label: "Transcribe Clip to MIDI", run: onTranscribeSelected }
+          : {
+              label: "Transcribe Clip to MIDI",
+              disabled: true,
+              hint: "Select an audio clip first",
+            },
+        { label: "Import MIDI File…", disabled: true, hint: "Desktop app FILE → Import" },
+        { label: "MIDI Learn…", disabled: true, hint: "Desktop app EDIT → MIDI" },
+        "separator",
+        { heading: "MARKERS" },
+        {
+          label: "Add Marker at Playhead",
+          disabled: true,
+          hint: "Desktop app EDIT → Markers",
+        },
+        {
+          label: "Go to Next Marker",
+          disabled: true,
+          hint: "Desktop app EDIT → Markers",
+        },
+        "separator",
+        { heading: "AUDIOSUITE" },
+        { label: "Reverse Clip", disabled: true, hint: "Desktop app EDIT → Audiosuite" },
+        { label: "Normalize Clip", disabled: true, hint: "Desktop app EDIT → Audiosuite" },
+        "separator",
+        { heading: "MASTER INSERT" },
+        ...(onLoadMasterPlugin
+          ? ([{ label: "Load Master Plugin…", run: onLoadMasterPlugin }] as Entry[])
+        onRemoveMasterPlugin && canRemoveMasterPlugin
+          ? { label: "Remove Master Plugin", run: onRemoveMasterPlugin }
+          : {
+              label: "Remove Master Plugin",
+              disabled: true,
+              hint: !onRemoveMasterPlugin
+                ? "Not wired to the bridge yet"
+                : "No master plugin loaded",
+            },
+        "separator",
+        { heading: "MASTER RACK" },
+        { label: "Automix Snapshot", disabled: true, hint: "Desktop app EDIT → Master Rack" },
         ...(onScanPlugins
           ? (["separator", { label: "Scan Plugins (VST3)", run: onScanPlugins }] as Entry[])
           : []),
-        ...(onLoadMasterPlugin
-          ? ([{ label: "Load Master Plugin…", run: onLoadMasterPlugin }] as Entry[])
           : []),
         ...(mixologyPresets && mixologyPresets.length > 0 && onApplyMixology
           ? ([
@@ -230,7 +331,19 @@ export function HeaderBar({
       entries: [
         { heading: "TRACK" },
         {
-          label: "Add Track",
+          label: "Add Instrument Track",
+          run: onAddTrack,
+          disabled: !canAddTrack,
+          hint: canAddTrack ? undefined : "Maximum 8 tracks",
+        },
+        {
+          label: "Add Audio Track",
+          run: onAddTrack,
+          disabled: !canAddTrack,
+          hint: canAddTrack ? undefined : "Maximum 8 tracks",
+        },
+        {
+          label: "Add Return Track",
           run: onAddTrack,
           disabled: !canAddTrack,
           hint: canAddTrack ? undefined : "Maximum 8 tracks",
@@ -241,6 +354,9 @@ export function HeaderBar({
           disabled: !canRemoveTrack,
           hint: canRemoveTrack ? undefined : "At least one track",
         },
+        wired("Select Previous Track", onSelectPrevious),
+        wired("Select Next Track", onSelectNext),
+        "separator",
         "separator",
         { label: "Mute Selected Track", run: onMuteSelected },
         { label: "Solo Selected Track", run: onSoloSelected },
@@ -250,6 +366,8 @@ export function HeaderBar({
       name: "HELP",
       entries: [
         { label: "About NCSound Music Hub", run: () => setDialog("about") },
+        { label: "Preferences", run: () => setDialog("prefs") },
+        { label: "Documentation", disabled: true, hint: "Ships with the desktop app" },
         { label: "Keyboard Shortcuts", run: () => setDialog("keys") },
       ],
     },

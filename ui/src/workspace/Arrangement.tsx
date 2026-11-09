@@ -990,7 +990,10 @@ export function Arrangement({
                       {foldedTracks[track.index] ? "▸" : "▾"}
                     </button>
                     <span className="ws-head-name" title={track.name}>
-                      TRACK {track.index + 1}
+                      {track.name}
+                  </div>
+
+                  <div className="ws-head-row">
                     </span>
                     <button
                       className="ws-mini-btn"
@@ -1028,10 +1031,12 @@ export function Arrangement({
                     >
                       R
                     </button>
-                  </div>
-
-                  <div className="ws-head-row">
-                    <span className="ws-head-db">{track.gainDb.toFixed(1)} dB</span>
+                    <span
+                      className="ws-head-db"
+                      title={`T${track.index + 1} · ${track.gainDb.toFixed(1)} dB`}
+                    >
+                      {track.gainDb.toFixed(1)} dB
+                    </span>
                     <span className="ws-head-meter" title={`Peak ${Math.round(peak * 100)}%`}>
                       <i style={{ width: `${Math.min(100, peak * 100)}%` }} />
                     </span>

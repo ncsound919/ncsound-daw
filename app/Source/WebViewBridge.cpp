@@ -248,6 +248,9 @@ juce::var MainComponent::buildState() const
     o->setProperty ("bpm", engine.getBpm());
     o->setProperty ("selectedTrack", selectedTrack);
     o->setProperty ("globalPitch", pitchToVar (engine.globalPitchStack()));
+    o->setProperty ("statusMessage", statusMessage);
+    o->setProperty ("statusAlert", statusAlert);
+    o->setProperty ("hasMasterPlugin", engine.hasMasterPlugin());
     o->setProperty ("projectDirty", false);
     o->setProperty ("undoDepth", static_cast<int> (arrange.undoDepth()));
     o->setProperty ("redoDepth", static_cast<int> (arrange.redoDepth()));
@@ -771,6 +774,43 @@ juce::WebBrowserComponent::Options MainComponent::buildWebOptions()
               // status) when the file lands. Cancelling changes nothing.
               importAudioFile();
               done (buildState());
+        { "openSession", [this] (const Args&, Completion done)
+          {
+              // Same FileChooser path as FILE -> Open Session; completion
+              // pushes fresh state, cancelling changes nothing.
+              handleMenuResult (1002);
+              done (buildState());
+          } },
+        { "saveSession", [this] (const Args&, Completion done)
+          {
+              handleMenuResult (1003);
+              done (buildState());
+          } },
+        { "saveSessionAs", [this] (const Args&, Completion done)
+          {
+              handleMenuResult (1007);
+              done (buildState());
+          } },
+        { "mixdownWav", [this] (const Args&, Completion done)
+          {
+              handleMenuResult (1004);
+              done (buildState());
+          } },
+        { "exportStems", [this] (const Args&, Completion done)
+          {
+              handleMenuResult (1013);
+              done (buildState());
+          } },
+        { "collectMedia", [this] (const Args&, Completion done)
+          {
+              handleMenuResult (1006);
+              done (buildState());
+          } },
+        { "removeMasterPlugin", [this] (const Args&, Completion done)
+          {
+              engine.removeMasterPlugin();
+              done (buildState());
+          } },
           } },
         { "setChannelParam", [this] (const Args& a, Completion done)
           {

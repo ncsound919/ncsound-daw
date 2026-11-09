@@ -203,6 +203,41 @@ export default function App() {
     if (!backend.embedded) return;
     backend.importAudio().then(setState).catch(console.error);
   }, []);
+  const handleOpenSession = useCallback(() => {
+    if (!backend.embedded) return;
+    backend.openSession().then(setState).catch(console.error);
+  }, []);
+
+  const handleSaveSession = useCallback(() => {
+    if (!backend.embedded) return;
+    backend.saveSession().then(setState).catch(console.error);
+  }, []);
+
+  const handleSaveSessionAs = useCallback(() => {
+    if (!backend.embedded) return;
+    backend.saveSessionAs().then(setState).catch(console.error);
+  }, []);
+
+  const handleMixdownWav = useCallback(() => {
+    if (!backend.embedded) return;
+    backend.mixdownWav().then(setState).catch(console.error);
+  }, []);
+
+  const handleExportStems = useCallback(() => {
+    if (!backend.embedded) return;
+    backend.exportStems().then(setState).catch(console.error);
+  }, []);
+
+  const handleCollectMedia = useCallback(() => {
+    if (!backend.embedded) return;
+    backend.collectMedia().then(setState).catch(console.error);
+  }, []);
+
+  const handleRemoveMasterPlugin = useCallback(() => {
+    if (!backend.embedded) return;
+    backend.removeMasterPlugin().then(setState).catch(console.error);
+  }, []);
+
 
   const handleScan = useCallback(() => {
     if (!backend.embedded) return;
@@ -431,6 +466,13 @@ export default function App() {
           onMasterPluginLoad={handleMasterPluginLoad}
           onScan={handleScan}
           mixologyPresets={mixologyPresets}
+          onOpenSession={handleOpenSession}
+          onSaveSession={handleSaveSession}
+          onSaveSessionAs={handleSaveSessionAs}
+          onMixdownWav={handleMixdownWav}
+          onExportStems={handleExportStems}
+          onCollectMedia={handleCollectMedia}
+          onRemoveMasterPlugin={handleRemoveMasterPlugin}
           onImportAudio={handleImportAudio}
         />
       </ErrorBoundary>

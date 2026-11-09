@@ -173,6 +173,11 @@ export interface AppState {
   globalPitch?: PitchState;
   tracks: TrackInfo[];
   projectDirty?: boolean;
+  /** Last host status line (native setStatus); the strip falls back to it. */
+  statusMessage?: string;
+  statusAlert?: boolean;
+  /** True while the host master chain holds a plugin. */
+  hasMasterPlugin?: boolean;
   transport?: TransportState;
   /** Arrangement order, audio and MIDI together. Every clip route indexes it. */
   clips?: TimelineClip[];

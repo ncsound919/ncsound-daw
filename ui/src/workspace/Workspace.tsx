@@ -77,6 +77,15 @@ export interface WorkspaceProps {
   /** Mixology preset names from the host; the entries hide without them. */
   mixologyPresets?: string[];
   /** Import Audio hook; the menu item stays disabled without it. */
+  /** Session and export hooks; each menu entry stays disabled without its route. */
+  onOpenSession?: () => void;
+  onSaveSession?: () => void;
+  onSaveSessionAs?: () => void;
+  onMixdownWav?: () => void;
+  onExportStems?: () => void;
+  onCollectMedia?: () => void;
+  /** Master-insert hook; the remove entry stays disabled without it. */
+  onRemoveMasterPlugin?: () => void;
   onImportAudio?: () => void;
 }
 
@@ -104,6 +113,13 @@ export function Workspace({
   onMasterPluginLoad,
   onScan,
   mixologyPresets,
+  onOpenSession,
+  onSaveSession,
+  onSaveSessionAs,
+  onMixdownWav,
+  onExportStems,
+  onCollectMedia,
+  onRemoveMasterPlugin,
   onImportAudio,
 }: WorkspaceProps) {
   const [view, setView] = useState<WorkspaceView>(
@@ -367,6 +383,31 @@ export function Workspace({
             : undefined
         }
         onScanPlugins={onScan}
+        onOpenSession={onOpenSession}
+        onSaveSession={onSaveSession}
+        onSaveSessionAs={onSaveSessionAs}
+        onMixdownWav={onMixdownWav}
+        onExportStems={onExportStems}
+        onCollectMedia={onCollectMedia}
+        onUndo={actions.undo}
+        onRedo={actions.redo}
+        undoDepth={state.undoDepth ?? 0}
+        redoDepth={state.redoDepth ?? 0}
+        onTranscribeSelected={
+          clip?.kind !== "midi" && actions.transcribeClip && selectedClip !== null
+            ? () => actions.transcribeClip?.(selectedClip)
+            : undefined
+        }
+        onSelectPrevious={
+          state.selectedTrack > 0 ? () => actions.selectTrack(state.selectedTrack - 1) : undefined
+        }
+        onSelectNext={
+          state.selectedTrack < state.tracks.length - 1
+            ? () => actions.selectTrack(state.selectedTrack + 1)
+            : undefined
+        }
+        onRemoveMasterPlugin={onRemoveMasterPlugin}
+        canRemoveMasterPlugin={Boolean(state.hasMasterPlugin)}
         onImportAudio={onImportAudio}
         onLoadMasterPlugin={openMasterBrowser}
         mixologyPresets={mixologyPresets}
@@ -630,8 +671,8 @@ export function Workspace({
 
       <StatusBar
         hints={VIEW_HINTS[view] ?? ""}
-        message={status?.text}
-        alert={status?.alert}
+        message={status?.text ?? state.statusMessage}
+        alert={status?.alert ?? state.statusAlert ?? false}
         activeTracks={state.tracks.length}
         trackCapacity={8}
         clipCount={clips.length}

@@ -159,6 +159,34 @@ export const backend = {
   importAudio(): Promise<AppState> {
     return call<AppState>("importAudio");
   },
+  openSession(): Promise<AppState> {
+    return call<AppState>("openSession");
+  },
+
+  saveSession(): Promise<AppState> {
+    return call<AppState>("saveSession");
+  },
+
+  saveSessionAs(): Promise<AppState> {
+    return call<AppState>("saveSessionAs");
+  },
+
+  mixdownWav(): Promise<AppState> {
+    return call<AppState>("mixdownWav");
+  },
+
+  exportStems(): Promise<AppState> {
+    return call<AppState>("exportStems");
+  },
+
+  collectMedia(): Promise<AppState> {
+    return call<AppState>("collectMedia");
+  },
+
+  removeMasterPlugin(): Promise<AppState> {
+    return call<AppState>("removeMasterPlugin");
+  },
+
 
   undo(): Promise<AppState> {
     return call<AppState>("undo");

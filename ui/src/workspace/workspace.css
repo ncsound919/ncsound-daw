@@ -1108,7 +1108,9 @@
 }
 
 .ws-strip.is-master {
+  min-height: 0;
   min-width: 0;
+  overflow-y: auto;
   width: 100%;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 12%),

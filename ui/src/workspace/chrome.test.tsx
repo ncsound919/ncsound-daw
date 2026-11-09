@@ -189,4 +189,124 @@ describe("Import Audio", () => {
     fireEvent.click(screen.getByRole("button", { name: "FILE" }));
     expect(screen.getByRole("menuitem", { name: /Import Audio/ })).toBeDisabled();
   });
+
+describe("session and export menus", () => {
+  const session = () => ({
+    onOpenSession: vi.fn(),
+    onSaveSession: vi.fn(),
+    onSaveSessionAs: vi.fn(),
+    onMixdownWav: vi.fn(),
+    onExportStems: vi.fn(),
+    onCollectMedia: vi.fn(),
+  });
+
+  it("wires every session and export entry when the host routes exist", () => {
+    const hooks = session();
+    render(<Workspace state={STATE} transport={TRANSPORT} actions={actions()} {...hooks} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "FILE" }));
+    for (const name of [
+      /Open Session/,
+      /Save Session$/,
+      /Save Session As/,
+      /Mixdown WAV/,
+      /Export Stems/,
+      /Collect Media/,
+    ]) {
+      expect(screen.getByRole("menuitem", { name })).toBeEnabled();
+    }
+    fireEvent.click(screen.getByRole("menuitem", { name: /Save Session$/ }));
+    expect(hooks.onSaveSession).toHaveBeenCalled();
+  });
+
+  it("keeps session entries honest without host routes", () => {
+    render(<Workspace state={STATE} transport={TRANSPORT} actions={actions()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "FILE" }));
+    for (const name of [
+      /Open Session/,
+      /Save Session$/,
+      /Save Session As/,
+      /Mixdown WAV/,
+      /Export Stems/,
+      /Collect Media/,
+    ]) {
+      expect(screen.getByRole("menuitem", { name })).toBeDisabled();
+    }
+  });
+
+  it("says where the desktop-only export formats live", () => {
+    render(<Workspace state={STATE} transport={TRANSPORT} actions={actions()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "FILE" }));
+    for (const name of [/Mixdown FLAC/, /Mixdown MP3/, /Audition Stems/]) {
+      const item = screen.getByRole("menuitem", { name });
+      expect(item).toBeDisabled();
+      expect(item.title).toMatch(/Desktop app/);
+    }
+  });
+});
+
+describe("edit menu parity", () => {
+  it("wires undo and redo with their depths", () => {
+    const list = { ...actions(), undo: vi.fn(), redo: vi.fn() };
+    render(
+      <Workspace
+        state={{ ...STATE, undoDepth: 2, redoDepth: 1 }}
+        transport={TRANSPORT}
+        actions={list}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "EDIT" }));
+    expect(screen.getByRole("menuitem", { name: /Undo \(2\)/ })).toBeEnabled();
+    expect(screen.getByRole("menuitem", { name: /Redo \(1\)/ })).toBeEnabled();
+    fireEvent.click(screen.getByRole("menuitem", { name: /Undo \(2\)/ }));
+    expect(list.undo).toHaveBeenCalled();
+  });
+
+  it("transcribes the selected audio clip from the MIDI section", () => {
+    const list = { ...actions(), transcribeClip: vi.fn() };
+    render(
+      <Workspace
+        state={{
+          ...STATE,
+          clips: [
+            {
+              track: 0,
+              startBar: 1,
+              lengthBars: 4,
+              assetId: 0,
+              gainDb: 0,
+              name: "INTRO",
+              kind: "audio",
+            },
+          ],
+        }}
+        transport={TRANSPORT}
+        actions={list}
+      />,
+    );
+
+    const clip = screen.getByRole("group", { name: /INTRO/ });
+    clip.focus();
+    fireEvent.keyDown(clip, { key: "Enter" });
+    fireEvent.click(screen.getByRole("button", { name: "EDIT" }));
+    const item = screen.getByRole("menuitem", { name: /Transcribe Clip to MIDI/ });
+    expect(item).toBeEnabled();
+    fireEvent.click(item);
+    expect(list.transcribeClip).toHaveBeenCalledWith(0);
+  });
+
+  it("marks the desktop-only edit entries with where they live", () => {
+    render(<Workspace state={STATE} transport={TRANSPORT} actions={actions()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "EDIT" }));
+    for (const name of [/MIDI Learn/, /Add Marker/, /Reverse Clip/, /Automix/]) {
+      const item = screen.getByRole("menuitem", { name });
+      expect(item).toBeDisabled();
+      expect(item.title).toMatch(/Desktop app/);
+    }
+  });
+});
 });

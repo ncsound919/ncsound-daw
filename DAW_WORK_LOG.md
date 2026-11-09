@@ -702,3 +702,44 @@ and destroyed.
 
 Verified on this source: `ctest --test-dir build -j 4` passes **160/160** in
 247.6 s, and `[catalog]` passes 9 cases with 52 assertions.
+
+**Header size, channel cutoff, 8-track names (TDD, 2026-11-09).** Finished the
+follow-ups: the web header now mirrors the native menu sectors, the master
+strip no longer clips its tips box, and all eight arrange headers show full
+names.
+
+- Track names: M/S/R moved to the second header row (name owns row one) and
+  the peak meter flexes, so DRUMS..AUX 2 render unclipped at ~120 px.
+  arrange.test.tsx pins the row structure and the `0.0 dB` text with the full
+  `T2 · 0.0 dB` title. Verified in the dev page (all 8 names fully visible).
+- Channel cutoff: the Mix master strip can outgrow short windows and
+  `.ws-mixbody` hides the excess, cutting the tips box mid-line. The master
+  strip now scrolls internally (`min-height: 0; overflow-y: auto`); probed
+  1280x800 and 900x600 with zero hard-clipped elements.
+- Status strip: native `setStatus` lines now ride `buildState`
+  (`statusMessage`/`statusAlert`) into `AppState`; the strip falls back to
+  them when no local flash is active. Workspace.test.tsx covers it.
+- Session/export routes (all reuse the existing FileChooser menu handlers):
+  openSession, saveSession, saveSessionAs, mixdownWav, exportStems,
+  collectMedia, plus removeMasterPlugin and a `hasMasterPlugin` state bit.
+  Regenerated routes (48), bridge methods, App handlers, Workspace props.
+- Header parity: FILE gains SESSION/EXPORT/AGENT sectors (Save As, Collect
+  Media, Mixdown WAV, Export Stems wired; FLAC/MP3/Audition and the Agent
+  pair honest-disabled with their desktop locations); EDIT gains
+  UNDO with depths, Transcribe Clip to MIDI, MARKERS, AUDIOSUITE, MASTER
+  INSERT (Load moved here + wired Remove), MASTER RACK, Select All;
+  TRACK has the three kind-specific adds plus select previous/next;
+  HELP gains Preferences (opens the prefs dialog) and an honest
+  Documentation row. chrome.test.tsx covers wired enablement/calls,
+  honest-disabled states and desktop-location hints (14/14).
+- Verified: tsc exit 0, vitest 9 files / 71 tests pass, vite build exit 0,
+  dev-page CDP check of the FILE and EDIT menus, native wrapper rebuild exit
+  0 (only pre-existing AudioEngine/SpscQueue warnings), ctest 160/160 pass,
+  desktop CDP smoke on the relinked exe: FILE menu 6 wired entries enabled +
+  5 desktop-only disabled, Save Session with no project file returns
+  NO PROJECT FILE YET / USE SAVE SESSION AS in the strip (full route round
+  trip), all 16 track headers render full names, master tips reachable
+  (scrolls when needed, visible at test size). App closed after smoke so the
+  next relink does not hit LNK1104.
+- Not verified: real FileChooser dialogs, real mixdown/stems output, prefs
+  dialog contents beyond opening, hardware audition of anything audible.
