@@ -30,6 +30,40 @@ void drawLed (juce::Graphics& g, juce::Point<float> centre, float radius, juce::
 }
 } // namespace
 
+/** Extra VST3 folders for this install: `search-paths.txt` next to
+    registry.json (one folder per line, '#' comments) plus the
+    NC_PLUGIN_SEARCH_PATHS environment variable (semicolon separated). These
+    are the folders outside %CommonProgramFiles% that JUCE never scans, which is
+    where local build output and uninstalled bundles live. */
+std::vector<juce::File> pluginSearchRootsFor (const juce::File& registryFile)
+{
+    std::vector<juce::File> roots;
+
+    const auto listFile = registryFile.getParentDirectory().getChildFile ("search-paths.txt");
+
+    if (listFile.existsAsFile())
+    {
+        juce::StringArray lines;
+        listFile.readLines (lines);
+
+        for (const auto& line : lines)
+        {
+            const auto trimmed = line.trim();
+
+            if (trimmed.isNotEmpty() && ! trimmed.startsWithChar ('#'))
+                roots.push_back (juce::File { trimmed });
+        }
+    }
+
+    const auto fromEnvironment = juce::SystemStats::getEnvironmentVariable ("NC_PLUGIN_SEARCH_PATHS", {});
+
+    for (const auto& entry : juce::StringArray::fromTokens (fromEnvironment, ";", ""))
+        if (entry.trim().isNotEmpty())
+            roots.push_back (juce::File { entry.trim() });
+
+    return roots;
+}
+
 MainComponent::MainComponent (juce::File registryFile)
     : registry (loadRegistry (registryFile)),
       engine(),
@@ -44,6 +78,10 @@ MainComponent::MainComponent (juce::File registryFile)
     // The engine catalog shares the browser's registry rows, so each suite
     // plugin is one row that loads its installed VST3 under a stable id.
     engine.pluginCatalog().setRegistryEntries (registry.plugins);
+
+    // Folders of local builds are not in JUCE's VST3 search path, so the browser
+    // would never show them. Set the roots before the startup scan below.
+    engine.pluginCatalog().setAdditionalSearchRoots (pluginSearchRootsFor (registryFile));
 
     addAndMakeVisible (transport);
     addAndMakeVisible (arrange);

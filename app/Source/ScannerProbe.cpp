@@ -15,6 +15,7 @@
 #include "PluginScanner.h"
 
 #include <iostream>
+#include <vector>
 
 namespace
 {
@@ -67,6 +68,16 @@ public:
             const auto registry = nc::loadRegistry (registryFile);
 
             nc::PluginCatalog catalog (registry.plugins);
+
+            // Any further arguments are extra search roots, so the probe can
+            // prove a folder of local builds is scanned without the GUI.
+            std::vector<juce::File> extraRoots;
+
+            for (int i = 1; i < args.size(); ++i)
+                extraRoots.push_back (juce::File { args[i] });
+
+            catalog.setAdditionalSearchRoots (std::move (extraRoots));
+
             const auto scanned = catalog.scanSync();
 
             auto linked = 0;
@@ -88,6 +99,17 @@ public:
                 std::cout << "ROW " << entry.id.toStdString()
                           << " loadable=" << (hasDescription ? 1 : 0)
                           << " name=\"" << entry.name.toStdString() << "\"" << std::endl;
+            }
+
+            for (const auto& entry : catalog.snapshot())
+            {
+                if (! entry.scanned || entry.registryRow)
+                    continue;
+
+                std::cout << "SCANNED name=\"" << entry.name.toStdString()
+                          << "\" instrument=" << (entry.isInstrument ? 1 : 0)
+                          << " file=" << entry.description.fileOrIdentifier.toStdString()
+                          << std::endl;
             }
 
             std::cout << "CATALOG registry=" << registry.plugins.size()

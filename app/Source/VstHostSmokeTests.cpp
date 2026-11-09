@@ -228,3 +228,140 @@ TEST_CASE ("a real VST3 effect loads, processes and round-trips its state", "[.v
     rack.collectGarbage();
     REQUIRE (rack.slot (0, 0).owned == nullptr);
 }
+
+TEST_CASE ("every bundle under NC_TEST_VST3_DIR scans, loads, renders and opens its editor",
+           "[.vst3][bundle-sweep]")
+{
+    const auto rootText = juce::SystemStats::getEnvironmentVariable ("NC_TEST_VST3_DIR", {});
+
+    if (rootText.isEmpty())
+    {
+        WARN ("Set NC_TEST_VST3_DIR to a folder of .vst3 bundles to sweep it");
+        return;
+    }
+
+    juce::ScopedJuceInitialiser_GUI juceInit;
+
+    juce::AudioPluginFormatManager formats;
+    juce::addDefaultFormatsToManager (formats);
+
+    auto* vst3 = findVst3Format (formats);
+    REQUIRE (vst3 != nullptr);
+
+    std::vector<juce::File> bundles;
+    const auto contentsSegment = juce::File::getSeparatorString() + "Contents"
+                               + juce::File::getSeparatorString();
+
+    for (const auto& entry : juce::RangedDirectoryIterator (juce::File { rootText }, true, "*.vst3",
+                                                           juce::File::findFilesAndDirectories))
+    {
+        const auto file = entry.getFile();
+
+        if (file.getFullPathName().containsIgnoreCase (contentsSegment))
+            continue;
+
+        if (vst3->fileMightContainThisPluginType (file.getFullPathName()))
+            bundles.push_back (file);
+    }
+
+    REQUIRE (! bundles.empty());
+
+    // A build tree also holds stale and half-built bundles, so one bad bundle
+    // must not abort the sweep and hide the rest. Every bundle is recorded and
+    // the case fails once, at the end.
+    // Every copy of a module is swept, including the several build directories
+    // this tree keeps, and a failure names the exact copy. A later copy of an
+    // identical module can come back classless from an in-process scan even
+    // though the app's child-process scanner reads it, so the copy is reported
+    // rather than assumed good.
+    juce::StringArray failures;
+    auto instantiated = 0;
+    auto editorsOpened = 0;
+
+    for (const auto& bundle : bundles)
+    {
+        const auto label = bundle.getFullPathName();
+
+        juce::OwnedArray<juce::PluginDescription> descriptions;
+        vst3->findAllTypesForFile (descriptions, bundle.getFullPathName());
+
+        if (descriptions.isEmpty())
+        {
+            failures.add (label + " / no audio class");
+            continue;
+        }
+
+        juce::String error;
+        auto instance = formats.createPluginInstance (*descriptions[0], 48000.0, 512, error);
+
+        if (instance == nullptr)
+        {
+            failures.add (label + " / not instantiable: " + error);
+            continue;
+        }
+
+        instance->prepareToPlay (48000.0, 512);
+
+        const auto channels = juce::jmax (1, instance->getTotalNumInputChannels());
+        juce::AudioBuffer<float> buffer (channels, 512);
+        juce::MidiBuffer midi;
+        auto rendered = true;
+
+        for (int block = 0; block < 4; ++block)
+        {
+            buffer.clear();
+            instance->processBlock (buffer, midi);
+            rendered = rendered && allFinite (buffer);
+        }
+
+        if (! rendered)
+            failures.add (label + " / non-finite output");
+
+        juce::MemoryBlock state;
+        instance->getStateInformation (state);
+
+        if (state.getSize() == 0)
+        {
+            failures.add (label + " / empty state");
+        }
+        else
+        {
+            // setStateInformation returns void, so the round trip is proven by
+            // reading the state back rather than by asserting on a return value.
+            instance->setStateInformation (state.getData(), static_cast<int> (state.getSize()));
+
+            juce::MemoryBlock restored;
+            instance->getStateInformation (restored);
+
+            if (restored.getSize() == 0)
+                failures.add (label + " / state did not round-trip");
+        }
+
+        // Editor presence is part of what a host has to survive. The plugin owns
+        // the editor, so delete it rather than letting the shared code leak it.
+        if (instance->hasEditor())
+        {
+            if (auto* editor = instance->createEditorIfNeeded())
+            {
+                if (editor->getWidth() <= 0 || editor->getHeight() <= 0)
+                    failures.add (label + " / editor has no size");
+                else
+                    ++editorsOpened;
+
+                instance->editorBeingDeleted (editor);
+                delete editor;
+            }
+        }
+
+        instance->releaseResources();
+        ++instantiated;
+    }
+
+    for (const auto& failure : failures)
+        WARN ("FAILED " << failure);
+
+    WARN ("Swept " << bundles.size() << " bundles: " << instantiated << " instantiated, "
+                   << editorsOpened << " editors opened, " << failures.size() << " failed");
+
+    CHECK (failures.isEmpty());
+}

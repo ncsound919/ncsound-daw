@@ -231,14 +231,14 @@ PluginCatalog::ScanResult PluginCatalog::scanAll()
         if (cancelRequested.load (std::memory_order_acquire))
             break;
 
-        const auto locations = format->getDefaultLocationsToSearch();
+        const auto locations = scanLocationsFor (*format);
 
-        for (int directoryIndex = 0; directoryIndex < locations.getNumPaths(); ++directoryIndex)
+        for (int directoryIndex = 0; directoryIndex < static_cast<int> (locations.size()); ++directoryIndex)
         {
             if (cancelRequested.load (std::memory_order_acquire))
                 break;
 
-            const auto directory = locations[directoryIndex];
+            const auto directory = locations[static_cast<size_t> (directoryIndex)];
 
             if (! directory.isDirectory())
                 continue;
@@ -283,6 +283,52 @@ PluginCatalog::ScanResult PluginCatalog::scanAll()
                [] (const auto& a, const auto& b) { return a.name.compareIgnoreCase (b.name) < 0; });
 
     return result;
+}
+
+void PluginCatalog::setAdditionalSearchRoots (std::vector<juce::File> roots)
+{
+    std::vector<juce::File> usable;
+
+    for (auto& root : roots)
+    {
+        if (! root.isDirectory())
+            continue;
+
+        const auto canonical = root.getFullPathName();
+
+        if (std::none_of (usable.begin(), usable.end(),
+                          [&canonical] (const juce::File& f) { return f.getFullPathName() == canonical; }))
+            usable.push_back (root);
+    }
+
+    const juce::ScopedLock lock (rootsLock);
+    extraRoots = std::move (usable);
+}
+
+std::vector<juce::File> PluginCatalog::additionalSearchRoots() const
+{
+    const juce::ScopedLock lock (rootsLock);
+    return extraRoots;
+}
+
+std::vector<juce::File> PluginCatalog::scanLocationsFor (juce::AudioPluginFormat& format) const
+{
+    std::vector<juce::File> directories;
+    std::set<juce::String> seen;
+
+    const auto locations = format.getDefaultLocationsToSearch();
+
+    for (int i = 0; i < locations.getNumPaths(); ++i)
+        if (locations[i].isDirectory() && seen.insert (locations[i].getFullPathName()).second)
+            directories.push_back (locations[i]);
+
+    // Extra roots come last so a bundle installed in the standard location wins
+    // when the same plug-in exists in more than one folder.
+    for (const auto& root : additionalSearchRoots())
+        if (root.isDirectory() && seen.insert (root.getFullPathName()).second)
+            directories.push_back (root);
+
+    return directories;
 }
 
 void PluginCatalog::setRegistryEntries (std::vector<PluginInfo> entriesToUse)
@@ -388,9 +434,9 @@ juce::File PluginCatalog::findInstalledBundle (const juce::String& bundleName) c
         if (format->getName() != "VST3")
             continue;
 
-        const auto locations = format->getDefaultLocationsToSearch();
+        const auto locations = scanLocationsFor (*format);
 
-        for (int i = 0; i < locations.getNumPaths(); ++i)
+        for (size_t i = 0; i < locations.size(); ++i)
         {
             const auto directory = locations[i];
 

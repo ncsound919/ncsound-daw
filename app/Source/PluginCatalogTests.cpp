@@ -337,3 +337,42 @@ TEST_CASE ("the shipped registry instantiates its installed suite plugins", "[.r
     WARN ("Instantiated " << checked << " installed suite effects from registry ids");
     REQUIRE (checked > 0);
 }
+
+TEST_CASE ("an additional search root resolves a bundle outside the default locations",
+           "[catalog]")
+{
+    const auto root = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                          .getChildFile ("nc-catalog-roots-"
+                                         + juce::String::toHexString (juce::Random::getSystemRandom().nextInt64()));
+    REQUIRE (root.createDirectory().wasOk());
+
+    const auto bundle = root.getChildFile ("Root Only.vst3");
+    REQUIRE (bundle.createDirectory().wasOk());
+
+    std::vector<nc::PluginInfo> registry;
+    registry.push_back (registryInfo ("root-only", "Root Only", "effect",
+                                      nc::PluginStatus::external, "Root Only"));
+
+    nc::ScannerReply reply;
+    reply.ok = true;
+    reply.descriptionsXml = descriptionsXml ({ makeDescription ("Root Only",
+                                                                bundle.getFullPathName(), 401) });
+
+    nc::PluginCatalog withRoot (registry, std::make_unique<FakeScannerBackend> (reply));
+    withRoot.setAdditionalSearchRoots ({ root });
+
+    juce::String error;
+    const auto resolved = withRoot.resolveDescription ("root-only", error);
+    REQUIRE (resolved.has_value());
+    REQUIRE (resolved->name == "Root Only");
+    REQUIRE (error.isEmpty());
+
+    // The same registry row is unloadable without the root: this is the state a
+    // local build is in before search-paths.txt names its folder.
+    nc::PluginCatalog defaultOnly (registry, std::make_unique<FakeScannerBackend> (reply));
+    juce::String missing;
+    REQUIRE_FALSE (defaultOnly.resolveDescription ("root-only", missing).has_value());
+    REQUIRE (missing.containsIgnoreCase ("not installed"));
+
+    root.deleteRecursively();
+}

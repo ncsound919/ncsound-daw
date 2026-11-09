@@ -71,6 +71,13 @@ public:
     /** Seeds the registry rows the app shows, then relinks any scanned rows. */
     void setRegistryEntries (std::vector<PluginInfo>);
 
+    /** Folders to search in addition to the format's default VST3 locations.
+        Local builds live outside %CommonProgramFiles%, so without this a folder
+        of .vst3 bundles on disk is invisible to both the scan and the load path.
+        Non-directories are dropped; duplicates are removed when scanning. */
+    void setAdditionalSearchRoots (std::vector<juce::File> roots);
+    std::vector<juce::File> additionalSearchRoots() const;
+
     void createAsync (const juce::PluginDescription&,
                       double sampleRate, int blockSize,
                       std::function<void (std::unique_ptr<juce::AudioPluginInstance>,
@@ -94,8 +101,12 @@ private:
     ScanResult scanAll();
     juce::File findInstalledBundle (const juce::String& bundleName) const;
     const PluginInfo* registryInfoFor (const juce::String& id) const;
+    // Non-const format: getDefaultLocationsToSearch() is not const in this JUCE.
+    std::vector<juce::File> scanLocationsFor (juce::AudioPluginFormat&) const;
 
     std::vector<PluginInfo> registryEntries;
+    std::vector<juce::File> extraRoots;
+    mutable juce::CriticalSection rootsLock;
     std::vector<juce::PluginDescription> scannedDescriptions;
     std::vector<CatalogEntry> entries;
     juce::AudioPluginFormatManager formats;
