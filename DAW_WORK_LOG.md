@@ -648,3 +648,57 @@ consequence), and C2-C4 depend on that answer.
 Verified after all of it: `ctest --test-dir build -j 4` passes **160/160** in
 157.0 s, including `mix_rack` (156.9 s), both plug-in suites and the four window
 cases.
+
+## Plug-in population from the Desktop Plugins folders - 8 November 2026
+
+The browser only knew the registry and the two VST3 install folders, so bundles
+sitting in a project checkout were invisible. `PluginCatalog` now takes extra
+search roots: `setAdditionalSearchRoots()` appends them after the default
+locations, so an installed bundle still wins over a build copy, and it is fed
+from `plugins/search-paths.txt` beside `registry.json` plus the semicolon-list
+in `NC_PLUGIN_SEARCH_PATHS`. `MainComponent` passes that file through
+`pluginSearchRootsFor()`, and `NCScannerProbe --catalog <registry> [roots...]`
+prints one `SCANNED` line per bundle so the population can be checked without
+the UI.
+
+Scanning `C:/Users/Asus/Desktop/Plugins` recursively (which reaches
+`ChordStudio-master/plugins`) together with the two install folders produced
+**124 catalog rows**: the 21 registry rows plus **103 bundles that were
+previously unseen**. Nine registry rows matched a scanned bundle by
+`vst3BundleName` and eight of those instantiate; the twelve unmatched rows are
+the stock placeholders that have no bundle on this machine, and they still list
+as before - no bundle was invented for them. The scan ended on "A plugin scan
+timed out and was killed", so one bundle did not answer within the per-file
+timeout; that is reported rather than hidden.
+
+Two VoxStudio copies (the per-user install and `Desktop/Plugins/VoxStudio.vst3`)
+both list, because both are real bundles; nothing collapses same-named files
+from different paths.
+
+### The sweep gate
+
+`[bundle-sweep]` is opt-in (hidden `.vst3` tag) and walks every `.vst3` bundle
+under `NC_TEST_VST3_DIR`: it scans the bundle, instantiates the first audio
+class, renders four 512-sample blocks, round-trips the state and creates and
+deletes the editor. Each bundle is recorded and the case fails once at the end,
+so one stale bundle cannot hide the rest. Run over `Desktop/Plugins`:
+
+    Swept 46 bundles: 44 instantiated, 43 editors opened, 2 failed
+
+The two failures are single copies inside generated build trees, and the app's
+own child-process scanner agrees - both return `ok=1 ... count=0`, so they
+expose no audio class at all:
+
+- `ChordStudio-master/plugins/percussion/build-fix1/Percussion_artefacts/Release/VST3/Percussion.vst3`
+  (the packaged `Percussion.vst3` copies load)
+- `VoxStudio/build-msvc/VST3/Debug/VoxStudio.vst3` (the installed copy and
+  `Desktop/Plugins/VoxStudio.vst3` load)
+
+So the browser does not list them and they are not counted as good. 43 of the
+44 that load open an editor; one plug-in has no editor, which is not a failure.
+Editor creation is the headless stand-in for the editor spot-check - native
+windows cannot be captured here, so **no editor was looked at**, only created
+and destroyed.
+
+Verified on this source: `ctest --test-dir build -j 4` passes **160/160** in
+247.6 s, and `[catalog]` passes 9 cases with 52 assertions.

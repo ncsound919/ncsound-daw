@@ -439,3 +439,28 @@ describes needs a pluginval newer than the current release tag.
 
 B4 and B5 need what this terminal does not have: a clean-clone CI run needs a
 runner, and the 150% DPI and keyboard-only pass needs hosts and a display.
+
+### Status - 8 November 2026 (plug-in population)
+
+The plug-in browser now covers bundles outside the VST3 install folders.
+`PluginCatalog::setAdditionalSearchRoots` appends roots from
+`plugins/search-paths.txt` and `NC_PLUGIN_SEARCH_PATHS` after the default
+locations, so both the startup scan and `findInstalledBundle` see them, and an
+installed bundle still takes precedence over a build copy. Scanning
+`Desktop/Plugins` recursively plus the install folders gives 124 rows - 21
+registry rows and 103 previously unseen bundles - with nine registry rows linked
+and eight loadable; the twelve unmatched rows are placeholders with no bundle
+present, and one bundle timed out during the scan.
+
+`[catalog]` covers the root plumbing (9 cases, 52 assertions). A
+`[bundle-sweep]` case loads, renders, round-trips state and opens the editor of
+every bundle under `NC_TEST_VST3_DIR`, recording each bundle and failing once at
+the end so a single stale bundle cannot hide the rest. Over `Desktop/Plugins` it
+swept 46 bundles: 44 instantiated, 43 editors created and deleted, 2 failed.
+Both failures are single build-tree copies that expose no audio class to the
+app's child-process scanner either (`count=0`), so the browser does not list
+them - `percussion/build-fix1/.../Percussion.vst3` and
+`VoxStudio/build-msvc/VST3/Debug/VoxStudio.vst3` - while the packaged and
+installed copies of both load. Editors were created but not visually inspected,
+because native windows cannot be captured here. `ctest` passes 160/160 in
+247.6 s on this source.
