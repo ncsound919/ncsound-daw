@@ -19,6 +19,11 @@ export interface HeaderBarProps {
   onDeleteSelected?: () => void;
   onScanPlugins?: () => void;
   onLoadMasterPlugin?: () => void;
+  /** Mixology presets; the menu hides the section without them. */
+  mixologyPresets?: string[];
+  onApplyMixology?: (index: number) => void;
+  /** Import Audio hook; the menu item stays disabled without it. */
+  onImportAudio?: () => void;
   onFit?: () => void;
 }
 
@@ -50,6 +55,9 @@ export function HeaderBar({
   onDeleteSelected,
   onScanPlugins,
   onLoadMasterPlugin,
+  mixologyPresets,
+  onApplyMixology,
+  onImportAudio,
   onFit,
 }: HeaderBarProps) {
   const [open, setOpen] = useState<number | null>(null);
@@ -162,13 +170,15 @@ export function HeaderBar({
       entries: [
         { heading: "SESSION" },
         { label: "Reset Transport", run: onNewSession },
-        { label: "Open Session…", disabled: true, hint: "Available in the desktop app" },
-        { label: "Save Session", disabled: true, hint: "Available in the desktop app" },
-        { label: "Import Audio…", disabled: true, hint: "Available in the desktop app" },
+        { label: "Open Session…", disabled: true, hint: "Not wired to the bridge yet" },
+        { label: "Save Session", disabled: true, hint: "Not wired to the bridge yet" },
+        ...(onImportAudio
+          ? [{ label: "Import Audio…", run: onImportAudio }]
+          : [{ label: "Import Audio…", disabled: true, hint: "Not wired to the bridge yet" }]),
         "separator",
         { heading: "EXPORT" },
-        { label: "Mixdown WAV…", disabled: true, hint: "Available in the desktop app" },
-        { label: "Export Stems…", disabled: true, hint: "Available in the desktop app" },
+        { label: "Mixdown WAV…", disabled: true, hint: "Not wired to the bridge yet" },
+        { label: "Export Stems…", disabled: true, hint: "Not wired to the bridge yet" },
       ],
     },
     {
@@ -202,6 +212,16 @@ export function HeaderBar({
           : []),
         ...(onLoadMasterPlugin
           ? ([{ label: "Load Master Plugin…", run: onLoadMasterPlugin }] as Entry[])
+          : []),
+        ...(mixologyPresets && mixologyPresets.length > 0 && onApplyMixology
+          ? ([
+              "separator",
+              { heading: "MIXOLOGY" },
+              ...mixologyPresets.map((name, index) => ({
+                label: name,
+                run: () => onApplyMixology(index),
+              })),
+            ] as Entry[])
           : []),
       ],
     },

@@ -28,6 +28,30 @@ export function formatBarsBeats(positionBar: number): { main: string; small: str
   return { main: `${pad(bar, 3)}|${pad(beat, 2)}|${pad(tick, 3)}`, small: "BARS / BEATS" };
 }
 
+const ZOOM_STEP = 0.9;
+
+/**
+ * Pointer-anchored timeline zoom. `anchorRatio` is 0..1 across the lane, so
+ * the bar under the pointer stays under it. Zoom out is the exact reciprocal
+ * of zoom in: an in/out pair returns to the same window instead of creeping
+ * down the timeline the way a hardcoded 1.11 did.
+ */
+export function zoomWindow(
+  viewStart: number,
+  visibleBars: number,
+  anchorRatio: number,
+  direction: "in" | "out",
+  minBars: number,
+  maxBars: number,
+): { viewStart: number; visibleBars: number } {
+  const ratio = Math.max(0, Math.min(1, anchorRatio));
+  const factor = direction === "in" ? ZOOM_STEP : 1 / ZOOM_STEP;
+  const next = Math.max(minBars, Math.min(maxBars, visibleBars * factor));
+  const anchorBar = viewStart + ratio * visibleBars;
+  const nextStart = Math.max(1, Math.min(Math.max(1, maxBars - next), anchorBar - ratio * next));
+  return { viewStart: nextStart, visibleBars: next };
+}
+
 /** Left position, in percent, of a bar inside the visible window. */
 export function barPct(bar: number, viewStart: number, visibleBars: number): number {
   if (!(visibleBars > 0)) return 0;

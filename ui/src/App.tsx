@@ -92,6 +92,7 @@ const MOCK_TRANSPORT: TransportState = {
 export default function App() {
   const [state, setState] = useState<AppState>(MOCK_STATE);
   const [transport, setTransport] = useState<TransportState>(MOCK_TRANSPORT);
+  const [mixologyPresets, setMixologyPresets] = useState<string[]>([]);
 
   useEffect(() => {
     if (!backend.embedded) return;
@@ -103,6 +104,13 @@ export default function App() {
         if (!alive) return;
         setState(next);
         if (next.transport) setTransport(next.transport);
+      })
+      .catch(console.error);
+
+    backend
+      .mixologyPresets()
+      .then((names) => {
+        if (alive) setMixologyPresets(names);
       })
       .catch(console.error);
 
@@ -180,6 +188,20 @@ export default function App() {
   const handleMasterPluginLoad = useCallback((plugin: PluginInfo) => {
     if (!backend.embedded) return;
     backend.loadMasterPlugin(plugin.id).then(setState).catch(console.error);
+  }, []);
+
+  const handleApplyMixology = useCallback((index: number) => {
+    if (!backend.embedded) return Promise.resolve("");
+    return backend.applyMixologyPreset(index).then(({ state, report }) => {
+      setState(state);
+      if (state.transport) setTransport(state.transport);
+      return report;
+    });
+  }, []);
+
+  const handleImportAudio = useCallback(() => {
+    if (!backend.embedded) return;
+    backend.importAudio().then(setState).catch(console.error);
   }, []);
 
   const handleScan = useCallback(() => {
@@ -391,8 +413,9 @@ export default function App() {
         }));
         send(() => backend.setInstrumentPitch(track, patch));
       },
+      applyMixology: handleApplyMixology,
     };
-  }, [state.tracks.length]);
+  }, [state.tracks.length, handleApplyMixology]);
 
   return (
     <ConsoleRoot>
@@ -407,6 +430,8 @@ export default function App() {
           onPluginLoad={handlePluginLoad}
           onMasterPluginLoad={handleMasterPluginLoad}
           onScan={handleScan}
+          mixologyPresets={mixologyPresets}
+          onImportAudio={handleImportAudio}
         />
       </ErrorBoundary>
     </ConsoleRoot>

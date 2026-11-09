@@ -148,6 +148,18 @@ export const backend = {
     return call<AppState>("scanPlugins");
   },
 
+  mixologyPresets(): Promise<string[]> {
+    return call<string[]>("mixologyPresets");
+  },
+
+  applyMixologyPreset(index: number): Promise<{ state: AppState; report: string }> {
+    return call("applyMixologyPreset", index);
+  },
+
+  importAudio(): Promise<AppState> {
+    return call<AppState>("importAudio");
+  },
+
   undo(): Promise<AppState> {
     return call<AppState>("undo");
   },

@@ -129,3 +129,104 @@ describe("Workspace", () => {
     expect(list.play).not.toHaveBeenCalled();
   });
 });
+
+describe("instrument sync", () => {
+  const syncActions = () => ({ ...actions(), instrumentPitch: vi.fn() });
+  const pitched = (transpose: number) => ({
+    ...STATE,
+    tracks: STATE.tracks.map((t) => (t.index === 1 ? { ...t, transpose } : t)),
+  });
+
+  it("mirrors track-pitch changes onto the instrument while sync is on", () => {
+    const list = syncActions();
+    const { rerender } = render(
+      <Workspace state={STATE} transport={TRANSPORT} actions={list} />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Channel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Instrument follows track pitch" }));
+
+    expect(list.instrumentPitch).toHaveBeenCalledWith(1, {
+      transpose: 0,
+      pitchCents: 0,
+      tuningHz: 440,
+    });
+
+    rerender(<Workspace state={pitched(2)} transport={TRANSPORT} actions={list} />);
+    expect(list.instrumentPitch).toHaveBeenLastCalledWith(1, {
+      transpose: 2,
+      pitchCents: 0,
+      tuningHz: 440,
+    });
+  });
+
+  it("leaves the instrument alone when sync is off", () => {
+    const list = syncActions();
+    const { rerender } = render(
+      <Workspace state={STATE} transport={TRANSPORT} actions={list} />,
+    );
+    rerender(<Workspace state={pitched(2)} transport={TRANSPORT} actions={list} />);
+    expect(list.instrumentPitch).not.toHaveBeenCalled();
+  });
+
+  it("flips sync from the Inspector toggle", () => {
+    render(<Workspace state={STATE} transport={TRANSPORT} actions={actions()} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Channel" }));
+
+    expect(screen.getByRole("button", { name: "Instrument follows track pitch" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Instrument follows track pitch" }));
+    expect(screen.getByRole("button", { name: "Instrument follows track pitch" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+});
+
+describe("plugin load targets", () => {
+  const pluginState = {
+    ...STATE,
+    plugins: [
+      { id: "acme.sub", name: "Sub", vendor: "Acme", category: "instrument", format: "VST3" },
+      { id: "acme.retro", name: "Retro", vendor: "Acme", category: "effect", format: "VST3" },
+    ],
+  };
+
+  it("refuses an instrument on the master bus", () => {
+    const masterLoad = vi.fn();
+    render(
+      <Workspace
+        state={pluginState}
+        transport={TRANSPORT}
+        actions={actions()}
+        onMasterPluginLoad={masterLoad}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "EDIT" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Load Master Plugin/ }));
+    fireEvent.doubleClick(screen.getByRole("button", { name: /Sub/ }));
+
+    expect(masterLoad).not.toHaveBeenCalled();
+    expect(document.querySelector(".ws-status")?.textContent).toContain("INSTRUMENTS LOAD ON TRACKS");
+  });
+
+  it("loads an effect on the master bus", () => {
+    const masterLoad = vi.fn();
+    render(
+      <Workspace
+        state={pluginState}
+        transport={TRANSPORT}
+        actions={actions()}
+        onMasterPluginLoad={masterLoad}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "EDIT" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Load Master Plugin/ }));
+    fireEvent.doubleClick(screen.getByRole("button", { name: /Retro/ }));
+
+    expect(masterLoad).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "acme.retro" }),
+    );
+  });
+});

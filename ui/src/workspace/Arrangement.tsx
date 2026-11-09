@@ -398,8 +398,21 @@ export function Arrangement({
     return snap ? Math.round(bar) : bar;
   };
 
-  // Pro Tools wheel: plain wheel zooms at the pointer (Ctrl/Cmd also zooms),
-  // Shift+wheel scrolls the track list vertically.
+  // Pro Tools-style stepped zoom: the +/- buttons and keys pivot on the
+  // playhead the way the wheel pivots on the pointer. A playhead outside
+  // the window clamps to the nearest edge instead of warping the view.
+  const zoomAt = (direction: "in" | "out") => {
+    const ratio = transport
+      ? clamp((transport.positionBar - viewStart) / visibleBars, 0, 1)
+      : 0.5;
+    const next = zoomWindow(viewStart, visibleBars, ratio, direction, MIN_BARS, MAX_BARS);
+    setVisibleBars(next.visibleBars);
+    setViewStart(next.viewStart);
+  };
+
+  // Pro Tools wheel: every wheel event zooms at the pointer (Ctrl/Cmd too).
+  // The anchor comes from the lane itself, not a guessed header width, so the
+  // bar under the cursor stays put and the in/out factors are reciprocal.
   useEffect(() => {
     const el = arrangeRef.current;
     if (!el) return;
@@ -455,12 +468,12 @@ export function Arrangement({
       }
       if (event.key === "-") {
         event.preventDefault();
-        setVisibleBars((bars) => clamp(bars * 1.33, MIN_BARS, MAX_BARS));
+        zoomAt("out");
         return;
       }
       if (event.key === "+" || event.key === "=") {
         event.preventDefault();
-        setVisibleBars((bars) => clamp(bars * 0.75, MIN_BARS, MAX_BARS));
+        zoomAt("in");
         return;
       }
       if (event.key === "Escape") setTool("select");
@@ -473,7 +486,7 @@ export function Arrangement({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [clips, selectedClip, onSelectClip, onDeleteClip, onUndo, onRedo]);
+  }, [clips, selectedClip, onSelectClip, onDeleteClip, onUndo, onRedo, viewStart, visibleBars, transport?.positionBar]);
 
   const deleteClip = (index: number) => {
     onDeleteClip?.(index);
@@ -859,7 +872,7 @@ export function Arrangement({
 
           <button
             className="ws-btn is-icon"
-            onClick={() => setVisibleBars((bars) => clamp(bars * 1.33, MIN_BARS, MAX_BARS))}
+            onClick={() => zoomAt("out")}
             aria-label="Zoom out"
             title="Zoom out"
           >
@@ -871,7 +884,7 @@ export function Arrangement({
           </span>
           <button
             className="ws-btn is-icon"
-            onClick={() => setVisibleBars((bars) => clamp(bars * 0.75, MIN_BARS, MAX_BARS))}
+            onClick={() => zoomAt("in")}
             aria-label="Zoom in"
             title="Zoom in"
           >

@@ -27,6 +27,9 @@ export interface MixerProps {
   onInsert?: (track: number, slot: number) => void;
   onMasterRack?: () => void;
   onMasterInsert?: () => void;
+  /** Mixology technique presets; the section hides when the host has no route. */
+  mixologyPresets?: string[];
+  onApplyMixology?: (index: number) => Promise<string>;
 }
 
 const DB_MIN = -60;
@@ -708,7 +711,10 @@ export function Mixer({
   onInsert,
   onMasterRack,
   onMasterInsert,
+  mixologyPresets,
+  onApplyMixology,
 }: MixerProps) {
+  const [mixologyReport, setMixologyReport] = useState<string | null>(null);
   const masterPeak = Math.max(transport?.masterPeakLeft ?? 0, transport?.masterPeakRight ?? 0);
   const masterPeakDb =
     masterPeak > 0 ? 20 * Math.log10(Math.max(1e-6, masterPeak)) : Number.NEGATIVE_INFINITY;
@@ -779,6 +785,34 @@ export function Mixer({
               </button>
             </div>
           </div>
+
+          {mixologyPresets && mixologyPresets.length > 0 && onApplyMixology && (
+            <div className="ws-strip-section" role="group" aria-label="Mixology presets">
+              <div className="ws-section-head">
+                <span>Mixology</span>
+              </div>
+              <div className="ws-strip-buttons is-master-switches">
+                {mixologyPresets.map((name, index) => (
+                  <button
+                    key={name}
+                    className="ws-chan-btn"
+                    title={"Apply the " + name + " mix template"}
+                    aria-label={"Apply Mixology preset " + name}
+                    onClick={() => {
+                      onApplyMixology(index).then(setMixologyReport).catch(console.error);
+                    }}
+                  >
+                    {name}
+                  </button>
+                ))}
+              </div>
+              {mixologyReport && (
+                <p className="ws-mixology-report" aria-live="polite">
+                  {mixologyReport}
+                </p>
+              )}
+            </div>
+          )}
 
           <div
             className="ws-strip-buttons is-master-switches"

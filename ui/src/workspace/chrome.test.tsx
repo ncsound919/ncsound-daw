@@ -143,3 +143,50 @@ describe("native chrome", () => {
     expect(list.bpm).toHaveBeenCalledWith(129);
   });
 });
+
+describe("Mixology menu", () => {
+  const PRESETS = ["VOCAL FOCUS", "808 WEIGHT", "VOCAL PRESENCE", "SUBTRACTIVE", "FULL CHAIN"];
+
+  it("lists the presets in the Edit menu and applies the picked one", async () => {
+    const apply = vi.fn().mockResolvedValue("MIXOLOGY / 5 INSERTS APPLIED");
+    render(
+      <Workspace
+        state={STATE}
+        transport={TRANSPORT}
+        actions={{ ...actions(), applyMixology: apply }}
+        mixologyPresets={PRESETS}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "EDIT" }));
+    for (const name of PRESETS) {
+      expect(screen.getByRole("menuitem", { name })).toBeEnabled();
+    }
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "808 WEIGHT" }));
+    expect(apply).toHaveBeenCalledWith(1);
+    expect(await screen.findByText("MIXOLOGY / 5 INSERTS APPLIED")).toBeInTheDocument();
+  });
+});
+
+describe("Import Audio", () => {
+  it("enables Import Audio when the host route exists and calls it", () => {
+    const importAudio = vi.fn();
+    render(
+      <Workspace state={STATE} transport={TRANSPORT} actions={actions()} onImportAudio={importAudio} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "FILE" }));
+    const item = screen.getByRole("menuitem", { name: /Import Audio/ });
+    expect(item).toBeEnabled();
+    fireEvent.click(item);
+    expect(importAudio).toHaveBeenCalled();
+  });
+
+  it("keeps Import Audio honest until the host route exists", () => {
+    render(<Workspace state={STATE} transport={TRANSPORT} actions={actions()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "FILE" }));
+    expect(screen.getByRole("menuitem", { name: /Import Audio/ })).toBeDisabled();
+  });
+});

@@ -11,7 +11,10 @@
 // thread; they never wait for a scan or a plug-in load to finish.
 #include "MainComponent.h"
 
+#include "MixologyBridge.h"
+
 #include <VstawWeb.h>
+#include <nc/engine/VoiceToMidi.hpp>
 
 #include <cmath>
 #include <cstring>
@@ -740,6 +743,33 @@ juce::WebBrowserComponent::Options MainComponent::buildWebOptions()
 
               setStatus (message, ! ok);
               pushState();
+              done (buildState());
+          } },
+        { "mixologyPresets", [this] (const Args&, Completion done)
+          {
+              juce::Array<juce::var> names;
+              for (const auto& name : mixologyPresetNames())
+                  names.add (name);
+              done (names);
+          } },
+        { "applyMixologyPreset", [this] (const Args& a, Completion done)
+          {
+              const auto preset = a.isEmpty() ? 0
+                                            : juce::jlimit (0, 4, (int) std::round (finiteOr (a[0], 0.0)));
+              const auto report = applyMixologyPreset (engine, preset);
+              setStatus (report.text, ! report.ok());
+              pushState();
+              auto* answer = new juce::DynamicObject();
+              answer->setProperty ("state", buildState());
+              answer->setProperty ("report", report.text);
+              done (juce::var (answer));
+          } },
+        { "importAudio", [this] (const Args&, Completion done)
+          {
+              // The picker is async: answer with the current state now, and
+              // the chooser completion pushes fresh state (plus a native
+              // status) when the file lands. Cancelling changes nothing.
+              importAudioFile();
               done (buildState());
           } },
         { "setChannelParam", [this] (const Args& a, Completion done)

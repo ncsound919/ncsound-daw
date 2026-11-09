@@ -50,6 +50,8 @@ export interface WorkspaceActions {
   globalPitch: (patch: Partial<PitchState>) => void;
   trackPitch: (track: number, patch: Partial<PitchState>) => void;
   instrumentPitch: (track: number, patch: Partial<PitchState>) => void;
+  /** Mixology presets. Optional until the host exposes its preset routes. */
+  applyMixology?: (index: number) => Promise<string>;
   /** Timeline write path. Optional until the host exposes its clip routes. */
   editClip?: (index: number, patch: Record<string, unknown>) => void;
   splitClip?: (index: number, bar: number) => void;
@@ -72,6 +74,10 @@ export interface WorkspaceProps {
   onPluginLoad?: (plugin: PluginInfo, track: number, slot: number) => void;
   onMasterPluginLoad?: (plugin: PluginInfo) => void;
   onScan?: () => void;
+  /** Mixology preset names from the host; the entries hide without them. */
+  mixologyPresets?: string[];
+  /** Import Audio hook; the menu item stays disabled without it. */
+  onImportAudio?: () => void;
 }
 
 const EMPTY_PITCH: PitchState = { transpose: 0, pitchCents: 0, tuningHz: 440 };
@@ -97,6 +103,8 @@ export function Workspace({
   onPluginLoad,
   onMasterPluginLoad,
   onScan,
+  mixologyPresets,
+  onImportAudio,
 }: WorkspaceProps) {
   const [view, setView] = useState<WorkspaceView>(
     WORKSPACE_VIEWS.some((entry) => entry.id === initialView) ? initialView : "arrange",
@@ -359,7 +367,19 @@ export function Workspace({
             : undefined
         }
         onScanPlugins={onScan}
+        onImportAudio={onImportAudio}
         onLoadMasterPlugin={openMasterBrowser}
+        mixologyPresets={mixologyPresets}
+        onApplyMixology={
+          actions.applyMixology
+            ? (index) => {
+                actions
+                  .applyMixology?.(index)
+                  .then((report) => flash(report))
+                  .catch(console.error);
+              }
+            : undefined
+        }
         onNewSession={() => {
           actions.stop();
           actions.rewind();
@@ -480,6 +500,8 @@ export function Workspace({
             onInsert={openBrowser}
             onMasterRack={() => setView("inspector")}
             onMasterInsert={openMasterBrowser}
+            mixologyPresets={mixologyPresets}
+            onApplyMixology={actions.applyMixology}
             onMasterGain={(db) => {
               setMasterGainDb(db);
               actions.masterGain(db);
@@ -587,6 +609,10 @@ export function Workspace({
                 canLoad
                   ? (plugin) => {
                       if (isMasterTarget) {
+                        if (plugin.category === "instrument") {
+                          flash("INSTRUMENTS LOAD ON TRACKS, NOT ON THE MASTER");
+                          return;
+                        }
                         onMasterPluginLoad?.(plugin);
                         closeBrowser();
                         return;

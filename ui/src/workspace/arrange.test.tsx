@@ -264,3 +264,36 @@ describe("arrange parity", () => {
     expect(screen.getByRole("button", { name: "Redo" })).toBeDisabled();
   });
 });
+
+describe("anchored zoom buttons", () => {
+  const renderAtPlayhead = (positionBar: number) => {
+    render(
+      <Workspace state={STATE} transport={{ ...TRANSPORT, positionBar }} actions={actions()} />,
+    );
+  };
+  const readout = () => document.querySelector(".ws-zoom-read b")?.textContent;
+
+  it("zooms the + button around the playhead instead of the window start", () => {
+    renderAtPlayhead(9);
+    expect(readout()).toBe("32 BARS");
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    const expected = zoomWindow(1, 32, (9 - 1) / 32, "in", 4, 256);
+    expect(readout()).toBe(Math.round(expected.visibleBars) + " BARS");
+    // The old unanchored math showed 24 BARS with the start pinned at bar 1.
+    expect(readout()).not.toBe("24 BARS");
+  });
+
+  it("returns to the exact window when - follows +", () => {
+    renderAtPlayhead(9);
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    fireEvent.click(screen.getByRole("button", { name: "Zoom out" }));
+    expect(readout()).toBe("32 BARS");
+  });
+
+  it("clamps the anchor when the playhead is past the window", () => {
+    renderAtPlayhead(200);
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    const expected = zoomWindow(1, 32, 1, "in", 4, 256);
+    expect(readout()).toBe(Math.round(expected.visibleBars) + " BARS");
+  });
+});
