@@ -35,6 +35,14 @@ nc_add_library(nc_engine
         engine/include/nc/engine/Export.hpp
         engine/include/nc/engine/Autosave.hpp
         engine/include/nc/engine/Comping.hpp
+        engine/include/nc/engine/StudioFxDsp.hpp
+        engine/include/nc/engine/StudioFxSlot.hpp
+        engine/include/nc/engine/StudioFxCatalogData.hpp
+        engine/include/nc/engine/StudioFxEq.hpp
+        engine/include/nc/engine/StudioFxDynamics.hpp
+        engine/include/nc/engine/StudioFxSpace.hpp
+        engine/include/nc/engine/StudioFxVoice.hpp
+        engine/include/nc/engine/StudioFxChain.hpp
         engine/include/nc/engine/MidiClip.hpp
         engine/include/nc/engine/MidiSchedule.hpp
         engine/include/nc/engine/MidiScheduler.hpp)
