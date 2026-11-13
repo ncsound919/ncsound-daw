@@ -31,12 +31,6 @@ AudioEngine::AudioEngine()
     engineAlive = std::make_shared<std::atomic<bool>> (true);
     formats.registerBasicFormats();
 
-    // The brace initializers on these arrays only seed lane 0; without this
-    // every other lane starts at 0 and skips its first pan trig, silencing it.
-    std::fill_n (cachedPanValue, trackCount, -2.0f);
-    std::fill_n (cachedPanLeft, trackCount, 0.7071f);
-    std::fill_n (cachedPanRight, trackCount, 0.7071f);
-
     for (auto& monitor : trackMonitor)
         monitor.store (true, std::memory_order_relaxed);
 

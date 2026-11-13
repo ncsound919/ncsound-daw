@@ -261,6 +261,8 @@ public:
 
     std::function<void (juce::String)> onPluginStatus;
 
+    static constexpr int kInsertSlotsPerTrack = 8;
+
     //==========================================================================
     // Baked mix rack. The channel strip exists on every track; the master rack
     // always terminates the mix before the optional external master insert.

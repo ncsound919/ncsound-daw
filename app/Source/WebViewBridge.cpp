@@ -774,6 +774,7 @@ juce::WebBrowserComponent::Options MainComponent::buildWebOptions()
               // status) when the file lands. Cancelling changes nothing.
               importAudioFile();
               done (buildState());
+          } },
         { "openSession", [this] (const Args&, Completion done)
           {
               // Same FileChooser path as FILE -> Open Session; completion
@@ -810,7 +811,6 @@ juce::WebBrowserComponent::Options MainComponent::buildWebOptions()
           {
               engine.removeMasterPlugin();
               done (buildState());
-          } },
           } },
         { "setChannelParam", [this] (const Args& a, Completion done)
           {
