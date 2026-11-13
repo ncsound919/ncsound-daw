@@ -82,3 +82,99 @@ TEST_CASE ("silence produces no transients")
     const float* channels[] = { audio.data() };
     REQUIRE (nc::detectTransients (channels, 1, 4096, 0.45).empty());
 }
+
+TEST_CASE ("a transient at sample zero is not lost")
+{
+    std::vector<float> audio (4096, 0.0f);
+
+    for (std::int64_t i = 0; i < 64; ++i)
+        audio[static_cast<size_t> (i)] = 0.8f;
+
+    const float* channels[] = { audio.data() };
+    const auto onsets = nc::detectTransients (channels, 1, 4096, 0.45);
+
+    REQUIRE (! onsets.empty());
+    REQUIRE (onsets.front() == 0);
+}
+
+TEST_CASE ("vibrato does not become a stream of false onsets")
+{
+    constexpr std::int64_t frames = 88200;
+    constexpr double sampleRate = 44100.0;
+    std::vector<float> audio (static_cast<size_t> (frames), 0.0f);
+    double phase = 0.0;
+
+    for (std::int64_t i = 0; i < frames; ++i)
+    {
+        const auto t = static_cast<double> (i) / sampleRate;
+        const auto bend = std::pow (2.0, 40.0 * std::sin (2.0 * 3.14159265358979323846 * 5.0 * t) / 1200.0);
+        phase += 2.0 * 3.14159265358979323846 * 440.0 * bend / sampleRate;
+        audio[static_cast<size_t> (i)] = static_cast<float> (0.45 * std::sin (phase));
+    }
+
+    const float* channels[] = { audio.data() };
+    const auto onsets = nc::detectTransients (channels, 1, frames, 0.45);
+
+    REQUIRE (onsets.size() <= 1);
+}
+
+TEST_CASE ("a quiet hit after a loud one is still detected")
+{
+    constexpr std::int64_t frames = 30000;
+    std::vector<float> audio (static_cast<size_t> (frames), 0.0f);
+
+    for (std::int64_t i = 0; i < 64; ++i)
+        audio[static_cast<size_t> (5000 + i)] = 0.9f;
+
+    for (std::int64_t i = 0; i < 64; ++i)
+        audio[static_cast<size_t> (20000 + i)] = 0.04f;
+
+    const float* channels[] = { audio.data() };
+    const auto onsets = nc::detectTransients (channels, 1, frames, 0.45);
+    const auto quiet = std::any_of (onsets.begin(), onsets.end(), [] (auto onset)
+                                    { return std::llabs (onset - 20000) <= 512; });
+
+    REQUIRE (quiet);
+}
+
+TEST_CASE ("stereo transients are detected from the mixed spectrum")
+{
+    constexpr std::int64_t frames = 16384;
+    std::vector<float> left (static_cast<size_t> (frames), 0.0f);
+    std::vector<float> right (static_cast<size_t> (frames), 0.0f);
+
+    for (std::int64_t i = 0; i < 64; ++i)
+    {
+        left[static_cast<size_t> (4000 + i)] = 0.7f;
+        right[static_cast<size_t> (11000 + i)] = -0.7f;
+    }
+
+    const float* channels[] = { left.data(), right.data() };
+    const auto onsets = nc::detectTransients (channels, 2, frames, 0.45);
+
+    for (const auto expected : { 4000, 11000 })
+    {
+        const auto found = std::any_of (onsets.begin(), onsets.end(), [expected] (auto onset)
+                                        { return std::llabs (onset - expected) <= 512; });
+        REQUIRE (found);
+    }
+}
+
+TEST_CASE ("planned slices cover the sample without tiny fragments")
+{
+    const std::vector<std::int64_t> transients { 10, 50, 390, 410, 500, 900, 990 };
+    const auto slices = nc::planSlices (1000, transients, 4);
+
+    REQUIRE (! slices.empty());
+    REQUIRE (slices.front().start == 0);
+    REQUIRE (slices.back().end == 1000);
+
+    for (size_t i = 0; i < slices.size(); ++i)
+    {
+        REQUIRE (slices[i].end > slices[i].start);
+        REQUIRE (slices[i].end - slices[i].start >= 32);
+
+        if (i + 1 < slices.size())
+            REQUIRE (slices[i].end == slices[i + 1].start);
+    }
+}
