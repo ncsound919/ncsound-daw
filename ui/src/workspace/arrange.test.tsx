@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppState, TransportState } from "../types";
+import { zoomWindow } from "./format";
 import { Workspace, type WorkspaceActions } from "./Workspace";
 
 const STATE: AppState = {

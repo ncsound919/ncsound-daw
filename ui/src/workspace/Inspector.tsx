@@ -32,6 +32,9 @@ export interface InspectorProps {
   onPitch?: (patch: Partial<PitchState>) => void;
   instrumentPitch?: PitchState;
   onInstrumentPitch?: (patch: Partial<PitchState>) => void;
+  /** The instrument follows the track pitch stack while this is on. */
+  pitchSync?: boolean;
+  onPitchSync?: (synced: boolean) => void;
 }
 
 function focusedModuleKey(slot: number | null): string {
@@ -66,6 +69,8 @@ export function Inspector({
   onPitch,
   instrumentPitch,
   onInstrumentPitch,
+  pitchSync = false,
+  onPitchSync,
 }: InspectorProps) {
   // Hooks must run before the empty-track bail-out.
   const [focused, setFocused] = useState<number | null>(null);
@@ -288,6 +293,17 @@ export function Inspector({
               onChange={onInstrumentPitch}
               compact
             />
+            {onPitchSync && (
+              <button
+                className="ws-btn"
+                aria-pressed={pitchSync}
+                aria-label="Instrument follows track pitch"
+                title="Keep the instrument in tune with this track's pitch stack"
+                onClick={() => onPitchSync(!pitchSync)}
+              >
+                {pitchSync ? "SYNCED" : "SYNC"}
+              </button>
+            )}
           </div>
         )}
       </section>

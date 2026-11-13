@@ -136,6 +136,8 @@ export function Workspace({
   const [browserTarget, setBrowserTarget] = useState<
     { track: number; slot: number } | { master: true } | null
   >(null);
+  // Deep instrument sync: tracks whose instrument should follow the track pitch.
+  const [pitchSync, setPitchSync] = useState<Record<number, boolean>>({});
 
   const canAddTrack = state.tracks.length < MAX_TRACKS;
   const canRemoveTrack = state.tracks.length > 1;
@@ -233,6 +235,25 @@ export function Workspace({
     }),
     [selectedTrack?.transpose, selectedTrack?.pitchCents, selectedTrack?.tuningHz],
   );
+
+  // With sync on, every track-pitch change is mirrored onto the instrument's
+  // own pitch stack, so a transposed track keeps its plug-in in tune.
+  const instrumentSynced = Boolean(pitchSync[trackIndex]);
+  useEffect(() => {
+    if (!instrumentSynced) return;
+    actions.instrumentPitch(trackIndex, {
+      transpose: trackPitch.transpose,
+      pitchCents: trackPitch.pitchCents,
+      tuningHz: trackPitch.tuningHz,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    instrumentSynced,
+    trackIndex,
+    trackPitch.transpose,
+    trackPitch.pitchCents,
+    trackPitch.tuningHz,
+  ]);
   const onChannelParam = useCallback(
     (id: string, value: number) => onChannelChange?.(trackIndex, id, value),
     [onChannelChange, trackIndex],
@@ -564,6 +585,10 @@ export function Workspace({
             onSendA={actions.sendA}
             onSendB={actions.sendB}
             onInsert={(slot) => openBrowser(trackIndex, slot)}
+            pitchSync={instrumentSynced}
+            onPitchSync={(synced) =>
+              setPitchSync((current) => ({ ...current, [trackIndex]: synced }))
+            }
             channel={state.channel}
             onChannelParam={onChannelParam}
             pitch={trackPitch}

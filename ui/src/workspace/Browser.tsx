@@ -45,13 +45,28 @@ export function Browser({
     setSelected(0);
   }, [targetName, targetSlot]);
 
+  // A folder scan reaches well past the registry, so the catalogue arrives in
+  // host order and two copies of one plug-in look identical. Sort here, and
+  // count each name so a row can say how many copies were found.
+  const copyCount = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const plugin of plugins) counts.set(plugin.name, (counts.get(plugin.name) ?? 0) + 1);
+    return counts;
+  }, [plugins]);
+
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return plugins.filter((plugin) => {
-      if (filter !== "all" && (plugin.category ?? "effect") !== filter) return false;
-      if (!needle) return true;
-      return `${plugin.name} ${plugin.vendor ?? ""}`.toLowerCase().includes(needle);
-    });
+    return plugins
+      .filter((plugin) => {
+        if (filter !== "all" && (plugin.category ?? "effect") !== filter) return false;
+        if (!needle) return true;
+        return `${plugin.name} ${plugin.vendor ?? ""}`.toLowerCase().includes(needle);
+      })
+      .sort(
+        (a, b) =>
+          a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) ||
+          (a.vendor ?? "").localeCompare(b.vendor ?? "", undefined, { sensitivity: "base" }),
+      );
   }, [plugins, query, filter]);
 
   const current = filtered[Math.min(selected, Math.max(0, filtered.length - 1))];
@@ -129,12 +144,20 @@ export function Browser({
           ) : (
             filtered.map((plugin, index) => (
               <button
-                key={`${plugin.name}-${plugin.path ?? index}`}
+                // Two copies of one plug-in can share a name and have no path;
+                // key on the row identity plus its position so rows never
+                // collide or remount when the sort changes.
+                key={plugin.path ?? `${plugin.id}-${index}`}
                 className={current === plugin ? "ws-browser-row is-selected" : "ws-browser-row"}
                 aria-pressed={current === plugin}
                 onClick={() => setSelected(index)}
                 onDoubleClick={() => onLoad?.(plugin)}
                 onKeyDown={(event) => {
+                  if (event.key === "Enter" && onLoad) {
+                    event.preventDefault();
+                    onLoad(plugin);
+                    return;
+                  }
                   if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                     event.preventDefault();
                     const delta = event.key === "ArrowDown" ? 1 : -1;
@@ -152,6 +175,14 @@ export function Browser({
                 <span className="ws-browser-row-tag">
                   {plugin.category === "instrument" ? "INST" : "FX"}
                 </span>
+                {(copyCount.get(plugin.name) ?? 1) > 1 ? (
+                  <span
+                    className="ws-browser-row-tag"
+                    title={`${copyCount.get(plugin.name)} copies of this plug-in are installed; the details show which one this is`}
+                  >
+                    ×{copyCount.get(plugin.name)}
+                  </span>
+                ) : null}
               </button>
             ))
           )}

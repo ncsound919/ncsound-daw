@@ -440,10 +440,8 @@ export function HeaderBar({
                     >
                       <span className="ws-menu-tick">{entry.checked ? "•" : ""}</span>
                       <span className="ws-menu-label">{entry.label}</span>
-                      {entry.hint && (
-                        <span className="ws-menu-hint">
-                          {/native|route/i.test(entry.hint) ? "native" : "limit"}
-                        </span>
+                      {entry.hint && /native|route/i.test(entry.hint) && (
+                        <span className="ws-menu-hint">native</span>
                       )}
                     </button>
                   );
