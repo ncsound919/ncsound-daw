@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChannelParams, PitchState, TimelineClip, TrackInfo, TransportState } from "../types";
 import { barPct, tintForTrack, waveformPoints, zoomWindow } from "./format";
 
@@ -348,10 +348,13 @@ export function Arrangement({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clips.length]);
 
-  const commit = (next: TimelineClip[]) => {
-    setDraft(next);
-    onClipsChanged?.(next);
-  };
+  const commit = useCallback(
+    (next: TimelineClip[]) => {
+      setDraft(next);
+      onClipsChanged?.(next);
+    },
+    [onClipsChanged],
+  );
 
   const seek = (bar: number) => onSeek(snap ? Math.round(bar) : bar);
   const playheadPct = transport ? barPct(transport.positionBar, viewStart, visibleBars) : -1;
@@ -401,12 +404,17 @@ export function Arrangement({
   // Pro Tools-style stepped zoom: the +/- buttons and keys pivot on the
   // playhead the way the wheel pivots on the pointer. A playhead outside
   // the window clamps to the nearest edge instead of warping the view.
-  const zoomAt = (direction: "in" | "out") => {
-    const ratio = transport ? clamp((transport.positionBar - viewStart) / visibleBars, 0, 1) : 0.5;
-    const next = zoomWindow(viewStart, visibleBars, ratio, direction, MIN_BARS, MAX_BARS);
-    setVisibleBars(next.visibleBars);
-    setViewStart(next.viewStart);
-  };
+  const zoomAt = useCallback(
+    (direction: "in" | "out") => {
+      const ratio = transport
+        ? clamp((transport.positionBar - viewStart) / visibleBars, 0, 1)
+        : 0.5;
+      const next = zoomWindow(viewStart, visibleBars, ratio, direction, MIN_BARS, MAX_BARS);
+      setVisibleBars(next.visibleBars);
+      setViewStart(next.viewStart);
+    },
+    [transport, viewStart, visibleBars],
+  );
 
   // Pro Tools wheel: every wheel event zooms at the pointer (Ctrl/Cmd too).
   // The anchor comes from the lane itself, not a guessed header width, so the
@@ -494,6 +502,8 @@ export function Arrangement({
     viewStart,
     visibleBars,
     transport?.positionBar,
+    commit,
+    zoomAt,
   ]);
 
   const deleteClip = (index: number) => {

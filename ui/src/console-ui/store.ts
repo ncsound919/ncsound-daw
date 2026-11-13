@@ -46,7 +46,7 @@ export function useBinder(store: ParamStore, map: ParamMap) {
         onGesture: (p) => store.gesture?.(id, p),
       };
     },
-    [store, map, store.version()],
+    [store, map],
   );
 }
 

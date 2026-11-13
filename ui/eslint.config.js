@@ -33,5 +33,19 @@ export default tseslint.config(
     files: ["src/console-ui/renderers/**/*.ts"],
     rules: { "@typescript-eslint/no-unused-expressions": "off" },
   },
+  {
+    // Console panels and the Settings surface deliberately co-locate their
+    // component with schema metadata, defaults and pure helpers consumed by the
+    // renderer registry, App and Workspace. Splitting each module would create
+    // circular imports for no runtime gain; Fast Refresh already falls back to
+    // a full reload for these files.
+    files: [
+      "src/components/PitchKnobs.tsx",
+      "src/console-ui/panels/**/*.tsx",
+      "src/workspace/Settings.tsx",
+      "src/workspace/overlayFx.tsx",
+    ],
+    rules: { "react-refresh/only-export-components": "off" },
+  },
   prettier,
 );

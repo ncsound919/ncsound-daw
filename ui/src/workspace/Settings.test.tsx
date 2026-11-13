@@ -32,6 +32,14 @@ const ENGINE_STATE: NativeAudioState = {
 const getAudioState = vi.mocked(backend.getAudioState);
 const applyAudioSettings = vi.mocked(backend.applyAudioSettings);
 
+const STORAGE = new Map<string, string>();
+const storage = {
+  getItem: (key: string) => STORAGE.get(key) ?? null,
+  setItem: (key: string, value: string) => void STORAGE.set(key, value),
+  removeItem: (key: string) => void STORAGE.delete(key),
+  clear: () => STORAGE.clear(),
+};
+
 function Harness({ initial }: { initial: UiSettings }) {
   const [settings, setSettings] = useState(initial);
   return <SettingsPanel settings={settings} onChange={setSettings} />;
@@ -45,6 +53,8 @@ const settings = (patch: Partial<UiSettings> = {}): UiSettings => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  STORAGE.clear();
+  vi.stubGlobal("localStorage", storage);
   getAudioState.mockResolvedValue(ENGINE_STATE);
   applyAudioSettings.mockResolvedValue({
     ok: true,
@@ -108,6 +118,37 @@ describe("Settings audio interface", () => {
     await waitFor(() =>
       expect(applyAudioSettings).toHaveBeenCalledWith("ASIO", "Focusrite", 48000, 64),
     );
+  });
+
+  it("surfaces a rejected device change", async () => {
+    applyAudioSettings.mockResolvedValueOnce({
+      ok: false,
+      error: "Device is busy",
+      note: "",
+      state: ENGINE_STATE,
+    });
+    render(<Harness initial={settings({ audioOut: "Focusrite" })} />);
+
+    const output = screen.getByRole("combobox", { name: "Audio output" });
+    await waitFor(() =>
+      expect(within(output).getByRole("option", { name: "Focusrite" })).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Apply to engine" }));
+
+    expect(await screen.findByText("Device is busy")).toBeInTheDocument();
+  });
+
+  it("persists cosmetic and session defaults", () => {
+    render(<Harness initial={settings()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Teal accent" }));
+    expect(screen.getByText("#4FD6C0")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Snap ON" }));
+    expect(screen.getByRole("button", { name: "Snap OFF" })).toBeInTheDocument();
+
+    const saved = JSON.parse(localStorage.getItem("ncsound-ui-settings") ?? "{}");
+    expect(saved).toMatchObject({ accent: "#4fd6c0", snap: false });
   });
 
   it("does not send a browser device id as a JUCE output name", async () => {
