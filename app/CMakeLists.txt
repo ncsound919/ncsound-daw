@@ -60,6 +60,7 @@ target_sources(NCMixRackTests PRIVATE
     Source/ExportTests.cpp
     Source/AudioSettingsTests.cpp
     Source/RecordingTests.cpp
+    Source/VoiceToMidiIntegrationTests.cpp
     Source/AutomationTests.cpp
     Source/SendsTests.cpp
     Source/MixPlanTests.cpp

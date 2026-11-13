@@ -4,6 +4,8 @@
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
+#include <cstdlib>
+
 namespace
 {
 juce::File writeTestWav (juce::AudioBuffer<float>& buffer, double sampleRate)
@@ -94,4 +96,32 @@ TEST_CASE ("Chop Station presets apply without crashing", "[chopstation]")
     // Out-of-range indexes are ignored by applyPreset; presetName falls back to "Default".
     processor.applyPreset (-1);
     processor.applyPreset (99);
+}
+
+TEST_CASE ("Chop Station loadSample builds slices from a hit pattern", "[chopstation][integration]")
+{
+    nc::ChopStationProcessor processor;
+    auto* chops = processor.apvts.getParameter ("chops");
+    REQUIRE (chops != nullptr);
+    chops->setValueNotifyingHost (chops->convertTo0to1 (3.0f));
+
+    constexpr int sampleRate = 44100;
+    constexpr int frames = sampleRate * 3 / 2;
+    juce::AudioBuffer<float> buffer (1, frames);
+    buffer.clear();
+
+    for (const auto hit : { sampleRate / 5, sampleRate * 3 / 5, sampleRate })
+        for (int i = 0; i < 128; ++i)
+            buffer.setSample (0, hit + i,
+                              0.8f * std::exp (-static_cast<float> (i) / 32.0f));
+
+    const auto file = writeTestWav (buffer, sampleRate);
+    REQUIRE (processor.loadSample (file));
+    REQUIRE (processor.getSliceCount() == 3);
+
+    const auto slices = processor.getSlices();
+    REQUIRE (slices.size() == 3);
+    REQUIRE (std::llabs (slices[1].start - 26460) <= 512);
+    REQUIRE (slices.front().start == 0);
+    REQUIRE (slices.back().end == frames);
 }
