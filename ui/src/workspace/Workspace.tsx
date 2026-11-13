@@ -57,6 +57,8 @@ export interface WorkspaceActions {
   splitClip?: (index: number, bar: number) => void;
   duplicateClip?: (index: number) => void;
   deleteClip?: (index: number) => void;
+  /** Voice-to-MIDI: transcribes the audio clip into a new MIDI clip. */
+  transcribeClip?: (index: number) => void;
   loopRange?: (startBar: number, endBar: number) => void;
   undo?: () => void;
   redo?: () => void;

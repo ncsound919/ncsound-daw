@@ -245,6 +245,7 @@ export function HeaderBar({
           run: onDeleteSelected,
           disabled: !hasSelection || !onDeleteSelected,
           hint: hasSelection && onDeleteSelected ? undefined : "Select a clip first",
+        },
         {
           label: "Select All Clips",
           disabled: true,
@@ -263,7 +264,6 @@ export function HeaderBar({
           run: onRedo,
           disabled: !onRedo || !redoDepth,
           hint: !onRedo ? "Not wired to the bridge yet" : "Nothing to redo",
-        },
         },
         "separator",
         { heading: "MIDI" },
@@ -298,6 +298,7 @@ export function HeaderBar({
         { heading: "MASTER INSERT" },
         ...(onLoadMasterPlugin
           ? ([{ label: "Load Master Plugin…", run: onLoadMasterPlugin }] as Entry[])
+          : []),
         onRemoveMasterPlugin && canRemoveMasterPlugin
           ? { label: "Remove Master Plugin", run: onRemoveMasterPlugin }
           : {
@@ -312,7 +313,6 @@ export function HeaderBar({
         { label: "Automix Snapshot", disabled: true, hint: "Desktop app EDIT → Master Rack" },
         ...(onScanPlugins
           ? (["separator", { label: "Scan Plugins (VST3)", run: onScanPlugins }] as Entry[])
-          : []),
           : []),
         ...(mixologyPresets && mixologyPresets.length > 0 && onApplyMixology
           ? ([
@@ -356,7 +356,6 @@ export function HeaderBar({
         },
         wired("Select Previous Track", onSelectPrevious),
         wired("Select Next Track", onSelectNext),
-        "separator",
         "separator",
         { label: "Mute Selected Track", run: onMuteSelected },
         { label: "Solo Selected Track", run: onSoloSelected },

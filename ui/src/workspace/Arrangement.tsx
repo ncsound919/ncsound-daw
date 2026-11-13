@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { ChannelParams, PitchState, TimelineClip, TrackInfo, TransportState } from "../types";
-import { barPct, tintForTrack, waveformPoints } from "./format";
+import { barPct, tintForTrack, waveformPoints, zoomWindow } from "./format";
 
 export type ArrangeTool = "select" | "trim" | "fade" | "gain" | "split" | "erase";
 
@@ -991,10 +991,10 @@ export function Arrangement({
                     </button>
                     <span className="ws-head-name" title={track.name}>
                       {track.name}
+                    </span>
                   </div>
 
                   <div className="ws-head-row">
-                    </span>
                     <button
                       className="ws-mini-btn"
                       aria-pressed={track.muted}
