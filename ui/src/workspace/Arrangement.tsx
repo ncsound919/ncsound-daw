@@ -404,16 +404,16 @@ export function Arrangement({
   // Pro Tools-style stepped zoom: the +/- buttons and keys pivot on the
   // playhead the way the wheel pivots on the pointer. A playhead outside
   // the window clamps to the nearest edge instead of warping the view.
+  const positionBar = transport?.positionBar;
   const zoomAt = useCallback(
     (direction: "in" | "out") => {
-      const ratio = transport
-        ? clamp((transport.positionBar - viewStart) / visibleBars, 0, 1)
-        : 0.5;
+      const ratio =
+        positionBar !== undefined ? clamp((positionBar - viewStart) / visibleBars, 0, 1) : 0.5;
       const next = zoomWindow(viewStart, visibleBars, ratio, direction, MIN_BARS, MAX_BARS);
       setVisibleBars(next.visibleBars);
       setViewStart(next.viewStart);
     },
-    [transport, viewStart, visibleBars],
+    [positionBar, viewStart, visibleBars],
   );
 
   // Pro Tools wheel: every wheel event zooms at the pointer (Ctrl/Cmd too).
