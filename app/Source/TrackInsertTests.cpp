@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/catch_approx.hpp>
 
+#include "BuiltinStudioFx.h"
 #include "TrackInsertRack.h"
 
 #include <atomic>
@@ -330,4 +332,135 @@ TEST_CASE ("master NaN output is contained", "[inserts]")
     for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
         for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
             REQUIRE (std::isfinite (buffer.getSample (channel, sample)));
+}
+
+TEST_CASE ("builtin studio-fx insert processes audio through the ported chain", "[inserts]")
+{
+    nc::TrackInsertRack rack;
+    rack.prepare (48000.0, 256, 2);
+
+    // Heavy saturation: unmistakable if the rack really runs the chain.
+    const std::string chainJson = R"({"schema":"nc.studiofx.v1","chain":[{"kind":"SATURATION","id":"sat","params":{"type":0,"driveDb":12,"warmth":0.5,"mix":1,"oversample":0},"enabled":true}]})";
+
+    auto fx = std::make_unique<nc::BuiltinStudioFx>();
+    REQUIRE (fx->setChainJson (chainJson));
+    REQUIRE (fx->latencySamples() == 0);
+
+    nc::engine::PluginSlotState saved;
+    REQUIRE (fx->getState (saved));
+    REQUIRE (saved.identifier == nc::builtinStudioFxIdentifier);
+
+    juce::String error;
+    REQUIRE (rack.install (0, 0, std::move (fx), saved, error));
+    REQUIRE (rack.slotName (0, 0) == "Studio FX (Built-in)");
+    REQUIRE (rack.chainLatency (0) == 0);
+
+    juce::AudioBuffer<float> buffer (2, 256);
+    for (int i = 0; i < buffer.getNumSamples(); ++i)
+    {
+        buffer.setSample (0, i, 0.5f * static_cast<float> (std::sin (6.283185307179586 * 220.0 * i / 48000.0)));
+        buffer.setSample (1, i, 0.4f * static_cast<float> (std::sin (6.283185307179586 * 220.0 * i / 48000.0)));
+    }
+    juce::AudioBuffer<float> dry (2, 256);
+    dry.makeCopyOf (buffer);
+
+    nc::engine::TransportBlock block;
+    block.tempo = 120.0;
+    block.numSamples = buffer.getNumSamples();
+    rack.beginBlock();
+    rack.processTrack (0, buffer, block);
+    rack.endBlock();
+
+    // Reference: the same input straight through the ported chain.
+    nc::engine::studiofx::StudioFxChain reference (48000.0f);
+    reference.setChain (nc::engine::studiofx::decodeChain (chainJson));
+    bool audiblyDifferent = false;
+    for (int i = 0; i < buffer.getNumSamples(); ++i)
+    {
+        float out[2];
+        const float inL = dry.getSample (0, i), inR = dry.getSample (1, i);
+        reference.processInto (inL, inR, out);
+        REQUIRE (std::isfinite (buffer.getSample (0, i)));
+        REQUIRE (std::isfinite (buffer.getSample (1, i)));
+        REQUIRE (buffer.getSample (0, i) == Catch::Approx (out[0]).margin (1e-6f));
+        REQUIRE (buffer.getSample (1, i) == Catch::Approx (out[1]).margin (1e-6f));
+        if (std::fabs (buffer.getSample (0, i) - inL) > 0.01f)
+            audiblyDifferent = true;
+    }
+    REQUIRE (audiblyDifferent);
+}
+
+TEST_CASE ("builtin studio-fx state round-trips the chain JSON", "[inserts]")
+{
+    const std::string chainJson = R"({"schema":"nc.studiofx.v1","chain":[{"kind":"TRIM","id":"t","params":{"gainDb":6,"autoStage":0},"enabled":true}]})";
+
+    auto first = std::make_unique<nc::BuiltinStudioFx>();
+    REQUIRE (first->setChainJson (chainJson));
+    nc::engine::PluginSlotState saved;
+    REQUIRE (first->getState (saved));
+    REQUIRE (saved.stateBase64 == chainJson);
+
+    // Garbage never replaces the installed chain.
+    REQUIRE (! first->setChainJson ("not json"));
+    REQUIRE (first->chainJson() == chainJson);
+    // Empty text is rejected too: the empty chain comes from empty state.
+    REQUIRE (! first->setChainJson (""));
+
+    auto second = std::make_unique<nc::BuiltinStudioFx>();
+    REQUIRE (second->setState (saved));
+    REQUIRE (second->chainJson() == chainJson);
+
+    nc::TrackInsertRack rack;
+    rack.prepare (48000.0, 256, 1);
+    juce::String error;
+    REQUIRE (rack.install (0, 0, std::move (second), saved, error));
+
+    juce::AudioBuffer<float> buffer (1, 64);
+    for (int i = 0; i < 64; ++i)
+        buffer.setSample (0, i, 0.25f);
+    nc::engine::TransportBlock block;
+    rack.beginBlock();
+    rack.processTrack (0, buffer, block);
+    rack.endBlock();
+
+    // The restored chain must render exactly what the ported chain renders.
+    nc::engine::studiofx::StudioFxChain reference (48000.0f);
+    reference.setChain (nc::engine::studiofx::decodeChain (chainJson));
+    for (int i = 0; i < 64; ++i)
+    {
+        float out[2];
+        reference.processInto (0.25f, 0.25f, out);
+        REQUIRE (buffer.getSample (0, i) == Catch::Approx (out[0]).margin (1e-6f));
+    }
+    // And +6 dB of trim is audibly hotter than the dry signal.
+    REQUIRE (buffer.getSample (0, 63) > 0.4f);
+}
+
+TEST_CASE ("empty studio-fx chain is a passthrough", "[inserts]")
+{
+    nc::TrackInsertRack rack;
+    rack.prepare (48000.0, 256, 1);
+
+    auto fx = std::make_unique<nc::BuiltinStudioFx>();
+    REQUIRE (fx->chainJson().empty());
+
+    nc::engine::PluginSlotState saved;
+    REQUIRE (fx->getState (saved));
+    juce::String error;
+    REQUIRE (rack.install (0, 0, std::move (fx), saved, error));
+
+    juce::AudioBuffer<float> buffer (2, 64);
+    for (int channel = 0; channel < 2; ++channel)
+        for (int i = 0; i < 64; ++i)
+            buffer.setSample (channel, i, 0.1f * static_cast<float> (channel + 1 + i % 7));
+
+    nc::engine::TransportBlock block;
+    rack.beginBlock();
+    rack.processTrack (0, buffer, block);
+    rack.endBlock();
+
+    for (int channel = 0; channel < 2; ++channel)
+        for (int i = 0; i < 64; ++i)
+            REQUIRE (buffer.getSample (channel, i)
+                     == Catch::Approx (0.1f * static_cast<float> (channel + 1 + i % 7)));
 }

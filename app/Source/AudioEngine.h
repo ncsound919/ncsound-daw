@@ -227,6 +227,10 @@ public:
 
     bool loadTrackInsert (int track, int slot, const juce::PluginDescription&, juce::String& error);
     bool loadTrackInsertFromId (int track, int slot, const juce::String& catalogId, juce::String& error);
+
+    /** Installs the built-in studio-FX chain on a track insert. An empty
+        chain JSON installs a passthrough. Message thread. */
+    bool setBuiltinStudioFx (int track, int slot, const juce::String& chainJson, juce::String& error);
     bool restoreTrackInsert (int track, int slot, const nc::engine::PluginSlotState&, juce::String& error);
     void unloadTrackInsert (int track, int slot);
 

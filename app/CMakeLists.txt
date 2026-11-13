@@ -43,6 +43,7 @@ target_sources(NCMixRackTests PRIVATE
     Source/PluginEditorWindow.cpp
     Source/HostedInsert.cpp
     Source/BuiltinSynth.cpp
+    Source/BuiltinStudioFx.cpp
     Source/MidiRecorder.cpp
     Source/MidiLearnManager.cpp
     Source/MidiLearnManager.h
@@ -183,6 +184,8 @@ target_sources(NCSoundHub PRIVATE
     Source/MidiRecorder.h
     Source/BuiltinSynth.cpp
     Source/BuiltinSynth.h
+    Source/BuiltinStudioFx.cpp
+    Source/BuiltinStudioFx.h
     Source/PianoRoll.cpp
     Source/PianoRoll.h
     Source/PianoRollWindow.cpp

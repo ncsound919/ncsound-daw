@@ -1,5 +1,6 @@
 #include "AudioEngine.h"
 
+#include "BuiltinStudioFx.h"
 #include "BuiltinSynth.h"
 #include "Session.h"
 
@@ -2464,9 +2465,34 @@ bool AudioEngine::loadTrackInsert (int track, int slot, const juce::PluginDescri
     return true;
 }
 
+bool AudioEngine::setBuiltinStudioFx (int track, int slot, const juce::String& chainJson,
+                                       juce::String& error)
+{
+    if (! juce::isPositiveAndBelow (track, activeTrackCount.load())
+        || ! juce::isPositiveAndBelow (slot, kInsertSlotsPerTrack))
+    {
+        error = "Insert target is outside the session";
+        return false;
+    }
+
+    auto fx = std::make_unique<BuiltinStudioFx>();
+    if (! chainJson.isEmpty() && ! fx->setChainJson (chainJson.toStdString()))
+    {
+        error = "That studio-FX chain could not be read";
+        return false;
+    }
+    nc::engine::PluginSlotState state;
+    fx->getState (state);
+    return inserts.install (track, slot, std::move (fx), state, error);
+}
+
 bool AudioEngine::loadTrackInsertFromId (int track, int slot, const juce::String& catalogId,
                                         juce::String& error)
 {
+    // The built-in chain never touches the VST3 catalog.
+    if (catalogId == builtinStudioFxIdentifier)
+        return setBuiltinStudioFx (track, slot, {}, error);
+
     const auto description = catalog.resolveDescription (catalogId, error);
 
     if (! description.has_value())
@@ -2491,6 +2517,19 @@ bool AudioEngine::restoreTrackInsert (int track, int slot, const nc::engine::Plu
 
     if (state.isEmpty())
         return false;
+
+    // Built-in chain reopens without a scan; the chain JSON is the state.
+    if (state.identifier == builtinStudioFxIdentifier)
+    {
+        auto fx = std::make_unique<BuiltinStudioFx>();
+        if (! fx->setState (state))
+        {
+            inserts.markMissing (track, slot, state, fx->name());
+            error = "The saved studio-FX chain could not be restored";
+            return false;
+        }
+        return inserts.install (track, slot, std::move (fx), state, error);
+    }
 
     std::optional<juce::PluginDescription> description;
 
