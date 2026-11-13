@@ -31,6 +31,12 @@ AudioEngine::AudioEngine()
     engineAlive = std::make_shared<std::atomic<bool>> (true);
     formats.registerBasicFormats();
 
+    // The brace initializers on these arrays only seed lane 0; without this
+    // every other lane starts at 0 and skips its first pan trig, silencing it.
+    std::fill_n (cachedPanValue, trackCount, -2.0f);
+    std::fill_n (cachedPanLeft, trackCount, 0.7071f);
+    std::fill_n (cachedPanRight, trackCount, 0.7071f);
+
     for (auto& monitor : trackMonitor)
         monitor.store (true, std::memory_order_relaxed);
 
@@ -144,6 +150,135 @@ juce::String AudioEngine::audioSettingsSummary() const
 {
     return deviceInfo + "@" + juce::String (currentSampleRate(), 0) + "Hz," + juce::String (currentBufferSize()) + "smp";
 }
+
+juce::var AudioEngine::audioStateToVar()
+{
+    auto* o = new juce::DynamicObject();
+    const auto setup = deviceManager.getAudioDeviceSetup();
+    o->setProperty ("deviceType", deviceManager.getCurrentAudioDeviceType());
+    o->setProperty ("outputDevice", setup.outputDeviceName);
+    o->setProperty ("sampleRate", setup.sampleRate);
+    o->setProperty ("bufferSize", setup.bufferSize);
+    o->setProperty ("outputChannels", setup.outputChannels.countNumberOfSetBits());
+    o->setProperty ("inputChannels", setup.inputChannels.countNumberOfSetBits());
+    o->setProperty ("open", isDeviceOpen());
+    o->setProperty ("currentRate", currentSampleRate());
+    o->setProperty ("currentBuffer", currentBufferSize());
+    o->setProperty ("device", deviceDescription());
+    o->setProperty ("overruns", 0.0);
+    o->setProperty ("blocks", 0.0);
+
+    juce::Array<juce::var> types;
+    for (auto* type : deviceManager.getAvailableDeviceTypes())
+    {
+        if (type == nullptr)
+            continue;
+
+        type->scanForDevices();
+        auto* t = new juce::DynamicObject();
+        t->setProperty ("name", type->getTypeName());
+        juce::Array<juce::var> outputs;
+        for (const auto& name : type->getDeviceNames (false))
+            outputs.add (name);
+        t->setProperty ("outputs", outputs);
+        types.add (juce::var (t));
+    }
+    o->setProperty ("types", types);
+    return juce::var (o);
+}
+
+juce::var AudioEngine::applyAudioSettings (const juce::String& deviceType,
+                                           const juce::String& outputDevice,
+                                           double sampleRate, int bufferSize)
+{
+    juce::String error;
+    juce::String note;
+
+    if (deviceType.isNotEmpty())
+    {
+        juce::AudioIODeviceType* chosen = nullptr;
+        for (auto* type : deviceManager.getAvailableDeviceTypes())
+            if (type != nullptr && type->getTypeName() == deviceType)
+                chosen = type;
+
+        if (chosen == nullptr)
+        {
+            error = "Unknown audio driver: " + deviceType;
+        }
+        else if (deviceManager.getCurrentAudioDeviceType() != deviceType)
+        {
+            deviceManager.setCurrentAudioDeviceType (deviceType, true);
+            if (deviceManager.getCurrentAudioDeviceType() != deviceType)
+                error = "Could not select " + deviceType;
+        }
+    }
+
+    if (error.isEmpty())
+    {
+        auto setup = deviceManager.getAudioDeviceSetup();
+
+        if (auto* type = deviceManager.getCurrentDeviceTypeObject())
+        {
+            type->scanForDevices();
+            const auto outputs = type->getDeviceNames (false);
+
+            if (outputDevice.isNotEmpty())
+            {
+                if (outputs.contains (outputDevice))
+                    setup.outputDeviceName = outputDevice;
+                else
+                    error = "No output device named " + outputDevice;
+            }
+            else if (! outputs.contains (setup.outputDeviceName) && ! outputs.isEmpty())
+            {
+                // Switching driver leaves the previous driver's device name
+                // behind; use this driver's first output rather than fail.
+                setup.outputDeviceName = outputs[0];
+            }
+        }
+
+        if (error.isEmpty())
+        {
+            if (sampleRate > 0.0)
+                setup.sampleRate = sampleRate;
+            if (bufferSize > 0)
+                setup.bufferSize = bufferSize;
+
+            // Let the device choose its default channel set. The saved
+            // DirectSound setup asked a stereo codec for 11 channels, which is
+            // the kind of request that fails silently and leaves no audio.
+            setup.useDefaultOutputChannels = true;
+            setup.useDefaultInputChannels = true;
+
+            const auto err = deviceManager.setAudioDeviceSetup (setup, true);
+            if (err.isNotEmpty())
+                error = err;
+            else if (! isDeviceOpen())
+                error = "The audio device did not open.";
+        }
+    }
+
+    if (error.isEmpty())
+    {
+        const auto actual = deviceManager.getAudioDeviceSetup();
+        if (sampleRate > 0.0 && std::abs (actual.sampleRate - sampleRate) > 0.5)
+            note = "Device runs at " + juce::String (actual.sampleRate, 0) + " Hz.";
+        if (bufferSize > 0 && actual.bufferSize != bufferSize)
+            note << (note.isEmpty() ? "" : " ")
+                 << "Buffer is " << actual.bufferSize << " samples.";
+        saveAudioSettings();
+    }
+
+    auto* o = new juce::DynamicObject();
+    o->setProperty ("ok", error.isEmpty());
+    o->setProperty ("error", error);
+    o->setProperty ("note", note);
+    o->setProperty ("state", audioStateToVar());
+    return juce::var (o);
+}
+
+
+
 
 double AudioEngine::bufferLatencyMs() const
 {

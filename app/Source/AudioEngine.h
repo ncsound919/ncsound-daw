@@ -289,6 +289,17 @@ public:
     void restoreAudioSettings();
     void clearAudioSettings();
     juce::String audioSettingsSummary() const;
+    /** Live hardware state for the React settings panel: current setup, the
+        measured device state, and the device names each driver offers. Scans
+        each device type, so call it on the message thread only. */
+    juce::var audioStateToVar();
+
+    /** Applies a driver/device/rate/buffer choice, letting the device pick its
+        default channel set (a stereo codec must never be asked for 11
+        channels). Returns { ok, error, note, state }. Message thread. */
+    juce::var applyAudioSettings (const juce::String& deviceType,
+                                  const juce::String& outputDevice,
+                                  double sampleRate, int bufferSize);
 
     /** Swaps which engine an aux return runs. Aux 0 is the reverb send and aux
         1 the delay send; each hosts the stock Overlay engine or its swap target

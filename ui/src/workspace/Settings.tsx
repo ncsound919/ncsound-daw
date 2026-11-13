@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 
+import { backend, type NativeAudioState } from "../lib/bridge";
+
 export interface UiSettings {
   accent: string;
   tintAmount: number; // 0..30 (% of track tint in strips/heads)
@@ -137,6 +139,71 @@ function useMidiDevices(enabled: boolean) {
   return { names, note };
 }
 
+const DRIVER_TYPES: Record<UiSettings["driver"], string> = {
+  asio: "ASIO",
+  wasapi: "Windows Audio",
+  directsound: "DirectSound",
+  default: "",
+};
+
+/** Reads the engine's real device state. The selectors above only describe the
+ *  preference until Apply is pressed; this is what JUCE actually opened. */
+function useEngineAudio() {
+  const [state, setState] = useState<NativeAudioState | null>(null);
+  const [message, setMessage] = useState("");
+
+  const refresh = async () => {
+    if (!backend.embedded) {
+      setMessage("Native audio is only available in the desktop app.");
+      return;
+    }
+    try {
+      setState(await backend.getAudioState());
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  useEffect(() => {
+    if (!backend.embedded) {
+      setMessage("Native audio is only available in the desktop app.");
+      return;
+    }
+    // The WebView can mount before the device manager has opened, and a
+    // failed bridge call is not worth showing permanently: retry briefly
+    // until the engine reports an open device.
+    let cancelled = false;
+    let tries = 0;
+    const attempt = async () => {
+      if (cancelled) return;
+      try {
+        const next = await backend.getAudioState();
+        if (cancelled) return;
+        setState(next);
+        if (!next.open && tries < 6) {
+          tries += 1;
+          window.setTimeout(attempt, 700);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        if (tries < 6) {
+          tries += 1;
+          window.setTimeout(attempt, 700);
+        } else {
+          setMessage(error instanceof Error ? error.message : String(error));
+        }
+      }
+    };
+    void attempt();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return { state, message, setMessage, refresh };
+}
+
 export function loadSettings(): UiSettings {
   try {
     const raw = localStorage.getItem(KEY);
@@ -179,6 +246,39 @@ export function SettingsPanel({
 
   const { devices, note: audioNote, refresh: refreshDevices } = useAudioDevices();
   const { names: midiNames, note: midiNote } = useMidiDevices(settings.midiEnabled);
+  const engineAudio = useEngineAudio();
+  const nativeOutputs =
+    engineAudio.state?.types.find((type) => type.name === DRIVER_TYPES[settings.driver])
+      ?.outputs ?? [];
+
+  const applyToEngine = async () => {
+    if (!backend.embedded) {
+      engineAudio.setMessage("Native audio is only available in the desktop app.");
+      return;
+    }
+    engineAudio.setMessage("Applying…");
+    try {
+      const result = await backend.applyAudioSettings(
+        DRIVER_TYPES[settings.driver],
+        // A browser device id is not a JUCE device name; only send a value the
+        // native list actually contains, otherwise keep the current device.
+        nativeOutputs.includes(settings.audioOut) ? settings.audioOut : "",
+        settings.sampleRate,
+        settings.lowLatency ? Math.min(64, settings.bufferSize) : settings.bufferSize,
+      );
+      if (!result.ok) {
+        engineAudio.setMessage(result.error);
+        return;
+      }
+      engineAudio.setMessage(
+        result.note ||
+          `Applied: ${result.state.device} · ${Math.round(result.state.currentRate)} Hz · ${result.state.currentBuffer} samples`,
+      );
+      await engineAudio.refresh();
+    } catch (error) {
+      engineAudio.setMessage(error instanceof Error ? error.message : String(error));
+    }
+  };
   const windows = typeof window !== "undefined" && /win/i.test(window.navigator.platform);
   const asioNote =
     settings.driver === "asio"
@@ -406,12 +506,23 @@ export function SettingsPanel({
             value={settings.audioOut}
             onChange={(event) => set({ audioOut: event.target.value })}
           >
-            <option value="">System default</option>
-            {devices.map((device) => (
-              <option key={device.deviceId} value={device.deviceId}>
-                {device.label}
-              </option>
-            ))}
+            <option value="">Engine default</option>
+            {settings.audioOut !== "" &&
+              !nativeOutputs.includes(settings.audioOut) &&
+              !devices.some((d) => d.deviceId === settings.audioOut) && (
+                <option value={settings.audioOut}>{settings.audioOut} (saved)</option>
+              )}
+            {nativeOutputs.length > 0
+              ? nativeOutputs.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))
+              : devices.map((device) => (
+                  <option key={device.deviceId} value={device.deviceId}>
+                    {device.label}
+                  </option>
+                ))}
           </select>
         </label>
         <label className="ws-settings-slider">
@@ -458,7 +569,21 @@ export function SettingsPanel({
           <button type="button" className="ws-btn" onClick={() => refreshDevices()}>
             Refresh devices
           </button>
+          <button type="button" className="ws-btn" onClick={() => void applyToEngine()}>
+            Apply to engine
+          </button>
         </div>
+        {engineAudio.state && (
+          <p className="ws-settings-note">
+            Engine: {engineAudio.state.open ? "open" : "closed"} ·{" "}
+            {engineAudio.state.deviceType || "no driver"} · {engineAudio.state.device || "no device"} ·{" "}
+            {Math.round(engineAudio.state.currentRate)} Hz · {engineAudio.state.currentBuffer} samples
+            {engineAudio.state.overruns > 0
+              ? ` · ${engineAudio.state.overruns} overrun(s)`
+              : ""}
+          </p>
+        )}
+        {engineAudio.message && <p className="ws-settings-note">{engineAudio.message}</p>}
         <p className="ws-settings-note">{asioNote}</p>
         <p className="ws-settings-note">{audioNote}</p>
       </section>

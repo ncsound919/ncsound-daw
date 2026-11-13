@@ -843,6 +843,23 @@ juce::WebBrowserComponent::Options MainComponent::buildWebOptions()
                   });
               done (buildState());
           } },
+        { "getAudioState", [this] (const Args&, Completion done)
+          { done (engine.audioStateToVar()); } },
+        { "applyAudioSettings", [this] (const Args& a, Completion done)
+          {
+              auto result = engine.applyAudioSettings (
+                  a.size() > 0 ? a[0].toString() : juce::String(),
+                  a.size() > 1 ? a[1].toString() : juce::String(),
+                  a.size() > 2 ? finiteOr (a[2], 0.0) : 0.0,
+                  a.size() > 3 ? (int) juce::jlimit (0.0, 8192.0, finiteOr (a[3], 0.0)) : 0);
+
+              const auto ok = (bool) result.getProperty ("ok", false);
+              const auto detail = (ok ? result.getProperty ("note", {})
+                                      : result.getProperty ("error", {})).toString();
+              setStatus (ok ? "AUDIO / " + (detail.isNotEmpty() ? detail : "applied")
+                            : "AUDIO / " + detail, ! ok);
+              done (result);
+          } },
         { "undo", [this] (const Args&, Completion done)
           {
               arrange.undo();

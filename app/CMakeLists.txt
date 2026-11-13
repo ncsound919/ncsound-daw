@@ -58,6 +58,7 @@ target_sources(NCMixRackTests PRIVATE
     Source/AudioEngine.cpp
     Source/PluginHost.cpp
     Source/ExportTests.cpp
+    Source/AudioSettingsTests.cpp
     Source/RecordingTests.cpp
     Source/AutomationTests.cpp
     Source/SendsTests.cpp

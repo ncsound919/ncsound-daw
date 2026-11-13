@@ -49,6 +49,8 @@ export const NATIVE_ROUTES = [
   "removeMasterPlugin",
   "setChannelParam",
   "scanPlugins",
+  "getAudioState",
+  "applyAudioSettings",
   "undo",
   "redo",
 ] as const;

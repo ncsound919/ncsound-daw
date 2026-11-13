@@ -2,6 +2,38 @@ import { addBackendEventListener, getNativeFunction, isEmbedded } from "./juce";
 import type { NativeRoute } from "./nativeRoutes.generated";
 import type { AppState, AutomationLaneDraft, MidiNote, PitchState, TransportState } from "../types";
 
+export interface NativeAudioType {
+  name: string;
+  outputs: string[];
+}
+
+export interface NativeAudioState {
+  deviceType: string;
+  outputDevice: string;
+  sampleRate: number;
+  bufferSize: number;
+  outputChannels: number;
+  inputChannels: number;
+  open: boolean;
+  currentRate: number;
+  currentBuffer: number;
+  device: string;
+  overruns: number;
+  blocks: number;
+  types: NativeAudioType[];
+}
+
+export interface AudioApplyResult {
+  ok: boolean;
+  error: string;
+  note: string;
+  state: NativeAudioState;
+}
+
+
+
+
+
 function call<T>(name: NativeRoute, ...args: unknown[]): Promise<T> {
   return getNativeFunction(name)(...args) as Promise<T>;
 }
@@ -202,6 +234,25 @@ export const backend = {
 
   setActiveTrackCount(count: number): Promise<AppState> {
     return call<AppState>("setActiveTrackCount", count);
+  },
+
+  getAudioState(): Promise<NativeAudioState> {
+    return call<NativeAudioState>("getAudioState");
+  },
+
+  applyAudioSettings(
+    deviceType: string,
+    outputDevice: string,
+    sampleRate: number,
+    bufferSize: number,
+  ): Promise<AudioApplyResult> {
+    return call<AudioApplyResult>(
+      "applyAudioSettings",
+      deviceType,
+      outputDevice,
+      sampleRate,
+      bufferSize,
+    );
   },
 
   onStateChanged(cb: (state: AppState) => void): () => void {
