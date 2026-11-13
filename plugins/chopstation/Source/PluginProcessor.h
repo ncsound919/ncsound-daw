@@ -84,8 +84,6 @@ public:
     bool loadSample (const juce::File& file);
     juce::String getSampleName() const;
     int getSliceCount() const;
-    /** Copy of the current chop map; safe while the audio thread is reading it. */
-    std::vector<Slice> getSlices() const;
     juce::String getSamplePath() const { return activePath; }
 
     static constexpr int64_t maxSampleFrames = 3 * 44100 * 60; // 3 minutes-ish ceiling

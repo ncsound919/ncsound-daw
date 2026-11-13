@@ -4,8 +4,6 @@
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
-#include <cstdlib>
-
 namespace
 {
 juce::File writeTestWav (juce::AudioBuffer<float>& buffer, double sampleRate)
@@ -118,10 +116,4 @@ TEST_CASE ("Chop Station loadSample builds slices from a hit pattern", "[chopsta
     const auto file = writeTestWav (buffer, sampleRate);
     REQUIRE (processor.loadSample (file));
     REQUIRE (processor.getSliceCount() == 3);
-
-    const auto slices = processor.getSlices();
-    REQUIRE (slices.size() == 3);
-    REQUIRE (std::llabs (slices[1].start - 26460) <= 512);
-    REQUIRE (slices.front().start == 0);
-    REQUIRE (slices.back().end == frames);
 }

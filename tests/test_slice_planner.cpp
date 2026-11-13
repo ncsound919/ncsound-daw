@@ -118,6 +118,27 @@ TEST_CASE ("vibrato does not become a stream of false onsets")
     REQUIRE (onsets.size() <= 1);
 }
 
+TEST_CASE ("higher sensitivity finds at least as many onsets")
+{
+    constexpr std::int64_t frames = 30000;
+    std::vector<float> audio (static_cast<size_t> (frames), 0.0f);
+
+    for (std::int64_t i = 0; i < 64; ++i)
+        audio[static_cast<size_t> (5000 + i)] = 0.9f;
+
+    // A deliberately quiet second hit: the low setting should reject it, the
+    // high setting should keep it.
+    for (std::int64_t i = 0; i < 64; ++i)
+        audio[static_cast<size_t> (20000 + i)] = 0.02f;
+
+    const float* channels[] = { audio.data() };
+    const auto low = nc::detectTransients (channels, 1, frames, 0.0);
+    const auto high = nc::detectTransients (channels, 1, frames, 1.0);
+
+    CAPTURE (low.size(), high.size());
+    REQUIRE (high.size() > low.size());
+}
+
 TEST_CASE ("a quiet hit after a loud one is still detected")
 {
     constexpr std::int64_t frames = 30000;

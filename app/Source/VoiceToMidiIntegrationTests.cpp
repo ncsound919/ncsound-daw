@@ -1,6 +1,5 @@
 #include "AudioEngine.h"
 
-#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <juce_audio_formats/juce_audio_formats.h>
 
@@ -78,6 +77,7 @@ TEST_CASE ("AudioEngine voice-to-MIDI reports a missing WAV", "[voicetomidi][int
     const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
                           .getChildFile ("nc-voice-integration")
                           .getChildFile ("not-here.wav");
+    file.deleteFile();
 
     const auto clip = engine.voiceToMidiClip (file, 0, 120.0);
 

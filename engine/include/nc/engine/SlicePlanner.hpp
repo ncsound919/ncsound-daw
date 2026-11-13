@@ -26,8 +26,8 @@ std::vector<Slice> planSlices (std::int64_t lengthSamples,
 
     A half-wave-rectified log-magnitude flux is combined with a small energy
     flux, then peak-picked against a local median/MAD threshold. sensitivity is
-    0..1; lower values find more onsets. Positions are sample indices into the
-    source.
+    0..1; higher values lower the threshold and find more onsets. Positions are
+    sample indices into the source.
 */
 std::vector<std::int64_t> detectTransients (const float* const* channelData,
                                            int numChannels,

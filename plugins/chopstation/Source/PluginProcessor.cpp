@@ -282,12 +282,6 @@ int ChopStationProcessor::getSliceCount() const
     return data == nullptr ? 0 : static_cast<int> (data->slices.size());
 }
 
-std::vector<Slice> ChopStationProcessor::getSlices() const
-{
-    const auto data = holder.current.load();
-    return data == nullptr ? std::vector<Slice>{} : data->slices;
-}
-
 juce::String ChopStationProcessor::presetName (int index)
 {
     switch (index)
