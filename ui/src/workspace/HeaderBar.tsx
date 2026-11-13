@@ -199,7 +199,6 @@ export function HeaderBar({
   const wired = (label: string, run?: () => void): Item =>
     run ? { label, run } : { label, disabled: true, hint: "Not wired to the bridge yet" };
 
-
   const menus: { name: string; entries: Entry[] }[] = [
     {
       name: "FILE",

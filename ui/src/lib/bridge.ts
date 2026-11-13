@@ -30,10 +30,6 @@ export interface AudioApplyResult {
   state: NativeAudioState;
 }
 
-
-
-
-
 function call<T>(name: NativeRoute, ...args: unknown[]): Promise<T> {
   return getNativeFunction(name)(...args) as Promise<T>;
 }
@@ -218,7 +214,6 @@ export const backend = {
   removeMasterPlugin(): Promise<AppState> {
     return call<AppState>("removeMasterPlugin");
   },
-
 
   undo(): Promise<AppState> {
     return call<AppState>("undo");

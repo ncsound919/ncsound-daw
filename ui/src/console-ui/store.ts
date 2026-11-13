@@ -47,7 +47,7 @@ export function useBinder(store: ParamStore, map: ParamMap) {
       };
     },
     [store, map, store.version()],
-  ); // eslint-disable-line react-hooks/exhaustive-deps
+  );
 }
 
 /** Index of a discrete option from its normalised value. */

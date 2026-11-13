@@ -402,9 +402,7 @@ export function Arrangement({
   // playhead the way the wheel pivots on the pointer. A playhead outside
   // the window clamps to the nearest edge instead of warping the view.
   const zoomAt = (direction: "in" | "out") => {
-    const ratio = transport
-      ? clamp((transport.positionBar - viewStart) / visibleBars, 0, 1)
-      : 0.5;
+    const ratio = transport ? clamp((transport.positionBar - viewStart) / visibleBars, 0, 1) : 0.5;
     const next = zoomWindow(viewStart, visibleBars, ratio, direction, MIN_BARS, MAX_BARS);
     setVisibleBars(next.visibleBars);
     setViewStart(next.viewStart);
@@ -486,7 +484,17 @@ export function Arrangement({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [clips, selectedClip, onSelectClip, onDeleteClip, onUndo, onRedo, viewStart, visibleBars, transport?.positionBar]);
+  }, [
+    clips,
+    selectedClip,
+    onSelectClip,
+    onDeleteClip,
+    onUndo,
+    onRedo,
+    viewStart,
+    visibleBars,
+    transport?.positionBar,
+  ]);
 
   const deleteClip = (index: number) => {
     onDeleteClip?.(index);

@@ -238,7 +238,6 @@ export default function App() {
     backend.removeMasterPlugin().then(setState).catch(console.error);
   }, []);
 
-
   const handleScan = useCallback(() => {
     if (!backend.embedded) return;
     backend.scanPlugins().then(setState).catch(console.error);

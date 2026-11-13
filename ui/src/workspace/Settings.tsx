@@ -198,7 +198,6 @@ function useEngineAudio() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return { state, message, setMessage, refresh };
@@ -248,8 +247,8 @@ export function SettingsPanel({
   const { names: midiNames, note: midiNote } = useMidiDevices(settings.midiEnabled);
   const engineAudio = useEngineAudio();
   const nativeOutputs =
-    engineAudio.state?.types.find((type) => type.name === DRIVER_TYPES[settings.driver])
-      ?.outputs ?? [];
+    engineAudio.state?.types.find((type) => type.name === DRIVER_TYPES[settings.driver])?.outputs ??
+    [];
 
   const applyToEngine = async () => {
     if (!backend.embedded) {
@@ -576,11 +575,10 @@ export function SettingsPanel({
         {engineAudio.state && (
           <p className="ws-settings-note">
             Engine: {engineAudio.state.open ? "open" : "closed"} ·{" "}
-            {engineAudio.state.deviceType || "no driver"} · {engineAudio.state.device || "no device"} ·{" "}
-            {Math.round(engineAudio.state.currentRate)} Hz · {engineAudio.state.currentBuffer} samples
-            {engineAudio.state.overruns > 0
-              ? ` · ${engineAudio.state.overruns} overrun(s)`
-              : ""}
+            {engineAudio.state.deviceType || "no driver"} ·{" "}
+            {engineAudio.state.device || "no device"} · {Math.round(engineAudio.state.currentRate)}{" "}
+            Hz · {engineAudio.state.currentBuffer} samples
+            {engineAudio.state.overruns > 0 ? ` · ${engineAudio.state.overruns} overrun(s)` : ""}
           </p>
         )}
         {engineAudio.message && <p className="ws-settings-note">{engineAudio.message}</p>}

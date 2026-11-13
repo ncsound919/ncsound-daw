@@ -81,9 +81,10 @@ export function Inspector({
   // The faceplate is a preview, not a control surface. `inert` removes its
   // descendants from focus order as well as from the accessibility tree, which
   // aria-hidden alone does not do.
+  const focusedKey = focusedModuleKey(focused);
   useEffect(() => {
     faceRef.current?.setAttribute("inert", "");
-  }, [focusedModuleKey(focused)]);
+  }, [focusedKey]);
 
   if (!track) {
     return <div className="ws-empty">No track selected</div>;

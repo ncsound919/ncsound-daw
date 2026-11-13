@@ -298,26 +298,24 @@ describe("anchored zoom buttons", () => {
     expect(readout()).toBe(Math.round(expected.visibleBars) + " BARS");
   });
 
-describe("track headers", () => {
-  it("gives the name row to the name and the second row to the controls", () => {
-    setup();
+  describe("track headers", () => {
+    it("gives the name row to the name and the second row to the controls", () => {
+      setup();
 
-    const head = document.querySelector('.ws-head[aria-current="true"]') as HTMLElement;
-    const rows = head.querySelectorAll(":scope .ws-head-main > .ws-head-row");
-    expect(rows.length).toBe(2);
-    expect(rows[0].textContent).toContain("BASS");
-    expect(rows[0].querySelectorAll("button").length).toBe(1);
-    expect(rows[1].querySelectorAll("button").length).toBe(3);
+      const head = document.querySelector('.ws-head[aria-current="true"]') as HTMLElement;
+      const rows = head.querySelectorAll(":scope .ws-head-main > .ws-head-row");
+      expect(rows.length).toBe(2);
+      expect(rows[0].textContent).toContain("BASS");
+      expect(rows[0].querySelectorAll("button").length).toBe(1);
+      expect(rows[1].querySelectorAll("button").length).toBe(3);
+    });
+
+    it("shows the gain value with the full track label as its title", () => {
+      setup();
+
+      const db = document.querySelector('.ws-head[aria-current="true"] .ws-head-db') as HTMLElement;
+      expect(db.textContent).toBe("0.0 dB");
+      expect(db.title).toBe("T2 · 0.0 dB");
+    });
   });
-
-  it("shows the gain value with the full track label as its title", () => {
-    setup();
-
-    const db = document.querySelector(
-      '.ws-head[aria-current="true"] .ws-head-db',
-    ) as HTMLElement;
-    expect(db.textContent).toBe("0.0 dB");
-    expect(db.title).toBe("T2 · 0.0 dB");
-  });
-});
 });

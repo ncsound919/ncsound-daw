@@ -36,9 +36,7 @@ describe("Mixer Mixology", () => {
       ).toBeInTheDocument();
     }
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Apply Mixology preset 808 WEIGHT" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Apply Mixology preset 808 WEIGHT" }));
     expect(apply).toHaveBeenCalledWith(1);
     expect(await screen.findByText("MIXOLOGY / 5 INSERTS APPLIED")).toBeInTheDocument();
   });

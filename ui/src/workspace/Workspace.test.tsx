@@ -86,7 +86,10 @@ describe("Workspace", () => {
     expect(screen.getByText("001|01|000")).toBeInTheDocument();
     expect(screen.getByText("DRUMS")).toBeInTheDocument();
     // The header leads with the track name; the numbered badge keeps the index.
-    expect(document.querySelector('.ws-head[aria-current="true"] .ws-head-db')).toHaveAttribute("title", "T2 · 0.0 dB");
+    expect(document.querySelector('.ws-head[aria-current="true"] .ws-head-db')).toHaveAttribute(
+      "title",
+      "T2 · 0.0 dB",
+    );
     expect(document.querySelector('.ws-head-name[title="BASS"]')).not.toBeNull();
   });
 
@@ -140,9 +143,7 @@ describe("instrument sync", () => {
 
   it("mirrors track-pitch changes onto the instrument while sync is on", () => {
     const list = syncActions();
-    const { rerender } = render(
-      <Workspace state={STATE} transport={TRANSPORT} actions={list} />,
-    );
+    const { rerender } = render(<Workspace state={STATE} transport={TRANSPORT} actions={list} />);
     fireEvent.click(screen.getByRole("tab", { name: "Channel" }));
     fireEvent.click(screen.getByRole("button", { name: "Instrument follows track pitch" }));
 
@@ -162,9 +163,7 @@ describe("instrument sync", () => {
 
   it("leaves the instrument alone when sync is off", () => {
     const list = syncActions();
-    const { rerender } = render(
-      <Workspace state={STATE} transport={TRANSPORT} actions={list} />,
-    );
+    const { rerender } = render(<Workspace state={STATE} transport={TRANSPORT} actions={list} />);
     rerender(<Workspace state={pitched(2)} transport={TRANSPORT} actions={list} />);
     expect(list.instrumentPitch).not.toHaveBeenCalled();
   });
@@ -209,7 +208,9 @@ describe("plugin load targets", () => {
     fireEvent.doubleClick(screen.getByRole("button", { name: /Sub/ }));
 
     expect(masterLoad).not.toHaveBeenCalled();
-    expect(document.querySelector(".ws-status")?.textContent).toContain("INSTRUMENTS LOAD ON TRACKS");
+    expect(document.querySelector(".ws-status")?.textContent).toContain(
+      "INSTRUMENTS LOAD ON TRACKS",
+    );
   });
 
   it("loads an effect on the master bus", () => {
@@ -226,24 +227,22 @@ describe("plugin load targets", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: /Load Master Plugin/ }));
     fireEvent.doubleClick(screen.getByRole("button", { name: /Retro/ }));
 
-    expect(masterLoad).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "acme.retro" }),
-    );
+    expect(masterLoad).toHaveBeenCalledWith(expect.objectContaining({ id: "acme.retro" }));
   });
 
-describe("native status", () => {
-  it("shows the host status line in the strip when no local flash is active", () => {
-    render(
-      <Workspace
-        state={{ ...STATE, statusMessage: "BOUNCE / mix.wav", statusAlert: true }}
-        transport={TRANSPORT}
-        actions={actions()}
-      />,
-    );
+  describe("native status", () => {
+    it("shows the host status line in the strip when no local flash is active", () => {
+      render(
+        <Workspace
+          state={{ ...STATE, statusMessage: "BOUNCE / mix.wav", statusAlert: true }}
+          transport={TRANSPORT}
+          actions={actions()}
+        />,
+      );
 
-    const msg = screen.getByRole("status");
-    expect(msg).toHaveTextContent("BOUNCE / mix.wav");
-    expect(msg.previousElementSibling).toHaveClass("is-alert");
+      const msg = screen.getByRole("status");
+      expect(msg).toHaveTextContent("BOUNCE / mix.wav");
+      expect(msg.previousElementSibling).toHaveClass("is-alert");
+    });
   });
-});
 });
