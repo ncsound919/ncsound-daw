@@ -21,4 +21,4 @@ The excerpts were trimmed at the first sample above 1% of peak, resampled to
 48 kHz, mixed to mono, and normalized only when the source peak exceeded 1.0.
 No other processing was applied.
 
-Expected labels live in `real/manifest.tsv`; tests use the same values.
+Expected labels are asserted in `tests/test_real_corpus.cpp`.

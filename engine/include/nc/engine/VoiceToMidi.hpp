@@ -451,11 +451,9 @@ inline std::vector<V2MNote> voiceToMidi (const float* mono, std::size_t frames, 
     int pendingCount = 0;
     double pendingStart = 0.0;
     double pendingRmsSum = 0.0;
-    int pendingRmsCount = 0;
     double confidenceSum = 0.0;
     int confidenceCount = 0;
     double pendingConfidenceSum = 0.0;
-    int pendingConfidenceCount = 0;
     std::vector<std::pair<double, double>> currentPitch;
     std::vector<std::pair<double, double>> pendingPitch;
 
@@ -465,9 +463,7 @@ inline std::vector<V2MNote> voiceToMidi (const float* mono, std::size_t frames, 
         pendingCount = 0;
         pendingStart = 0.0;
         pendingRmsSum = 0.0;
-        pendingRmsCount = 0;
         pendingConfidenceSum = 0.0;
-        pendingConfidenceCount = 0;
         pendingPitch.clear();
     };
 
@@ -477,9 +473,9 @@ inline std::vector<V2MNote> voiceToMidi (const float* mono, std::size_t frames, 
             return;
 
         rmsSum += pendingRmsSum;
-        rmsCount += pendingRmsCount;
+        rmsCount += pendingCount;
         confidenceSum += pendingConfidenceSum;
-        confidenceCount += pendingConfidenceCount;
+        confidenceCount += pendingCount;
         currentPitch.insert (currentPitch.end(), pendingPitch.begin(), pendingPitch.end());
         clearPending();
     };
@@ -515,31 +511,30 @@ inline std::vector<V2MNote> voiceToMidi (const float* mono, std::size_t frames, 
                 const auto offset = std::clamp (beatOffset, 0.0, lengthBeats);
                 const auto clampedValue = std::clamp (value, 1, 16383);
 
-                if (! bends.empty() && std::abs (offset - bends.back().beatOffset) < 1e-9)
-                    bends.back().value = clampedValue;
-                else
-                    bends.push_back ({ offset, clampedValue });
+                if (! bends.empty())
+                {
+                    if (bends.back().value == clampedValue)
+                        return;
+
+                    if (std::abs (offset - bends.back().beatOffset) < 1e-9)
+                    {
+                        bends.back().value = clampedValue;
+                        return;
+                    }
+                }
+
+                bends.push_back ({ offset, clampedValue });
             };
 
-            if (currentPitch.empty())
+            for (const auto& point : currentPitch)
             {
-                appendBend (0.0, 8192);
-            }
-            else
-            {
-                if (currentPitch.front().first > currentStart + 1e-9)
-                    appendBend (0.0, 8192);
+                if (point.first < currentStart - 1e-9 || point.first > endSeconds + 1e-9)
+                    continue;
 
-                for (const auto& point : currentPitch)
-                {
-                    if (point.first < currentStart - 1e-9 || point.first > endSeconds + 1e-9)
-                        continue;
-
-                    const auto normalized = std::clamp ((point.second - currentNote) / bendRange,
-                                                        -1.0, 1.0);
-                    const auto value = 8192 + static_cast<int> (std::lround (normalized * 8191.0));
-                    appendBend ((point.first - currentStart) * bpm / 60.0, value);
-                }
+                const auto normalized = std::clamp ((point.second - currentNote) / bendRange,
+                                                    -1.0, 1.0);
+                const auto value = 8192 + static_cast<int> (std::lround (normalized * 8191.0));
+                appendBend ((point.first - currentStart) * bpm / 60.0, value);
             }
 
             // Return the wheel to centre at the note end so the next note does
@@ -613,25 +608,20 @@ inline std::vector<V2MNote> voiceToMidi (const float* mono, std::size_t frames, 
                 pendingCount = 1;
                 pendingStart = times[f];
                 pendingRmsSum = 0.0;
-                pendingRmsCount = 0;
                 pendingConfidenceSum = 0.0;
-                pendingConfidenceCount = 0;
                 pendingPitch.clear();
             }
 
             pendingRmsSum += rms[f];
-            ++pendingRmsCount;
             pendingConfidenceSum += selectedConfidence[f];
-            ++pendingConfidenceCount;
             pendingPitch.push_back ({ times[f], midi });
             lastVoiced = times[f];
 
             if (pendingCount >= 2)
             {
                 const auto nextRmsSum = pendingRmsSum;
-                const auto nextRmsCount = pendingRmsCount;
                 const auto nextConfidenceSum = pendingConfidenceSum;
-                const auto nextConfidenceCount = pendingConfidenceCount;
+                const auto nextCount = pendingCount;
                 auto nextPitch = std::move (pendingPitch);
 
                 const auto end = std::max (currentStart, pendingStart);
@@ -640,9 +630,9 @@ inline std::vector<V2MNote> voiceToMidi (const float* mono, std::size_t frames, 
                 currentStart = pendingStart;
                 lastVoiced = times[f];
                 rmsSum = nextRmsSum;
-                rmsCount = nextRmsCount;
+                rmsCount = nextCount;
                 confidenceSum = nextConfidenceSum;
-                confidenceCount = nextConfidenceCount;
+                confidenceCount = nextCount;
                 currentPitch = std::move (nextPitch);
                 gapFrames = 0;
             }

@@ -131,7 +131,7 @@ private:
     juce::String activePath;
     std::atomic<bool> loadingSample { false };
     std::atomic<bool> lastLoadFailed { false };
-    std::atomic<std::uint64_t> loadGeneration { 0 };
+    std::uint64_t loadGeneration = 0;
 
     // Simple state-variable filter, one per channel.
     struct Svf

@@ -337,7 +337,7 @@ bool ChopStationProcessor::loadSampleAsync (const juce::File& file)
         // while it was decoding. Only the newest generation may commit.
         const juce::ScopedLock lock (loadStateLock);
 
-        if (generation != loadGeneration.load (std::memory_order_acquire))
+        if (generation != loadGeneration)
             return;
 
         if (data != nullptr)

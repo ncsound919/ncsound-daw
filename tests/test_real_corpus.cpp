@@ -8,7 +8,6 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <string>
 #include <vector>
 
 #ifndef NC_REAL_CORPUS_DIR
@@ -105,15 +104,9 @@ struct RealCase
     const char* file;
     int midi;
 };
-
-int countMidi (const std::vector<nc::engine::V2MNote>& notes, int midi)
-{
-    return static_cast<int> (std::count_if (notes.begin(), notes.end(),
-                                            [midi] (const auto& note) { return note.midiNote == midi; }));
-}
 } // namespace
 
-TEST_CASE ("real recorded piano corpus detects attacks and pitch", "[quality][real]")
+TEST_CASE ("real recordings detect attacks and expected pitches", "[quality][real]")
 {
     const RealCase cases[] { { "piano_a4.wav", 69 }, { "piano_c5.wav", 72 },
                              { "speech_deana.wav", -1 } };
@@ -136,7 +129,8 @@ TEST_CASE ("real recorded piano corpus detects attacks and pitch", "[quality][re
             cfg.sampleRate = corpusSampleRate;
             cfg.bpm = 120.0;
             const auto notes = nc::engine::voiceToMidi (audio.data(), audio.size(), cfg);
-            REQUIRE (countMidi (notes, fixture.midi) >= 1);
+            REQUIRE (std::any_of (notes.begin(), notes.end(),
+                                  [&fixture] (const auto& note) { return note.midiNote == fixture.midi; }));
         }
     }
 }
