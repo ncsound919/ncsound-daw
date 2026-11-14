@@ -164,6 +164,146 @@ describe("workspace surfaces", () => {
     expect(document.querySelectorAll(".ws-ins-slot")).toHaveLength(4);
   });
 
+  it("gives the faceplate the editor area and keeps parameters behind the toggle", () => {
+    render(
+      <Workspace
+        state={{ ...STATE, selectedTrack: 0 }}
+        transport={TRANSPORT}
+        actions={actions()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Channel" }));
+
+    // The plug-in owns the space: no parameter rows parked underneath it.
+    expect(document.querySelector(".ws-editor-face")).not.toBeNull();
+    expect(document.querySelectorAll(".ws-editor-param")).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "PARAMS" }));
+
+    expect(document.querySelector(".ws-editor-face")).toBeNull();
+    expect(document.querySelectorAll(".ws-editor-param").length).toBeGreaterThan(10);
+
+    fireEvent.click(screen.getByRole("button", { name: "FACE" }));
+    expect(document.querySelector(".ws-editor-face")).not.toBeNull();
+    expect(document.querySelectorAll(".ws-editor-param")).toHaveLength(0);
+  });
+
+  it("moves to the console when the mixing mode is picked", () => {
+    render(
+      <Workspace
+        state={{ ...STATE, selectedTrack: 0 }}
+        transport={TRANSPORT}
+        actions={actions()}
+      />,
+    );
+
+    expect(screen.queryByRole("group", { name: "Mixer" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Session mode mixing" }));
+
+    // The mode is a working preset: it opens the console.
+    expect(screen.getByRole("group", { name: "Mixer" })).toBeTruthy();
+
+    // Coming back to the arrangement, the chips are there and the console view
+    // has put the mode back on production rather than stranding the user.
+    fireEvent.click(screen.getByRole("tab", { name: /arrange/i }));
+    expect(
+      screen.getByRole("button", { name: "Session mode production" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+  });
+
+  it("records from the transport when the host route is wired", () => {
+    let calledWith: boolean | null = null;
+    render(
+      <Workspace
+        state={{ ...STATE, selectedTrack: 0 }}
+        transport={{ ...TRANSPORT, recording: false }}
+        actions={actions()}
+        onRecord={(value) => {
+          calledWith = value;
+        }}
+      />,
+    );
+
+    const button = screen.getByRole("button", { name: "Record" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+    fireEvent.click(button);
+    expect(calledWith).toBe(true);
+  });
+
+  it("keeps the record button disabled when no host route is wired", () => {
+    render(
+      <Workspace
+        state={{ ...STATE, selectedTrack: 0 }}
+        transport={TRANSPORT}
+        actions={actions()}
+      />,
+    );
+
+    expect((screen.getByRole("button", { name: "Record" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+
+  it("shows all eight insert slots across two banks", () => {
+    // Eight slots are hosted per track; one bank is visible at a time so the
+    // strip stays short, and every slot has to be reachable.
+    const inserts = Array.from({ length: 8 }, (_, slot) => ({
+      name: slot < 4 ? `Bank A ${slot + 1}` : `Bank B ${slot + 1}`,
+      missing: false,
+    }));
+
+    render(
+      <Workspace
+        state={{ ...STATE, selectedTrack: 0, tracks: [{ ...STATE.tracks[0], inserts }] }}
+        transport={TRANSPORT}
+        actions={actions()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Channel" }));
+
+    const slots = () => document.querySelectorAll(".ws-ins-slot");
+
+    expect(slots()).toHaveLength(4);
+    expect(screen.getByLabelText("Bank A 1")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show inserts 5–8" }));
+
+    expect(slots()).toHaveLength(4);
+    expect(screen.getByLabelText("Bank B 8")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Bank A 1")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show inserts 1–4" }));
+    expect(screen.getByLabelText("Bank A 1")).toBeInTheDocument();
+  });
+
+  it("loads into the bank-B slot that was clicked, not the first empty slot", () => {
+    const load = vi.fn();
+
+    render(
+      <Workspace
+        state={{
+          ...STATE,
+          selectedTrack: 0,
+          plugins: [PLUGIN],
+          tracks: [{ ...STATE.tracks[0], inserts: [] }],
+        }}
+        transport={TRANSPORT}
+        actions={actions()}
+        onPluginLoad={load}
+      />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Channel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show inserts 5–8" }));
+
+    // Slot 6 is bank B's third button: it has to reach the bridge as index 5.
+    fireEvent.click(screen.getByLabelText("Insert 6 — empty"));
+    expect(screen.getByRole("dialog", { name: "Load plug-in" })).toBeInTheDocument();
+
+    fireEvent.doubleClick(screen.getByRole("button", { name: /Retro/ }));
+    expect(load).toHaveBeenCalledWith(expect.objectContaining({ id: "acme.retro" }), 0, 5);
+  });
+
   it("piano roll adds a note and deletes it again", () => {
     setup();
 

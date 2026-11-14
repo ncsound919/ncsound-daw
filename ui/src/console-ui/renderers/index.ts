@@ -830,60 +830,6 @@ export const vectorRenderer: Renderer<
   },
 };
 
-/* ------------------------------------------------------------------ loud */
-export const loudRenderer: Renderer<
-  { target: number },
-  { hist: number[] },
-  { shortTerm?: number }
-> = {
-  grid: "linear",
-  init: () => ({ hist: [] }),
-  draw(g, w, h, t, p, s, frame) {
-    const top = -4,
-      bot = -30,
-      yy = (db: number) => ((top - db) / (top - bot)) * h;
-    g.fillStyle = "rgba(60,214,221,.1)";
-    g.fillRect(0, yy(p.target + 1), w, yy(p.target - 1) - yy(p.target + 1));
-    g.strokeStyle = "rgba(60,214,221,.8)";
-    g.setLineDash([5, 4]);
-    g.beginPath();
-    g.moveTo(0, yy(p.target));
-    g.lineTo(w, yy(p.target));
-    g.stroke();
-    g.setLineDash([]);
-    const n = Math.floor(w / 3);
-    const val =
-      frame?.shortTerm ??
-      -13.4 +
-        1.6 * Math.sin(t * 0.8) +
-        0.9 * Math.sin(t * 2.3) +
-        (hash(Math.floor(t * 10)) - 0.5) * 0.8;
-    s.hist.push(val);
-    while (s.hist.length > n) s.hist.shift();
-    const off = n - s.hist.length;
-    const pts = s.hist.map((v, i): [number, number] => [(i + off) * 3, yy(v)]);
-    polyline(g, pts);
-    g.lineTo(pts[pts.length - 1][0], h);
-    g.lineTo(off * 3, h);
-    g.closePath();
-    const gr = g.createLinearGradient(0, 0, 0, h);
-    gr.addColorStop(0, "rgba(255,138,0,.28)");
-    gr.addColorStop(1, "rgba(255,138,0,0)");
-    g.fillStyle = gr;
-    g.fill();
-    polyline(g, pts);
-    g.strokeStyle = AMBER;
-    g.lineWidth = 2;
-    glow(g, AMBER_DEEP, 8);
-    g.stroke();
-    noGlow(g);
-    [-6, -10, -14, -18, -22, -26].forEach((d) =>
-      label(g, String(d), 3, yy(d) + 3, "rgba(255,174,58,.6)", 9),
-    );
-    label(g, `TARGET ${p.target} LUFS`, w - 110, yy(p.target) - 5, CYAN, 9);
-  },
-};
-
 /* ------------------------------------------------------------------ adsr */
 export interface AdsrParams {
   a: number;

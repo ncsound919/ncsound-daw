@@ -10,7 +10,7 @@ export interface UiSettings {
   loopStrength: number; // 0..100
   // DAW behaviour (not cosmetics) — each feeds a live control below.
   bpm: number; // 20..300
-  trackHeight: number; // 60..120 px default lane height
+  trackHeight: number; // 32..120 px default lane height
   snap: boolean; // arrangement snap default
   fadeBars: number; // 0..4 bars default fade for new splits
   clipGain: number; // -12..+12 dB default for new clips
@@ -36,7 +36,7 @@ export const DEFAULT_SETTINGS: UiSettings = {
   density: "comfortable",
   loopStrength: 60,
   bpm: 120,
-  trackHeight: 84,
+  trackHeight: 44,
   snap: true,
   fadeBars: 0,
   clipGain: 0,
@@ -67,7 +67,7 @@ const DRIVERS = [
   { id: "default", label: "Default" },
 ] as const;
 
-const RATES = [44100, 48000, 88000, 96000];
+const RATES = [44100, 48000, 88200, 96000];
 const BUFFERS = [32, 64, 128, 256, 512, 1024];
 
 function useAudioDevices() {
@@ -198,6 +198,7 @@ function useEngineAudio() {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return { state, message, setMessage, refresh };
@@ -379,7 +380,7 @@ export function SettingsPanel({
           </span>
           <input
             type="range"
-            min={60}
+            min={32}
             max={120}
             step={2}
             value={settings.trackHeight}

@@ -164,16 +164,34 @@ export function addBackendEventListener(
   eventId: string,
   callback: (data: unknown) => void,
 ): () => void {
-  const backend = window.__JUCE__?.backend;
-  if (!backend) return () => {};
-
   let active = true;
-  backend.addEventListener(eventId, (data) => {
-    if (active) callback(data);
-  });
+  let detach: (() => void) | null = null;
+
+  // The backend object can appear after the first render (the WebView injects
+  // it). Attaching lazily instead of giving up once means the subscription is
+  // not silently dead for the rest of the session.
+  const attach = () => {
+    const backend = window.__JUCE__?.backend;
+    if (!active || !backend || detach) return;
+
+    backend.addEventListener(eventId, (data) => {
+      if (active) callback(data);
+    });
+    detach = () => {
+      // addEventListener has no removal API on the bridge; clear state instead.
+      detach = null;
+    };
+  };
+
+  attach();
+
+  const timer = detach ? null : window.setInterval(attach, 100);
 
   return () => {
     active = false;
+    if (timer !== null) window.clearInterval(timer);
+    detach?.();
+    detach = null;
   };
 }
 

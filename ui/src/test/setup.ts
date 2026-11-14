@@ -7,6 +7,22 @@ afterEach(() => {
   cleanup();
 });
 
+// uPlot reads a dppx media query when its module loads to track pixel-ratio
+// changes. jsdom has no matchMedia at all, so importing a chart module throws
+// before any test body runs.
+if (typeof window !== "undefined" && typeof window.matchMedia !== "function") {
+  window.matchMedia = ((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
+}
+
 // jsdom ships no 2D context. MasterViz draws its spectrum/LUFS/correlation
 // views through canvas, so without a stub every render logs a "Not implemented"
 // error and the draw path is never exercised. The stub is a no-op recorder: it

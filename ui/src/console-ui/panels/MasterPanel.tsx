@@ -13,7 +13,9 @@ import { Scope } from "../Scope";
 import { Key, Led, Lcd } from "../Surface";
 import { Meter } from "../Meter";
 import { EQ_TYPES, eqResponseDb, type EqBandDef } from "../eqMath";
-import { historyRenderer, loudRenderer, spectrumRenderer, vectorRenderer } from "../renderers";
+import { spectrumRenderer, vectorRenderer } from "../renderers";
+import { TimePlot } from "../TimePlot";
+import { maximizerPlotValues } from "../masterPlotValues";
 import { system } from "../tokens";
 import {
   PAction,
@@ -917,42 +919,38 @@ function ImagerView({ getFrame }: { getFrame: GetFrame }) {
   );
 }
 
+// SYNC NOTE: these two plots are uPlot (app-local ../TimePlot), not the
+// console-ui Scope renderers. `npm run sync` regenerates this generated file,
+// so re-apply this wiring after a sync instead of losing the plots.
+
 function MaxView({ getFrame }: { getFrame: GetFrame }) {
   const tgt = targetLufs(MASTER_TARGETS[useOption("target")] ?? MASTER_TARGETS[0]);
-  const loud = useMemo(
-    () => (getFrame ? () => ({ shortTerm: getFrame()?.lufs?.shortTerm ?? -70 }) : undefined),
-    [getFrame],
-  );
-  const gr = useMemo(
-    () =>
-      getFrame
-        ? () => {
-            const f = getFrame();
-            return {
-              gr: clamp((f?.meters?.gr ?? 0) / 12, 0, 1),
-              level: clamp(Math.max(f?.meters?.outL ?? 0, f?.meters?.outR ?? 0), 0, 1),
-            };
-          }
-        : undefined,
-    [getFrame],
-  );
+  const plots = maximizerPlotValues(getFrame);
+  const loud = plots?.shortTermLufs;
+  const gr = plots?.gainReductionDb;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <Scope
-        renderer={loudRenderer}
-        params={{ target: tgt }}
+      <TimePlot
         width={MAIN_W}
         height={170}
-        getFrame={loud}
-        label={`Short-term loudness against the ${tgt} LUFS target`}
+        seconds={6}
+        color="#ffae3a"
+        fill
+        y={[-30, -4]}
+        refLine={tgt}
+        refText={`TARGET ${tgt} LUFS`}
+        read={loud}
+        label={`Short-term loudness over the last 6 s against the ${tgt} LUFS target`}
       />
-      <Scope
-        renderer={historyRenderer}
-        params={{}}
+      <TimePlot
         width={MAIN_W}
         height={SCREEN_H - 174}
-        getFrame={gr}
-        label="Maximizer gain reduction (12 dB full scale) over output level"
+        seconds={6}
+        color="#ffae3a"
+        fill
+        y={[-12, 0]}
+        read={gr}
+        label="Maximizer gain reduction over the last 6 s, 0 to -12 dB"
       />
     </div>
   );

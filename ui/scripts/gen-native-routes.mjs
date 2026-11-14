@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Generates src/lib/nativeRoutes.generated.ts from the host's native-function
 // routing table in app/Source/WebViewBridge.cpp (VST DAW native host).
-// Scaffold: if the bridge file does not exist yet, emits pitch routes only.
+// Fails loudly when no table can be parsed: a silently truncated list would
+// pass --check while dropping routes the UI is allowed to call.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -10,22 +11,87 @@ const here = dirname(fileURLToPath(import.meta.url));
 const bridgeCpp = resolve(here, "../../app/Source/WebViewBridge.cpp");
 const outFile = resolve(here, "../src/lib/nativeRoutes.generated.ts");
 
-const FALLBACK = ["getState", "getPitch", "setGlobalPitch", "setTrackPitch", "setInstrumentPitch"];
-
 function extractRoutes() {
-  if (!existsSync(bridgeCpp)) return FALLBACK;
+  if (!existsSync(bridgeCpp)) {
+    console.error(`Bridge source not found: ${bridgeCpp}`);
+    process.exit(1);
+  }
   const source = readFileSync(bridgeCpp, "utf8").replace(/\r\n/g, "\n");
   const tableStart = source.indexOf("routes[]");
-  if (tableStart < 0) return FALLBACK;
-  const tableEnd = source.indexOf("};", tableStart);
-  const region = source.slice(tableStart, tableEnd < 0 ? undefined : tableEnd);
+  if (tableStart < 0) {
+    console.error("Could not find the routes[] table in WebViewBridge.cpp");
+    process.exit(1);
+  }
+  // Brace-balance the array initialiser instead of stopping at the first
+  // `};`: a lambda body that ends a statement with `};` used to truncate
+  // every route after it, and --check happily accepted the short list.
+  const open = source.indexOf("{", tableStart);
+  let depth = 0;
+  let tableEnd = -1;
+  let inString = false;
+  let inChar = false;
+  let escaped = false;
+  for (let i = open; i < source.length; i += 1) {
+    const c = source[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (c === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (inString) {
+      if (c === '"') inString = false;
+      continue;
+    }
+    if (inChar) {
+      if (c === "'") inChar = false;
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+      continue;
+    }
+    if (c === "'") {
+      inChar = true;
+      continue;
+    }
+    if (c === "/" && source[i + 1] === "/") {
+      i = source.indexOf("\n", i);
+      if (i < 0) break;
+      continue;
+    }
+    if (c === "/" && source[i + 1] === "*") {
+      i = source.indexOf("*/", i + 2);
+      if (i < 0) break;
+      continue;
+    }
+    if (c === "{") depth += 1;
+    else if (c === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        tableEnd = i + 1;
+        break;
+      }
+    }
+  }
+  if (tableEnd < 0) {
+    console.error("Unbalanced routes[] table in WebViewBridge.cpp");
+    process.exit(1);
+  }
+  const region = source.slice(open, tableEnd);
   const names = [];
   // Every row starts with { "routeName", ... }. Capturing the row shape (not
   // a set/get prefix) keeps scan, load, undo and redo in the typed contract.
   for (const match of region.matchAll(/\{\s*"([A-Za-z0-9_]+)"\s*,/g)) {
     if (!names.includes(match[1])) names.push(match[1]);
   }
-  return names.length ? names : FALLBACK;
+  if (names.length === 0) {
+    console.error("Parsed the routes[] table but found no route rows");
+    process.exit(1);
+  }
+  return names;
 }
 
 function render(names) {

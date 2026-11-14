@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   barPct,
   dbLabel,
+  fitScale,
   formatBarsBeats,
   meterPct,
   tintForTrack,
@@ -74,5 +75,26 @@ describe("levels", () => {
   it("keeps one tint per track and wraps past the palette", () => {
     expect(tintForTrack(0)).toBe(TRACK_TINTS[0]);
     expect(tintForTrack(TRACK_TINTS.length)).toBe(TRACK_TINTS[0]);
+  });
+});
+
+describe("faceplate fit", () => {
+  // The channel faceplate is a 1320x780 panel drawn inside whatever box the
+  // editor has. Fitting it is the difference between seeing the module and
+  // seeing its top-left corner.
+  it("scales to the tighter of the two axes", () => {
+    expect(fitScale(1003, 261, 1320, 780)).toBeCloseTo(261 / 780, 4);
+    expect(fitScale(660, 780, 1320, 780)).toBeCloseTo(0.5, 4);
+    expect(fitScale(660, 300, 1320, 780)).toBeCloseTo(300 / 780, 4);
+  });
+
+  it("never enlarges past life size and never shrinks below the legibility floor", () => {
+    expect(fitScale(4000, 4000, 1320, 780)).toBe(1);
+    expect(fitScale(10, 10, 1320, 780)).toBe(0.3);
+  });
+
+  it("falls back to a safe scale for an unmeasured box", () => {
+    expect(fitScale(0, 0, 1320, 780)).toBe(0.3);
+    expect(fitScale(100, 100, 0, 0)).toBe(0.65);
   });
 });

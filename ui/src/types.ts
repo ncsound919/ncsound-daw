@@ -55,6 +55,8 @@ export interface TransportState {
   masterPeakRight: number;
   masterDim: boolean;
   masterMono: boolean;
+  /** True while armed tracks are capturing audio. */
+  recording?: boolean;
   loopStartBar?: number;
   loopEndBar?: number;
   trackPeaks: number[];
@@ -64,6 +66,8 @@ export interface TransportState {
     1-based, matching the host. Audio and MIDI clips share this shape; `kind`
     says which half of `peaks`/`notes` is populated. */
 export interface TimelineClip {
+  /** Host-assigned position; equal to the array index today. */
+  index?: number;
   track: number;
   startBar: number;
   lengthBars: number;
@@ -172,7 +176,6 @@ export interface AppState {
   selectedTrack: number;
   globalPitch?: PitchState;
   tracks: TrackInfo[];
-  projectDirty?: boolean;
   /** Last host status line (native setStatus); the strip falls back to it. */
   statusMessage?: string;
   statusAlert?: boolean;

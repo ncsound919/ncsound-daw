@@ -188,7 +188,7 @@
   overflow-y: auto;
   overflow-x: hidden;
   display: grid;
-  grid-template-columns: 272px minmax(0, 1fr);
+  grid-template-columns: 216px minmax(0, 1fr);
   align-content: start;
   background: var(--ws-well);
 }
@@ -1108,10 +1108,10 @@
 }
 
 .ws-strip.is-master {
-  min-height: 0;
   min-width: 0;
-  overflow-y: auto;
+  min-height: 0;
   width: 100%;
+  overflow-y: auto;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 12%),
     linear-gradient(180deg, #312a24, #1d1916 46%, #171412);

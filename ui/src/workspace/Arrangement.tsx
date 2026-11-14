@@ -1,8 +1,29 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { ChannelParams, PitchState, TimelineClip, TrackInfo, TransportState } from "../types";
 import { barPct, tintForTrack, waveformPoints, zoomWindow } from "./format";
 
 export type ArrangeTool = "select" | "trim" | "fade" | "gain" | "split" | "erase";
+
+/** A session mode changes the view and the density the DAW runs in. */
+export type DawMode = "production" | "recording" | "mixing";
+
+export const DAW_MODES: { id: DawMode; label: string; hint: string }[] = [
+  {
+    id: "production",
+    label: "PROD",
+    hint: "Production: full arrange view with every clip tool",
+  },
+  {
+    id: "recording",
+    label: "REC",
+    hint: "Recording: arrange view, transport and take tools in reach",
+  },
+  {
+    id: "mixing",
+    label: "MIX",
+    hint: "Mixing: opens the console with every channel strip",
+  },
+];
 
 // Pro Tools edit tools: 1 Grabber, 2 Trim, 3 Fade, 4 Volume, 5 X, 6 Erase.
 // V/T/F/G/X/E kept as aliases.
@@ -177,6 +198,19 @@ const ClipView = memo(function ClipView({
           </span>
         )}
 
+        {/* Pro Tools-style gain line: it only exists once the clip's level has
+            been changed, or while its fader is open, so an untouched take
+            keeps the waveform clean. */}
+        {(Math.abs(clip.gainDb) > 0.05 || faderOpen) && (
+          <span
+            className="ws-clip-gain"
+            style={{ top: `${clamp(50 - clip.gainDb * 2.5, 8, 92)}%` }}
+            aria-hidden="true"
+          />
+        )}
+
+        {/* The volume badge only appears once a clip is wide enough to hold it:
+            CSS hides it until the clip is zoomed for editing. */}
         <button
           className="ws-clip-vol-btn"
           type="button"
@@ -189,7 +223,7 @@ const ClipView = memo(function ClipView({
           }}
           onPointerDown={(event) => event.stopPropagation()}
         >
-          ▢
+          V
         </button>
         {faderOpen && (
           <span
@@ -269,6 +303,8 @@ export interface ArrangementProps {
   defaultFadeBars?: number;
   defaultClipGain?: number;
   defaultSnap?: boolean;
+  mode?: DawMode;
+  onMode?: (mode: DawMode) => void;
 }
 
 export function Arrangement({
@@ -296,10 +332,12 @@ export function Arrangement({
   onRedo,
   onOpenClip,
   onRegisterFit,
-  defaultTrackHeight = 84,
+  defaultTrackHeight = 48,
   defaultFadeBars = 0,
   defaultClipGain = 0,
   defaultSnap = true,
+  mode = "production",
+  onMode,
 }: ArrangementProps) {
   const [visibleBars, setVisibleBars] = useState(32);
   const [viewStart, setViewStart] = useState(1);
@@ -331,8 +369,11 @@ export function Arrangement({
   }, [transport?.loopStartBar, transport?.loopEndBar]);
 
   // Host truth wins once it arrives; the optimistic copy exists only so a
-  // gesture does not wait for the IPC round-trip.
+  // gesture does not wait for the IPC round-trip. A push that lands mid-drag
+  // must not reset the drafts: the gesture would then commit the old origin
+  // clip at the old index. PianoRoll guards its resync the same way.
   useEffect(() => {
+    if (drag.current) return;
     setDraft(null);
   }, [sourceClips]);
 
@@ -345,21 +386,19 @@ export function Arrangement({
       setViewStart(1);
       setVisibleBars(clamp(sessionEnd - 1, MIN_BARS, MAX_BARS));
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clips.length]);
+    // Registered against the clip list itself: a clip that grows without the
+    // count changing must also re-fit, or FIT under-fits the session.
+  }, [clips, onRegisterFit]);
 
-  const commit = useCallback(
-    (next: TimelineClip[]) => {
-      setDraft(next);
-      onClipsChanged?.(next);
-    },
-    [onClipsChanged],
-  );
+  const commit = (next: TimelineClip[]) => {
+    setDraft(next);
+    onClipsChanged?.(next);
+  };
 
   const seek = (bar: number) => onSeek(snap ? Math.round(bar) : bar);
   const playheadPct = transport ? barPct(transport.positionBar, viewStart, visibleBars) : -1;
 
-  // Track height: 30 px folded, 84 px by default, drag the header edge to
+  // Track height: 30 px folded, 48 px by default, drag the header edge to
   // change it. Height is written inline because the head and its lane are
   // separate grid children of the same row.
   const heightFor = (index: number) =>
@@ -405,16 +444,15 @@ export function Arrangement({
   // playhead the way the wheel pivots on the pointer. A playhead outside
   // the window clamps to the nearest edge instead of warping the view.
   const positionBar = transport?.positionBar;
-  const zoomAt = useCallback(
-    (direction: "in" | "out") => {
-      const ratio =
-        positionBar !== undefined ? clamp((positionBar - viewStart) / visibleBars, 0, 1) : 0.5;
-      const next = zoomWindow(viewStart, visibleBars, ratio, direction, MIN_BARS, MAX_BARS);
-      setVisibleBars(next.visibleBars);
-      setViewStart(next.viewStart);
-    },
-    [positionBar, viewStart, visibleBars],
-  );
+  const zoomAt = (direction: "in" | "out") => {
+    const ratio =
+      positionBar !== undefined
+        ? clamp((positionBar - viewStart) / visibleBars, 0, 1)
+        : 0.5;
+    const next = zoomWindow(viewStart, visibleBars, ratio, direction, MIN_BARS, MAX_BARS);
+    setVisibleBars(next.visibleBars);
+    setViewStart(next.viewStart);
+  };
 
   // Pro Tools wheel: every wheel event zooms at the pointer (Ctrl/Cmd too).
   // The anchor comes from the lane itself, not a guessed header width, so the
@@ -425,33 +463,30 @@ export function Arrangement({
     const onNativeWheel = (event: WheelEvent) => {
       const target = event.target as HTMLElement;
       if (target.closest(".ws-head")) return;
-      if (event.shiftKey) {
-        event.preventDefault();
-        el.scrollTop += event.deltaY;
-        return;
-      }
-      const rect = el.getBoundingClientRect();
-      if (rect.width <= 0) return;
+      const lane = el.querySelector<HTMLElement>(".ws-lane");
+      const box = (lane ?? el).getBoundingClientRect();
+      if (box.width <= 0) return;
       event.preventDefault();
-      const ratio = (event.clientX - rect.left - 272) / Math.max(1, rect.width - 272);
-      const anchorBar = viewStart + clamp(ratio, 0, 1) * visibleBars;
-      const factor = event.deltaY < 0 ? 0.9 : 1.11;
-      const next = clamp(visibleBars * factor, MIN_BARS, MAX_BARS);
-      const anchorRatio = (anchorBar - viewStart) / visibleBars;
-      setVisibleBars(next);
-      setViewStart(Math.max(1, anchorBar - anchorRatio * next));
+      const ratio = clamp((event.clientX - box.left) / box.width, 0, 1);
+      const direction = event.deltaY < 0 ? "in" : "out";
+      const next = zoomWindow(viewStart, visibleBars, ratio, direction, MIN_BARS, MAX_BARS);
+      setVisibleBars(next.visibleBars);
+      setViewStart(next.viewStart);
     };
     el.addEventListener("wheel", onNativeWheel, { passive: false });
     return () => el.removeEventListener("wheel", onNativeWheel);
   }, [viewStart, visibleBars]);
 
   // Pro Tools edit tools: 1–6 (+ V/T/F/G/X/E aliases), Cmd/Ctrl+Z undo,
-  // Cmd/Ctrl+Shift+Z + Ctrl+Y redo, +/- zoom, L loop.
+  // Cmd/Ctrl+Shift+Z + Ctrl+Y redo, +/- zoom.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target && (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable))
         return;
+      // A modal owns the keyboard: Delete must not edit the arrangement behind
+      // the plug-in browser or a header dialog.
+      if (target?.closest(".ws-browser-modal, .ws-dialog")) return;
       const mod = event.ctrlKey || event.metaKey;
       const key = event.key.toLowerCase();
       if (mod && key === "z") {
@@ -502,8 +537,6 @@ export function Arrangement({
     viewStart,
     visibleBars,
     transport?.positionBar,
-    commit,
-    zoomAt,
   ]);
 
   const deleteClip = (index: number) => {
@@ -738,8 +771,9 @@ export function Arrangement({
     } else if (state.mode === "end") {
       setLoopEnd(clamp(state.end + delta, state.start + 1, MAX_BARS));
     } else {
+      // Keep the whole region inside the session, as the keyboard move does.
       const length = state.end - state.start;
-      const start = Math.max(1, state.start + delta);
+      const start = clamp(state.start + delta, 1, MAX_BARS - length);
       setLoopStart(start);
       setLoopEnd(start + length);
     }
@@ -784,13 +818,26 @@ export function Arrangement({
   const ticks = useMemo(() => {
     const first = Math.floor(viewStart);
     const last = Math.ceil(viewStart + visibleBars);
-    const rows: { bar: number; left: number; major: boolean; labelled: boolean }[] = [];
+    const rows: {
+      bar: number;
+      left: number;
+      major: boolean;
+      labelled: boolean;
+      /** Label sits left of its tick, so a number at the right edge is not cut. */
+      alignedRight: boolean;
+    }[] = [];
     for (let bar = first; bar <= last; ++bar) {
       const left = barPct(bar, viewStart, visibleBars);
       // Cull: off-screen ticks never render (clips already cull this way).
       if (left < -2 || left > 102) continue;
       const major = (bar - 1) % 4 === 0;
-      rows.push({ bar, left, major, labelled: major && (bar - 1) % (4 * labelStride) === 0 });
+      rows.push({
+        bar,
+        left,
+        major,
+        labelled: major && (bar - 1) % (4 * labelStride) === 0,
+        alignedRight: left > 96,
+      });
     }
     return rows;
   }, [viewStart, visibleBars, labelStride]);
@@ -886,6 +933,23 @@ export function Arrangement({
             <b>SNAP</b>
           </button>
 
+          {onMode && (
+            <div className="ws-modes" role="group" aria-label="Session mode">
+              {DAW_MODES.map((entry) => (
+                <button
+                  key={entry.id}
+                  className="ws-btn ws-mode"
+                  aria-pressed={mode === entry.id}
+                  aria-label={`Session mode ${entry.id}`}
+                  title={entry.hint}
+                  onClick={() => onMode(entry.id)}
+                >
+                  {entry.label}
+                </button>
+              ))}
+            </div>
+          )}
+
           <span className="ws-spacer" />
 
           <button
@@ -958,7 +1022,11 @@ export function Arrangement({
                 className={tick.major ? "ws-tick is-bar" : "ws-tick"}
                 style={{ left: `${tick.left}%` }}
               >
-                {tick.labelled && <span className="ws-tick-label">{tick.bar}</span>}
+                {tick.labelled && (
+                  <span className={tick.alignedRight ? "ws-tick-label is-end" : "ws-tick-label"}>
+                    {tick.bar}
+                  </span>
+                )}
               </span>
             ))}
           </div>
@@ -969,7 +1037,7 @@ export function Arrangement({
 
         {tracks.map((track) => {
           const trackClips = clipsByTrack.get(track.index) ?? [];
-          const peak = transport?.trackPeaks[track.index] ?? 0;
+          const peak = transport?.trackPeaks?.[track.index] ?? 0;
 
           return (
             <div key={track.index} style={{ display: "contents" }}>
@@ -1083,7 +1151,10 @@ export function Arrangement({
                   onPointerDown={(event) => beginHeightDrag(event, track.index)}
                   onDoubleClick={(event) => {
                     event.stopPropagation();
-                    setTrackHeights((current) => ({ ...current, [track.index]: 84 }));
+                    setTrackHeights((current) => ({
+                      ...current,
+                      [track.index]: defaultTrackHeight,
+                    }));
                     setFoldedTracks((current) => ({ ...current, [track.index]: false }));
                   }}
                   onKeyDown={(event) => {
@@ -1092,7 +1163,7 @@ export function Arrangement({
                     event.stopPropagation();
                     const delta = event.key === "ArrowUp" ? 4 : -4;
                     setTrackHeights((current) => {
-                      const next = clamp(Math.round((current[track.index] ?? 84) + delta), 30, 240);
+                      const next = clamp(Math.round((current[track.index] ?? 48) + delta), 30, 240);
                       setFoldedTracks((folded) => ({ ...folded, [track.index]: next <= 30 }));
                       return { ...current, [track.index]: next };
                     });
@@ -1163,7 +1234,7 @@ export function Arrangement({
 
         <div className="ws-hint">
           {TOOLS.find((entry) => entry.id === tool)?.hint.toUpperCase()} · SELECT A CLIP TO TRIM ITS
-          VOLUME · WHEEL ZOOMS · SHIFT+WHEEL SCROLLS
+          VOLUME · WHEEL ZOOMS
         </div>
       </div>
     </div>

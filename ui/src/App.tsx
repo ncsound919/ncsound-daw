@@ -14,7 +14,9 @@ import { ConsoleRoot, ErrorBoundary } from "./console-ui";
 import { Workspace, type WorkspaceActions } from "./workspace/Workspace";
 
 const EMPTY_PITCH: PitchState = { transpose: 0, pitchCents: 0, tuningHz: 440 };
-const MAX_TRACKS = 8;
+/** Mirrors nc::limits::maxTracks: the engine normalises setActiveTrackCount to
+    1..64, so the workspace must not stop at 8 (default sessions open with 16). */
+const MAX_TRACKS = 64;
 
 const MOCK_TRACKS = ["DRUMS", "BASS", "KEYS", "VOX", "GTR", "PERC", "AUX 1", "AUX 2"].map(
   (name, index) => ({
@@ -98,12 +100,14 @@ export default function App() {
     if (!backend.embedded) return;
 
     let alive = true;
+    // A stateChanged push may resolve first (a plugin scan, an echo of a write);
+    // the initial snapshot must not overwrite it afterwards.
+    const startedAt = stateRevision.current;
     backend
       .getState()
       .then((next) => {
-        if (!alive) return;
-        setState(next);
-        if (next.transport) setTransport(next.transport);
+        if (!alive || stateRevision.current !== startedAt) return;
+        applyState(next);
       })
       .catch(console.error);
 
@@ -114,10 +118,7 @@ export default function App() {
       })
       .catch(console.error);
 
-    const offState = backend.onStateChanged((next) => {
-      setState(next);
-      if (next.transport) setTransport(next.transport);
-    });
+    const offState = backend.onStateChanged((next) => applyState(next));
     const offTransport = backend.onTransportChanged((next) => setTransport(next));
 
     return () => {
@@ -170,83 +171,132 @@ export default function App() {
     [],
   );
 
+  // Monotonic revision of the snapshot on screen. A write response may only
+  // replace it when no newer host push landed while the call was in flight,
+  // otherwise a slow reply would roll the UI back to older engine state.
+  const stateRevision = useRef(0);
+
+  const applyState = useCallback((next: AppState) => {
+    stateRevision.current += 1;
+    setState(next);
+    if (next.transport) setTransport(next.transport);
+  }, []);
+
+  const runWrite = useCallback(
+    (send: () => Promise<AppState>) => {
+      if (!backend.embedded) return;
+      const sentAt = stateRevision.current;
+      send()
+        .then((next) => {
+          if (stateRevision.current !== sentAt) return;
+          applyState(next);
+        })
+        .catch((error) => {
+          // The host refused the edit; resync instead of leaving an optimistic
+          // patch the engine never accepted on screen. The resync reply gets
+          // the same revision guard as a write reply: a slow resync must not
+          // roll the UI back over a newer host push.
+          console.error(error);
+          const resyncedAt = stateRevision.current;
+          backend
+            .getState()
+            .then((next) => {
+              if (stateRevision.current !== resyncedAt) return;
+              applyState(next);
+            })
+            .catch(console.error);
+        });
+    },
+    [applyState],
+  );
+
   const handleNotes = useCallback((clip: number, notes: MidiNote[]) => {
     if (!backend.embedded) return;
-    backend.setClipNotes(clip, notes).then(setState).catch(console.error);
+    runWrite(() => backend.setClipNotes(clip, notes));
   }, []);
 
   const handleAutomation = useCallback((track: number, lane: AutomationLaneDraft) => {
     if (!backend.embedded) return;
-    backend.setAutomationLane(track, lane).then(setState).catch(console.error);
+    runWrite(() => backend.setAutomationLane(track, lane));
   }, []);
 
   const handlePluginLoad = useCallback((plugin: PluginInfo, track: number, slot: number) => {
     if (!backend.embedded) return;
-    backend.loadPlugin(track, slot, plugin.id).then(setState).catch(console.error);
+    runWrite(() => backend.loadPlugin(track, slot, plugin.id));
   }, []);
 
   const handleMasterPluginLoad = useCallback((plugin: PluginInfo) => {
     if (!backend.embedded) return;
-    backend.loadMasterPlugin(plugin.id).then(setState).catch(console.error);
+    runWrite(() => backend.loadMasterPlugin(plugin.id));
   }, []);
 
-  const handleApplyMixology = useCallback((index: number) => {
-    if (!backend.embedded) return Promise.resolve("");
-    return backend.applyMixologyPreset(index).then(({ state, report }) => {
-      setState(state);
-      if (state.transport) setTransport(state.transport);
-      return report;
-    });
-  }, []);
+  const handleApplyMixology = useCallback(
+    (index: number) => {
+      if (!backend.embedded) return Promise.resolve("");
+
+      // Same revision guard as runWrite: a preset reply that lands after a
+      // newer host push is stale and would roll the UI back to older engine
+      // state. The report is returned either way; it describes what the host
+      // did, not what is on screen.
+      const sentAt = stateRevision.current;
+
+      return backend.applyMixologyPreset(index).then(({ state, report }) => {
+        if (stateRevision.current === sentAt) applyState(state);
+        return report;
+      });
+    },
+    [applyState],
+  );
 
   const handleImportAudio = useCallback(() => {
     if (!backend.embedded) return;
-    backend.importAudio().then(setState).catch(console.error);
+    runWrite(() => backend.importAudio());
   }, []);
+
   const handleOpenSession = useCallback(() => {
     if (!backend.embedded) return;
-    backend.openSession().then(setState).catch(console.error);
+    runWrite(() => backend.openSession());
   }, []);
 
   const handleSaveSession = useCallback(() => {
     if (!backend.embedded) return;
-    backend.saveSession().then(setState).catch(console.error);
+    runWrite(() => backend.saveSession());
   }, []);
 
   const handleSaveSessionAs = useCallback(() => {
     if (!backend.embedded) return;
-    backend.saveSessionAs().then(setState).catch(console.error);
+    runWrite(() => backend.saveSessionAs());
   }, []);
 
   const handleMixdownWav = useCallback(() => {
     if (!backend.embedded) return;
-    backend.mixdownWav().then(setState).catch(console.error);
+    runWrite(() => backend.mixdownWav());
   }, []);
 
   const handleExportStems = useCallback(() => {
     if (!backend.embedded) return;
-    backend.exportStems().then(setState).catch(console.error);
+    runWrite(() => backend.exportStems());
   }, []);
 
   const handleCollectMedia = useCallback(() => {
     if (!backend.embedded) return;
-    backend.collectMedia().then(setState).catch(console.error);
+    runWrite(() => backend.collectMedia());
   }, []);
 
   const handleRemoveMasterPlugin = useCallback(() => {
     if (!backend.embedded) return;
-    backend.removeMasterPlugin().then(setState).catch(console.error);
+    runWrite(() => backend.removeMasterPlugin());
   }, []);
 
   const handleScan = useCallback(() => {
     if (!backend.embedded) return;
-    backend.scanPlugins().then(setState).catch(console.error);
+    runWrite(() => backend.scanPlugins());
   }, []);
 
   const handleChannel = useCallback((track: number, param: string, value: number) => {
     if (!backend.embedded) return;
     scheduleSave(saveChannelTimers.current, `${track}:${param}`, () => {
-      backend.setChannelParam(track, param, value).then(setState).catch(console.error);
+      runWrite(() => backend.setChannelParam(track, param, value));
     });
   }, []);
 
@@ -406,32 +456,36 @@ export default function App() {
       },
       editClip(index, patch) {
         if (!backend.embedded) return;
-        backend.editTimelineClip(index, patch).then(setState).catch(console.error);
+        runWrite(() => backend.editTimelineClip(index, patch));
       },
       splitClip(index, bar) {
         if (!backend.embedded) return;
-        backend.splitTimelineClip(index, bar).then(setState).catch(console.error);
+        runWrite(() => backend.splitTimelineClip(index, bar));
       },
       duplicateClip(index) {
         if (!backend.embedded) return;
-        backend.duplicateTimelineClip(index).then(setState).catch(console.error);
+        runWrite(() => backend.duplicateTimelineClip(index));
       },
       deleteClip(index) {
         if (!backend.embedded) return;
-        backend.deleteTimelineClip(index).then(setState).catch(console.error);
+        runWrite(() => backend.deleteTimelineClip(index));
+      },
+      transcribeClip(index) {
+        if (!backend.embedded) return;
+        runWrite(() => backend.transcribeTimelineClip(index));
       },
       undo() {
         if (!backend.embedded) return;
-        backend.undo().then(setState).catch(console.error);
+        runWrite(() => backend.undo());
       },
       redo() {
         if (!backend.embedded) return;
-        backend.redo().then(setState).catch(console.error);
+        runWrite(() => backend.redo());
       },
       loopRange(startBar, endBar) {
         setTransport((current) => ({ ...current, loopStartBar: startBar, loopEndBar: endBar }));
         if (!backend.embedded) return;
-        backend.setLoopBars(startBar, endBar).then(setState).catch(console.error);
+        runWrite(() => backend.setLoopBars(startBar, endBar));
       },
       instrumentPitch(track, patch) {
         setState((current) => ({
@@ -461,10 +515,16 @@ export default function App() {
           onNotesChanged={handleNotes}
           onAutomationChanged={handleAutomation}
           onChannelChange={handleChannel}
+          onMidiLearn={(target) => runWrite(() => backend.midiLearn(target))}
           onPluginLoad={handlePluginLoad}
           onMasterPluginLoad={handleMasterPluginLoad}
           onScan={handleScan}
           mixologyPresets={mixologyPresets}
+          onImportAudio={handleImportAudio}
+          onRecord={(recording) => {
+            if (!backend.embedded) return;
+            (recording ? backend.startRecording() : backend.stopRecording()).catch(console.error);
+          }}
           onOpenSession={handleOpenSession}
           onSaveSession={handleSaveSession}
           onSaveSessionAs={handleSaveSessionAs}
@@ -472,7 +532,6 @@ export default function App() {
           onExportStems={handleExportStems}
           onCollectMedia={handleCollectMedia}
           onRemoveMasterPlugin={handleRemoveMasterPlugin}
-          onImportAudio={handleImportAudio}
         />
       </ErrorBoundary>
     </ConsoleRoot>

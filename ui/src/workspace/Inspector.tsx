@@ -3,12 +3,16 @@ import type { ChannelParams, PitchState, TransportState, TrackInfo } from "../ty
 import { PitchKnobs } from "../components/PitchKnobs";
 import { Knob } from "../console-ui/Knob";
 import { toNorm, toValue, type ParamSpec } from "../console-ui/param";
-import { INSERT_SLOTS, dbLabel, meterPct, tintForTrack } from "./format";
+import { INSERT_BANKS, dbLabel, fitScale, meterPct, tintForTrack } from "./format";
+import { PANEL_H, PANEL_W } from "../console-ui/panels";
 import { OverlayFace, moduleById, moduleForInsert, previewReadout } from "./overlayFx";
 
 const GAIN_SPEC: ParamSpec = { min: -60, max: 6, decimals: 1, unit: "dB" };
 const PAN_SPEC: ParamSpec = { min: -1, max: 1, decimals: 2 };
 const SEND_SPEC: ParamSpec = { min: 0, max: 100, decimals: 0, unit: "%" };
+const HPF_SPEC: ParamSpec = { min: 20, max: 500, decimals: 0, unit: "Hz" };
+const THRESH_SPEC: ParamSpec = { min: -60, max: 0, decimals: 1, unit: "dB" };
+const OUTPUT_SPEC: ParamSpec = { min: -24, max: 12, decimals: 1, unit: "dB" };
 
 export interface InspectorProps {
   track?: TrackInfo;
@@ -25,6 +29,8 @@ export interface InspectorProps {
   /** Baked MixRack parameters for this track, when the host publishes them. */
   channel?: ChannelParams;
   onChannelParam?: (id: string, value: number) => void;
+  /** Arms the host's MIDI learn for one strip parameter id. */
+  onMidiLearn?: (id: string) => void;
   /** Arrange rail shows the channel controls only; the tab shows the editor too. */
   compact?: boolean;
   /** Track pitch lives in the output section's open space. */
@@ -64,6 +70,9 @@ export function Inspector({
   onSendA,
   onSendB,
   onInsert,
+  channel,
+  onChannelParam,
+  onMidiLearn,
   compact = false,
   pitch,
   onPitch,
@@ -75,32 +84,70 @@ export function Inspector({
   // Hooks must run before the empty-track bail-out.
   const [focused, setFocused] = useState<number | null>(null);
   const [scale, setScale] = useState(0.65);
-  const [showAll, setShowAll] = useState(false);
+  // The preview starts fitted to its box; the +/- buttons take over once the
+  // user picks a size, so a manual choice is not undone by the next resize.
+  const [manualScale, setManualScale] = useState(false);
+  const [bank, setBank] = useState(0);
+  // Faceplate or parameters: the plug-in usually cannot show both at once on a
+  // laptop screen, so the editor switches instead of scrolling the whole page.
+  const [paramView, setParamView] = useState(false);
   const faceRef = useRef<HTMLDivElement | null>(null);
 
   // The faceplate is a preview, not a control surface. `inert` removes its
   // descendants from focus order as well as from the accessibility tree, which
   // aria-hidden alone does not do.
-  const focusedKey = focusedModuleKey(focused);
+  // paramView remounts the faceplate; without it in the deps a fresh element
+  // came back focusable behind the parameters view.
   useEffect(() => {
     faceRef.current?.setAttribute("inert", "");
-  }, [focusedKey]);
+  }, [focusedModuleKey(focused), paramView]);
+
+  // Computed before the empty-track bail-out so the fit effect's dependency
+  // list stays above the early return.
+  const inserts = track?.inserts ?? [];
+  const slots: readonly number[] = INSERT_BANKS[bank].slots;
+  const firstFilled = slots.find((slot) => inserts[slot]?.name) ?? null;
+  const focusedSlot = focused !== null && slots.includes(focused) ? focused : firstFilled;
+  const focusedInsert = focusedSlot !== null ? inserts[focusedSlot] : undefined;
+  const focusedModule = moduleForInsert(focusedInsert?.name);
+
+  // Fit the faceplate to the editor box. Without this the 1320x780 preview
+  // starts at a fixed scale and its lower half is cropped by the panel.
+  // Hooks must run before the empty-track bail-out below.
+  useEffect(() => {
+    const box = faceRef.current;
+
+    if (box === null || paramView || manualScale) return;
+
+    const fit = () => {
+      const rect = box.getBoundingClientRect();
+
+      if (rect.width < 60 || rect.height < 60) return;
+
+      const padding = 16; // .ws-editor-face padding
+      setScale(fitScale(rect.width - padding, rect.height - padding, PANEL_W, PANEL_H));
+    };
+
+    fit();
+
+    if (typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(fit);
+    observer.observe(box);
+
+    return () => observer.disconnect();
+  }, [paramView, manualScale, focusedModule]);
 
   if (!track) {
     return <div className="ws-empty">No track selected</div>;
   }
 
-  const inserts = track.inserts ?? [];
-  const peak = transport?.trackPeaks[track.index] ?? 0;
-  const slots: readonly number[] = INSERT_SLOTS;
-  const firstFilled = slots.find((slot) => inserts[slot]?.name) ?? null;
-  const focusedSlot = focused !== null && slots.includes(focused) ? focused : firstFilled;
-  const focusedInsert = focusedSlot !== null ? inserts[focusedSlot] : undefined;
-  const focusedModule = moduleForInsert(focusedInsert?.name);
+  const peak = transport?.trackPeaks?.[track.index] ?? 0;
   const rows = focusedModule ? previewReadout(focusedModule, 40) : [];
-  const shownRows = showAll ? rows : rows.slice(0, 14);
-  const zoom = (delta: number) =>
+  const zoom = (delta: number) => {
+    setManualScale(true);
     setScale((value) => Math.max(0.35, Math.min(0.7, Math.round((value + delta) * 100) / 100)));
+  };
 
   const column = (
     <>
@@ -153,6 +200,22 @@ export function Inspector({
       <section className="ws-ins-card">
         <div className="ws-ins-card-head">
           <h3>Inserts</h3>
+          <span className="ws-transport-group" role="group" aria-label="Insert bank">
+            {INSERT_BANKS.map((entry, index) => (
+              <button
+                key={entry.id}
+                className="ws-mini-btn"
+                aria-pressed={bank === index}
+                aria-label={`Show inserts ${entry.label}`}
+                onClick={() => {
+                  setBank(index);
+                  setFocused(null);
+                }}
+              >
+                {entry.label}
+              </button>
+            ))}
+          </span>
         </div>
 
         <div className="ws-ins-slots">
@@ -201,8 +264,6 @@ export function Inspector({
             );
           })}
         </div>
-
-        <p className="ws-ins-note">Four insert slots. The selected insert opens on the right.</p>
       </section>
 
       <section className="ws-ins-card">
@@ -228,6 +289,60 @@ export function Inspector({
           />
         </div>
       </section>
+
+      {channel && onChannelParam && (
+        <section className="ws-ins-card">
+          <h3>Strip</h3>
+          <div className="ws-ins-knobs">
+            <Knob
+              label="HPF"
+              size="m"
+              showValue
+              spec={HPF_SPEC}
+              value={toNorm(channel.hpfFreq, HPF_SPEC)}
+              defaultValue={toNorm(80, HPF_SPEC)}
+              onChange={(v) => onChannelParam("hpfFreq", Number(toValue(v, HPF_SPEC).toFixed(0)))}
+            />
+            <Knob
+              label="Comp"
+              size="m"
+              showValue
+              spec={THRESH_SPEC}
+              value={toNorm(channel.compThresh, THRESH_SPEC)}
+              defaultValue={toNorm(0, THRESH_SPEC)}
+              onChange={(v) =>
+                onChannelParam("compThresh", Number(toValue(v, THRESH_SPEC).toFixed(1)))
+              }
+            />
+            <Knob
+              label="Out"
+              size="m"
+              showValue
+              spec={OUTPUT_SPEC}
+              value={toNorm(channel.outputDb, OUTPUT_SPEC)}
+              defaultValue={toNorm(0, OUTPUT_SPEC)}
+              onChange={(v) =>
+                onChannelParam("outputDb", Number(toValue(v, OUTPUT_SPEC).toFixed(1)))
+              }
+            />
+          </div>
+          {onMidiLearn && (
+            <div className="ws-ins-knobs">
+              {(["hpfFreq", "compThresh", "outputDb"] as const).map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  className="ws-mini-btn"
+                  title={`Arm MIDI learn for ${id}`}
+                  onClick={() => onMidiLearn(id)}
+                >
+                  LEARN {id}
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="ws-ins-card">
         <h3>Channel</h3>
@@ -319,10 +434,20 @@ export function Inspector({
     <div className="ws-channel">
       <div className="ws-channel-col">{column}</div>
 
-      <section className="ws-channel-main" aria-label="Insert editor">
+      <section className="ws-channel-main" aria-label="Insert editor" style={{ minHeight: 0 }}>
         <header className="ws-editor-head">
           <span className="ws-editor-title">{focusedInsert?.name || "No insert selected"}</span>
           {focusedModule && <span className="ws-editor-tag">{moduleById(focusedModule).tag}</span>}
+          {focusedModule && (
+            <button
+              className="ws-btn"
+              aria-pressed={paramView}
+              title={paramView ? "Show the faceplate" : "Show every parameter"}
+              onClick={() => setParamView((value) => !value)}
+            >
+              {paramView ? "FACE" : "PARAMS"}
+            </button>
+          )}
           <span className="ws-editor-scale">
             <button
               className="ws-btn is-icon"
@@ -345,29 +470,23 @@ export function Inspector({
         </header>
 
         {focusedModule ? (
-          <>
-            <div className="ws-editor-face" aria-hidden="true" ref={faceRef}>
-              <OverlayFace id={focusedModule} scale={scale} label={focusedInsert?.name} />
-            </div>
-
+          // One view at a time: the faceplate owns the editor area, and PARAMS
+          // swaps it for the full list. Parking parameters below the faceplate
+          // shrank it to a strip and cropped the plug-in.
+          paramView ? (
             <div className="ws-editor-params" aria-label="Plug-in parameters">
-              {shownRows.map((row) => (
+              {rows.map((row) => (
                 <div className="ws-editor-param" key={row.key}>
                   <span>{row.label}</span>
                   <b>{row.value}</b>
                 </div>
               ))}
             </div>
-
-            {rows.length > 14 && (
-              <button
-                className="ws-btn ws-editor-more"
-                onClick={() => setShowAll((value) => !value)}
-              >
-                {showAll ? "SHOW FEWER" : `SHOW ALL ${rows.length}`}
-              </button>
-            )}
-          </>
+          ) : (
+            <div className="ws-editor-face" aria-hidden="true" ref={faceRef}>
+              <OverlayFace id={focusedModule} scale={scale} label={focusedInsert?.name} />
+            </div>
+          )
         ) : (
           <div className="ws-editor-empty">
             {focusedInsert?.name

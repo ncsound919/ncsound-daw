@@ -86,11 +86,11 @@ describe("Workspace", () => {
     expect(screen.getByText("001|01|000")).toBeInTheDocument();
     expect(screen.getByText("DRUMS")).toBeInTheDocument();
     // The header leads with the track name; the numbered badge keeps the index.
+    expect(document.querySelector('.ws-head-name[title="BASS"]')).not.toBeNull();
     expect(document.querySelector('.ws-head[aria-current="true"] .ws-head-db')).toHaveAttribute(
       "title",
       "T2 · 0.0 dB",
     );
-    expect(document.querySelector('.ws-head-name[title="BASS"]')).not.toBeNull();
   });
 
   it("draws timeline clips with their bar position", () => {
@@ -229,20 +229,20 @@ describe("plugin load targets", () => {
 
     expect(masterLoad).toHaveBeenCalledWith(expect.objectContaining({ id: "acme.retro" }));
   });
+});
 
-  describe("native status", () => {
-    it("shows the host status line in the strip when no local flash is active", () => {
-      render(
-        <Workspace
-          state={{ ...STATE, statusMessage: "BOUNCE / mix.wav", statusAlert: true }}
-          transport={TRANSPORT}
-          actions={actions()}
-        />,
-      );
+describe("native status", () => {
+  it("shows the host status line in the strip when no local flash is active", () => {
+    render(
+      <Workspace
+        state={{ ...STATE, statusMessage: "BOUNCE / mix.wav", statusAlert: true }}
+        transport={TRANSPORT}
+        actions={actions()}
+      />,
+    );
 
-      const msg = screen.getByRole("status");
-      expect(msg).toHaveTextContent("BOUNCE / mix.wav");
-      expect(msg.previousElementSibling).toHaveClass("is-alert");
-    });
+    const msg = screen.getByRole("status");
+    expect(msg).toHaveTextContent("BOUNCE / mix.wav");
+    expect(msg.previousElementSibling).toHaveClass("is-alert");
   });
 });

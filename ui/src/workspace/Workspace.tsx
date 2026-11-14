@@ -9,7 +9,7 @@ import type {
   TimelineClip,
   TransportState,
 } from "../types";
-import { Arrangement } from "./Arrangement";
+import { Arrangement, type DawMode } from "./Arrangement";
 import { Mixer } from "./Mixer";
 import { SettingsPanel, accentHot, loadSettings, type UiSettings } from "./Settings";
 import { Transport } from "./Transport";
@@ -73,12 +73,15 @@ export interface WorkspaceProps {
   onNotesChanged?: (clip: number, notes: MidiNote[]) => void;
   onAutomationChanged?: (track: number, draft: AutomationLaneDraft) => void;
   onChannelChange?: (track: number, param: string, value: number) => void;
+  /** Arms MIDI learn on a host parameter id ("track.N.param"). */
+  onMidiLearn?: (target: string) => void;
   onPluginLoad?: (plugin: PluginInfo, track: number, slot: number) => void;
   onMasterPluginLoad?: (plugin: PluginInfo) => void;
   onScan?: () => void;
   /** Mixology preset names from the host; the entries hide without them. */
   mixologyPresets?: string[];
   /** Import Audio hook; the menu item stays disabled without it. */
+  onImportAudio?: () => void;
   /** Session and export hooks; each menu entry stays disabled without its route. */
   onOpenSession?: () => void;
   onSaveSession?: () => void;
@@ -88,17 +91,19 @@ export interface WorkspaceProps {
   onCollectMedia?: () => void;
   /** Master-insert hook; the remove entry stays disabled without it. */
   onRemoveMasterPlugin?: () => void;
-  onImportAudio?: () => void;
+  /** Starts/stops capture on the armed tracks. */
+  onRecord?: (recording: boolean) => void;
 }
 
 const EMPTY_PITCH: PitchState = { transpose: 0, pitchCents: 0, tuningHz: 440 };
-const MAX_TRACKS = 8;
+/** Mirrors nc::limits::maxTracks, the engine's hard ceiling. */
+const MAX_TRACKS = 64;
 
 /** Shortcut line per surface: the status strip describes the view you are in. */
 const VIEW_HINTS: Partial<Record<WorkspaceView, string>> = {
   arrange: "V SELECT / T TRIM / F FADE / G GAIN / X SPLIT / E ERASE",
   mix: "CLICK A STRIP / DRAG A FADER / DOUBLE-CLICK FOR UNITY",
-  inspector: "SELECT AN INSERT / DRAG A KNOB / FOUR INSERT SLOTS",
+  inspector: "SELECT AN INSERT / DRAG A KNOB / EIGHT SLOTS IN TWO BANKS",
   piano: "DRAW / PAINT / ERASE / RIGHT-CLICK REMOVES / CTRL + WHEEL ZOOMS",
   automation: "CLICK TO ADD A POINT / ALT-CLICK REMOVES",
 };
@@ -111,10 +116,13 @@ export function Workspace({
   onNotesChanged,
   onAutomationChanged,
   onChannelChange,
+  onMidiLearn,
   onPluginLoad,
   onMasterPluginLoad,
   onScan,
   mixologyPresets,
+  onImportAudio,
+  onRecord,
   onOpenSession,
   onSaveSession,
   onSaveSessionAs,
@@ -122,22 +130,46 @@ export function Workspace({
   onExportStems,
   onCollectMedia,
   onRemoveMasterPlugin,
-  onImportAudio,
 }: WorkspaceProps) {
   const [view, setView] = useState<WorkspaceView>(
     WORKSPACE_VIEWS.some((entry) => entry.id === initialView) ? initialView : "arrange",
   );
+  const [mode, setMode] = useState<DawMode>(() => {
+    try {
+      const saved = localStorage.getItem("nc.daw.mode");
+      if (saved === "recording" || saved === "mixing") return saved;
+    } catch {
+      // No storage available; the session still starts in production.
+    }
+    return "production";
+  });
   const [fitArrange, setFitArrange] = useState<(() => void) | null>(null);
+  // Stable identity: an inline arrow here re-registered the arrangement's FIT
+  // callback on every render, and registering stores state, so the two pinged
+  // each other forever.
+  const registerFit = useCallback((fit: () => void) => setFitArrange(() => fit), []);
   const [uiSettings, setUiSettings] = useState<UiSettings>(loadSettings);
   const [selectedClip, setSelectedClip] = useState<number | null>(null);
   const [masterGainDb, setMasterGainDb] = useState(loadSettings().masterGain);
-  const [recording, setRecording] = useState(false);
   const [status, setStatus] = useState<{ text: string; alert: boolean } | null>(null);
   const [browserTarget, setBrowserTarget] = useState<
     { track: number; slot: number } | { master: true } | null
   >(null);
   // Deep instrument sync: tracks whose instrument should follow the track pitch.
   const [pitchSync, setPitchSync] = useState<Record<number, boolean>>({});
+
+  // A mode is a working preset, not a label: it moves the app to the view that
+  // task lives in and stamps the shell so density and panel rules can follow.
+  const changeMode = (next: DawMode) => {
+    setMode(next);
+    setView(next === "mixing" ? "mix" : "arrange");
+    flash(`${next.toUpperCase()} MODE`);
+    try {
+      localStorage.setItem("nc.daw.mode", next);
+    } catch {
+      // Nothing to persist to; the switch still applies for this session.
+    }
+  };
 
   const canAddTrack = state.tracks.length < MAX_TRACKS;
   const canRemoveTrack = state.tracks.length > 1;
@@ -261,12 +293,18 @@ export function Workspace({
 
   const selectView = (next: WorkspaceView) => {
     setView(next);
+
+    // Mode and view stay in step both ways: the console is the mixing mode, the
+    // arrangement is production, so the chips read true whichever way you move.
+    if (next === "mix") setMode("mixing");
+    else if (next === "arrange") setMode("production");
+
     flash(`${WORKSPACE_VIEWS.find((entry) => entry.id === next)?.label ?? next} VIEW`);
   };
 
   const openBrowser = (track: number, slot: number) => {
-    // The native engine owns four user slots; never hand the bridge a bank B
-    // index, which it would reject after the user picked a plug-in.
+    // The rack owns eight user slots; clamp to the last valid index rather
+    // than handing the bridge a slot it would reject after a pick.
     const safeSlot = Number.isFinite(slot)
       ? Math.max(0, Math.min(INSERT_SLOTS[INSERT_SLOTS.length - 1], Math.trunc(slot)))
       : 0;
@@ -372,6 +410,7 @@ export function Workspace({
         } as React.CSSProperties
       }
       data-density={uiSettings.density}
+      data-mode={mode}
     >
       <HeaderBar
         view={view}
@@ -406,6 +445,7 @@ export function Workspace({
             : undefined
         }
         onScanPlugins={onScan}
+        onImportAudio={onImportAudio}
         onOpenSession={onOpenSession}
         onSaveSession={onSaveSession}
         onSaveSessionAs={onSaveSessionAs}
@@ -431,7 +471,6 @@ export function Workspace({
         }
         onRemoveMasterPlugin={onRemoveMasterPlugin}
         canRemoveMasterPlugin={Boolean(state.hasMasterPlugin)}
-        onImportAudio={onImportAudio}
         onLoadMasterPlugin={openMasterBrowser}
         mixologyPresets={mixologyPresets}
         onApplyMixology={
@@ -476,14 +515,11 @@ export function Workspace({
         onPlay={actions.play}
         onStop={actions.stop}
         onRewind={actions.rewind}
+        onRecord={onRecord}
+        recording={transport.recording ?? false}
         onBpm={actions.bpm}
         onLoop={actions.loop}
         onMetronome={actions.metronome}
-        recording={recording}
-        onRecord={(next) => {
-          setRecording(next);
-          flash(next ? "RECORD ARMED" : "RECORD OFF", next);
-        }}
         globalPitch={state.globalPitch ?? EMPTY_PITCH}
         onGlobalPitch={actions.globalPitch}
       />
@@ -536,11 +572,13 @@ export function Workspace({
               setSelectedClip(index);
               setView("piano");
             }}
-            onRegisterFit={(fit) => setFitArrange(() => fit)}
+            onRegisterFit={registerFit}
             defaultTrackHeight={uiSettings.trackHeight}
             defaultFadeBars={uiSettings.fadeBars}
             defaultClipGain={uiSettings.clipGain}
             defaultSnap={uiSettings.snap}
+            mode={mode}
+            onMode={changeMode}
           />
         )}
 
@@ -591,6 +629,7 @@ export function Workspace({
             }
             channel={state.channel}
             onChannelParam={onChannelParam}
+            onMidiLearn={onMidiLearn ? (id) => onMidiLearn(`track.${trackIndex}.${id}`) : undefined}
             pitch={trackPitch}
             onPitch={(patch) => selectedTrack && actions.trackPitch(selectedTrack.index, patch)}
             instrumentPitch={selectedTrack?.instrumentPitch ?? EMPTY_PITCH}
@@ -608,6 +647,11 @@ export function Workspace({
               lengthBeats={Math.max(1, clip.lengthBars * 4)}
               initialNotes={clipNotes}
               persisted={Boolean(onNotesChanged)}
+              onTranscribe={
+                clip.kind === "audio" && actions.transcribeClip && selectedClip !== null
+                  ? () => actions.transcribeClip?.(selectedClip)
+                  : undefined
+              }
               onEdited={(notes) => {
                 if (selectedClip === null) return;
                 setNoteDrafts((current) => ({ ...current, [selectedClip]: notes }));
@@ -701,7 +745,7 @@ export function Workspace({
         message={status?.text ?? state.statusMessage}
         alert={status?.alert ?? state.statusAlert ?? false}
         activeTracks={state.tracks.length}
-        trackCapacity={8}
+        trackCapacity={MAX_TRACKS}
         clipCount={clips.length}
         pluginCount={state.plugins?.length ?? 0}
       />

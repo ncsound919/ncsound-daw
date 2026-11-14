@@ -1,21 +1,13 @@
 /* Brand typefaces — machine-shop modernism.
    Archivo Variable carries the UI: it has real 100–900 weights and a width
    axis, so labels and names get true bold instead of the faux smear the old
-   single-weight face produced. Share Tech Mono owns every readout. Motter
-   Corpus Condensed is reserved for the lockup — it is a display face, not
-   body copy. The two local faces are rebuilt subsets of the GrowthOS
-   originals; see src/fonts/README.md. */
-
-@font-face {
-  font-family: "Motter Corpus";
-  src: url("./fonts/motter-corpus-condensed.ttf") format("truetype");
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
-}
+   single-weight face produced. Share Tech Mono owns every readout. Both come
+   from @fontsource under the SIL Open Font License. The display lockup uses
+   Archivo too: the Monotype face the mockups used is not licensed for
+   redistribution (see THIRD-PARTY-NOTICES.md and src/fonts/README.md). */
 
 .ws {
-  --font-display: "Motter Corpus", "Archivo Variable", system-ui, sans-serif;
+  --font-display: "Archivo Variable", "Segoe UI", system-ui, sans-serif;
   --font-ui: "Archivo Variable", "Segoe UI", system-ui, sans-serif;
   --font-mono: "Share Tech Mono", "Consolas", ui-monospace, monospace;
   --cs-font-ui: "Archivo Variable", "Segoe UI", system-ui, sans-serif;

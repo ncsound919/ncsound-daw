@@ -1,6 +1,11 @@
-/** The engine hosts exactly four insert slots per track; these are the only
- *  indices the projection and load routes accept. */
-export const INSERT_SLOTS = [0, 1, 2, 3] as const;
+/** Eight insert slots per track, shown as two banks so a strip stays short
+ *  enough to fit on screen. These are the only indices the load routes accept. */
+export const INSERT_SLOTS = [0, 1, 2, 3, 4, 5, 6, 7] as const;
+
+export const INSERT_BANKS = [
+  { id: "a", label: "1–4", slots: [0, 1, 2, 3] as const },
+  { id: "b", label: "5–8", slots: [4, 5, 6, 7] as const },
+] as const;
 
 export type WorkspaceView =
   "arrange" | "mix" | "inspector" | "piano" | "browser" | "automation" | "pitch" | "settings";
@@ -65,8 +70,7 @@ export function barPct(bar: number, viewStart: number, visibleBars: number): num
  */
 export function dbLabel(db: number): string {
   if (!Number.isFinite(db)) return "—";
-  if (db <= -60) return "-60.0";
-  if (db < -59.9 && db > -60.5) return "-60.0";
+  if (db <= -59.9) return "-60.0";
   return `${db > 0 ? "+" : ""}${db.toFixed(1)}`;
 }
 
@@ -108,6 +112,27 @@ export function waveformPoints(peaks: readonly number[]): string {
   });
 
   return `${top.join(" ")} ${bottom.reverse().join(" ")}`;
+}
+
+/**
+ * Scale that fits a fixed-size faceplate preview inside the editor box. The
+ * panel is drawn at its design size (1320x780); without fitting, the preview is
+ * cropped to its top-left corner. Clamped so text stays legible and a roomy
+ * window never stretches the face past life size.
+ */
+export function fitScale(
+  availableWidth: number,
+  availableHeight: number,
+  panelWidth: number,
+  panelHeight: number,
+  min = 0.3,
+  max = 1,
+): number {
+  if (!(panelWidth > 0) || !(panelHeight > 0)) return 0.65;
+  if (!(availableWidth > 0) || !(availableHeight > 0)) return min;
+  const fit = Math.min(availableWidth / panelWidth, availableHeight / panelHeight);
+  if (!Number.isFinite(fit)) return min;
+  return Math.max(min, Math.min(max, fit));
 }
 
 /** Track identity tints, mirroring theme::trackTints in app/Source/Theme.h. */

@@ -14,6 +14,8 @@ export const NATIVE_ROUTES = [
   "setBpm",
   "setLoopEnabled",
   "setMetronome",
+  "startRecording",
+  "stopRecording",
   "setTrackGain",
   "setTrackPan",
   "setTrackMuted",

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import type { InsertSlot, TrackInfo, TransportState } from "../types";
-import { INSERT_SLOTS, dbLabel, meterPct, tintForTrack } from "./format";
+import { INSERT_BANKS, dbLabel, meterPct, tintForTrack } from "./format";
 import { Knob } from "../console-ui/Knob";
 import { toNorm, toValue, type ParamSpec } from "../console-ui/param";
 
@@ -140,7 +140,7 @@ function Fader({
             className={db === 0 ? "is-unity" : undefined}
             /* Same inset geometry as the cap (4px top/bottom, 26px travel),
                so a label always sits on its tick and on the cap line. */
-            style={{ bottom: `calc(13px + ${dbToNorm(db) * 100}% * (100% - 26px) / 100%)` }}
+            style={{ bottom: `calc(13px + ${dbToNorm(db)} * (100% - 26px))` }}
           >
             {db > 0 ? `+${db}` : db}
           </span>
@@ -198,7 +198,7 @@ function Meter({ left, right, title }: { left: number; right: number; title: str
     <div className="ws-meters" title={title} aria-hidden="true">
       <span
         className="ws-meter-hold"
-        style={{ bottom: `calc(4px + ${meterPct(hold)}% * (100% - 8px) / 100%)` }}
+        style={{ bottom: `calc(4px + ${meterPct(hold) / 100} * (100% - 8px))` }}
       />
       <span
         className={left >= 0.985 ? "ws-meter-col is-clip" : "ws-meter-col"}
@@ -569,6 +569,7 @@ function ChannelStrip({
 }) {
   const tint = tintForTrack(track.index);
   const inserts = track.inserts ?? [];
+  const [bank, setBank] = useState(0);
   const peakDb = peak > 0 ? 20 * Math.log10(Math.max(1e-6, peak)) : Number.NEGATIVE_INFINITY;
 
   return (
@@ -589,14 +590,25 @@ function ChannelStrip({
 
       <div className="ws-strip-section">
         <div className="ws-section-head">
-          <span>Inserts 1–4</span>
+          <span>Inserts {INSERT_BANKS[bank].label}</span>
+          <button
+            className="ws-mini-btn"
+            aria-label="Switch insert bank"
+            title="Show the other four insert slots"
+            onClick={(event) => {
+              event.stopPropagation();
+              setBank((value) => (value + 1) % INSERT_BANKS.length);
+            }}
+          >
+            {INSERT_BANKS[bank].label}
+          </button>
           <i
             className={peak >= 0.985 ? "ws-strip-clip is-hot" : "ws-strip-clip"}
             aria-hidden="true"
           />
         </div>
         <div className="ws-slots">
-          {INSERT_SLOTS.map((slot) => (
+          {INSERT_BANKS[bank].slots.map((slot) => (
             <SlotRow
               key={slot}
               slot={slot}

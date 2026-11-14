@@ -21,6 +21,17 @@ const SNAPS = [
   { label: "1/32", beats: 0.125 },
 ];
 
+/** Scales for the key lock. Chromatic is the honest default: nothing is
+ *  folded away until the user picks a key. */
+const SCALES = [
+  { id: "chromatic", label: "CHROMATIC", steps: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] },
+  { id: "major", label: "MAJOR", steps: [0, 2, 4, 5, 7, 9, 11] },
+  { id: "minor", label: "MINOR", steps: [0, 2, 3, 5, 7, 8, 10] },
+  { id: "penta", label: "PENTA", steps: [0, 2, 4, 7, 9] },
+] as const;
+
+const ROOTS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+
 type Tool = "draw" | "paint" | "erase";
 
 const TOOLS: { id: Tool; label: string; short: string; hint: string }[] = [
@@ -50,6 +61,8 @@ export interface PianoRollProps {
   initialNotes?: MidiNote[];
   persisted?: boolean;
   onEdited?: (notes: MidiNote[]) => void;
+  /** Present only for audio clips: transcribe the take into this MIDI clip. */
+  onTranscribe?: () => void;
 }
 
 type Drag = {
@@ -66,14 +79,34 @@ export function PianoRoll({
   initialNotes = [],
   persisted = false,
   onEdited,
+  onTranscribe,
 }: PianoRollProps) {
   const [notes, setNotes] = useState<MidiNote[]>(initialNotes);
   const [selected, setSelected] = useState<number | null>(null);
   const [beatPx, setBeatPx] = useState(44);
   const [snap, setSnap] = useState(0.25);
+  const [root, setRoot] = useState(0);
+  const [scaleId, setScaleId] = useState<(typeof SCALES)[number]["id"]>("chromatic");
+  const [scaleLock, setScaleLock] = useState(false);
   const [tool, setTool] = useState<Tool>("draw");
   const rootRef = useRef<HTMLDivElement | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
+
+  // React attaches wheel listeners as passive, so preventDefault() inside a
+  // React onWheel is a no-op and the grid scrolled while zooming. A native
+  // non-passive listener (the same approach Arrangement uses) can cancel it.
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    const onWheel = (event: WheelEvent) => {
+      if (!(event.ctrlKey || event.metaKey || event.altKey)) return;
+      event.preventDefault();
+      // Reciprocal factors: an in/out pair returns to the same zoom.
+      setBeatPx((px) => clamp(Math.round(px * (event.deltaY < 0 ? 1.2 : 1 / 1.2)), 14, 180));
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
   const drag = useRef<Drag | null>(null);
   const painting = useRef(false);
   const notesRef = useRef<MidiNote[]>(initialNotes);
@@ -131,10 +164,25 @@ export function PianoRoll({
     return clamp(beat, 0, Math.max(0, lengthBeats - snap));
   };
 
+  const scaleSteps: readonly number[] =
+    SCALES.find((entry) => entry.id === scaleId)?.steps ?? SCALES[0].steps;
+  const inScale = (pitch: number) => scaleSteps.includes((((pitch - root) % 12) + 12) % 12);
+
+  // Key lock nudges a drawn note to the nearest degree instead of hiding the
+  // chromatic rows, so the grid still shows what the key leaves out.
+  const snapPitch = (pitch: number) => {
+    if (!scaleLock) return pitch;
+    for (let delta = 0; delta <= 6; ++delta) {
+      if (inScale(pitch - delta)) return pitch - delta;
+      if (inScale(pitch + delta)) return pitch + delta;
+    }
+    return pitch;
+  };
+
   const addNoteAt = (x: number, y: number, deferred = false): boolean => {
     const current = notesRef.current;
     const beat = beatAt(x);
-    const pitch = pitchAt(y);
+    const pitch = snapPitch(pitchAt(y));
     if (current.some((note) => note.pitch === pitch && Math.abs(note.startBeat - beat) < 1e-4))
       return false;
     const note: MidiNote = {
@@ -264,6 +312,24 @@ export function PianoRoll({
     removeAt(selected);
   };
 
+  const quantizeAll = () => {
+    const next = notesRef.current.map((note) => ({
+      ...note,
+      startBeat: Math.round(note.startBeat / snap) * snap,
+      lengthBeats: Math.max(snap, Math.round(note.lengthBeats / snap) * snap),
+    }));
+    commit(next);
+  };
+
+  const transpose = (semitones: number) => {
+    const next = notesRef.current.map((note, index) =>
+      selected === null || selected === index
+        ? { ...note, pitch: clamp(note.pitch + semitones, PITCH_LOW, PITCH_HIGH) }
+        : note,
+    );
+    commit(next);
+  };
+
   const bars = Math.max(1, Math.round(lengthBeats / 4));
 
   return (
@@ -318,6 +384,68 @@ export function PianoRoll({
             ))}
           </select>
         </label>
+
+        <label className="pr-snap">
+          <span>KEY</span>
+          <select
+            aria-label="Scale root"
+            value={root}
+            onChange={(event) => setRoot(Number(event.target.value))}
+          >
+            {ROOTS.map((name, index) => (
+              <option key={name} value={index}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="pr-snap">
+          <span>SCALE</span>
+          <select
+            aria-label="Scale"
+            value={scaleId}
+            onChange={(event) => setScaleId(event.target.value as (typeof SCALES)[number]["id"])}
+          >
+            {SCALES.map((entry) => (
+              <option key={entry.id} value={entry.id}>
+                {entry.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <button
+          className="ws-btn"
+          aria-pressed={scaleLock}
+          title="Snap drawn notes to the selected key"
+          onClick={() => setScaleLock((value) => !value)}
+        >
+          LOCK
+        </button>
+        <button
+          className="ws-btn"
+          title="Round starts and lengths to the snap"
+          onClick={quantizeAll}
+        >
+          QUANT
+        </button>
+        <button className="ws-btn" title="Transpose down one octave" onClick={() => transpose(-12)}>
+          OCT−
+        </button>
+        <button className="ws-btn" title="Transpose up one octave" onClick={() => transpose(12)}>
+          OCT+
+        </button>
+
+        {onTranscribe && (
+          <button
+            className="ws-btn"
+            title="Analyse this audio clip and write its voice as a MIDI clip on the same track"
+            onClick={onTranscribe}
+          >
+            VOICE→MIDI
+          </button>
+        )}
 
         <span className="ws-spacer" />
         <button
@@ -377,21 +505,16 @@ export function PianoRoll({
               painting.current = false;
               flushPending();
             }}
-            onWheel={(event) => {
-              // Plain wheel keeps native scrolling; Ctrl/Alt + wheel zooms.
-              if (!(event.ctrlKey || event.metaKey || event.altKey)) return;
-              event.preventDefault();
-              setBeatPx((px) => clamp(Math.round(px * (event.deltaY < 0 ? 1.2 : 0.84)), 14, 180));
-            }}
             title="Click to add a note"
           >
             {Array.from({ length: PITCH_HIGH - PITCH_LOW + 1 }, (_, row) => {
               const pitch = PITCH_HIGH - row;
+              const offScale = !inScale(pitch);
               return isBlack(pitch) ? (
                 <span
                   key={pitch}
                   className="pr-row is-black"
-                  style={{ top: row * ROW_H, height: ROW_H }}
+                  style={{ top: row * ROW_H, height: ROW_H, opacity: offScale ? 0.35 : 1 }}
                 />
               ) : null;
             })}
@@ -438,6 +561,9 @@ export function PianoRoll({
                       setSelected(index);
                     }
                   }}
+                  // Removal happens here only: a right-click also fires
+                  // pointerdown first, and deleting in both handlers removed a
+                  // second, unintended note from the shifted array.
                   onContextMenu={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
@@ -446,8 +572,7 @@ export function PianoRoll({
                   onPointerDown={(event) => {
                     if (event.button === 2) {
                       event.stopPropagation();
-                      removeAt(index);
-                      return;
+                      return; // contextmenu above owns the deletion
                     }
                     if (event.altKey || tool === "erase") {
                       event.stopPropagation();

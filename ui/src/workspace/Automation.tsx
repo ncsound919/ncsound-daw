@@ -322,6 +322,10 @@ export function Automation({
                 commit({ ...shown, points: points.filter((_, i) => i !== index) });
                 return;
               }
+              // The undo entry belongs to the state before the gesture, so
+              // Undo after a drag restores the pre-drag breakpoints instead of
+              // walking past them to the previous commit.
+              pushUndo(points);
               drag.current = { index };
               pendingRef.current = { ...shown, points };
               setPending({ ...shown, points });

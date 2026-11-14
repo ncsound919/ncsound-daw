@@ -23,6 +23,7 @@ export interface HeaderBarProps {
   mixologyPresets?: string[];
   onApplyMixology?: (index: number) => void;
   /** Import Audio hook; the menu item stays disabled without it. */
+  onImportAudio?: () => void;
   /** Session and export hooks; each menu entry stays disabled without its route. */
   onOpenSession?: () => void;
   onSaveSession?: () => void;
@@ -40,7 +41,6 @@ export interface HeaderBarProps {
   onTranscribeSelected?: () => void;
   onSelectPrevious?: () => void;
   onSelectNext?: () => void;
-  onImportAudio?: () => void;
   onFit?: () => void;
 }
 
@@ -74,6 +74,7 @@ export function HeaderBar({
   onLoadMasterPlugin,
   mixologyPresets,
   onApplyMixology,
+  onImportAudio,
   onOpenSession,
   onSaveSession,
   onSaveSessionAs,
@@ -89,7 +90,6 @@ export function HeaderBar({
   onTranscribeSelected,
   onSelectPrevious,
   onSelectNext,
-  onImportAudio,
   onFit,
 }: HeaderBarProps) {
   const [open, setOpen] = useState<number | null>(null);
@@ -195,6 +195,7 @@ export function HeaderBar({
     onView(next.id);
     tabRefs.current[next.id]?.focus();
   };
+
   // A host-wired entry when its route exists, otherwise an honest placeholder.
   const wired = (label: string, run?: () => void): Item =>
     run ? { label, run } : { label, disabled: true, hint: "Not wired to the bridge yet" };
@@ -353,6 +354,7 @@ export function HeaderBar({
           disabled: !canRemoveTrack,
           hint: canRemoveTrack ? undefined : "At least one track",
         },
+        "separator",
         wired("Select Previous Track", onSelectPrevious),
         wired("Select Next Track", onSelectNext),
         "separator",
@@ -364,9 +366,9 @@ export function HeaderBar({
       name: "HELP",
       entries: [
         { label: "About NCSound Music Hub", run: () => setDialog("about") },
+        { label: "Keyboard Shortcuts", run: () => setDialog("keys") },
         { label: "Preferences", run: () => setDialog("prefs") },
         { label: "Documentation", disabled: true, hint: "Ships with the desktop app" },
-        { label: "Keyboard Shortcuts", run: () => setDialog("keys") },
       ],
     },
   ];
@@ -582,7 +584,7 @@ export function HeaderBar({
                 </div>
                 <div>
                   <dt>L</dt>
-                  <dd>Loop enable (in ruler — arrow keys nudge)</dd>
+                  <dd>Loop range (drag in the ruler — arrow keys nudge)</dd>
                 </div>
                 <div>
                   <dt>Delete</dt>
@@ -593,8 +595,8 @@ export function HeaderBar({
                   <dd>Delete an automation point</dd>
                 </div>
                 <div>
-                  <dt>Ctrl / ⌘ + wheel</dt>
-                  <dd>Zoom the arrangement</dd>
+                  <dt>Wheel</dt>
+                  <dd>Zoom the arrangement at the pointer</dd>
                 </div>
               </dl>
             )}

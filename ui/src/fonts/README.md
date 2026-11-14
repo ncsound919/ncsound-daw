@@ -1,16 +1,19 @@
 # Workspace typefaces
 
-| File                          | Source face                    | Source path                                         |
-| ----------------------------- | ------------------------------ | --------------------------------------------------- |
-| `din-neuzeit-light.ttf`       | DIN Neuzeit Grotesk Light      | `fonts/premium/dinneuzeitgrotesk_light_regular.ttf` |
-| `motter-corpus-condensed.ttf` | Motter Corpus Condensed ITC TT | `fonts/premium/mottcci.ttf`                         |
+The Monotype faces this directory used to hold — DIN Neuzeit Grotesk Light and
+Motter Corpus Condensed — were removed on 2026-11-12. They were rebuilt subsets
+of a mixed freeware/shareware collection, the font files declared no licence,
+and neither a document nor a desktop licence covers embedding them in a
+distributed build.
 
-Both are rebuilt subsets (ASCII/Latin + symbols, `PCLT`/`DSIG` dropped) of the
-GrowthOS / marketing-studio library originals. DIN Neuzeit's cmap was additionally
-rebuilt from its glyph map because Chromium's OTS sanitizer rejected the original
-table; without that repair the face silently falls back to Segoe UI.
+The workspace now uses the `@fontsource` families declared in `ui/package.json`:
 
-The library's provenance note (`assets/licenses/GrowthOS-Fonts.md`) records mixed
-freeware/shareware collections and that these premium faces declare no licence in
-the font file. Distribution terms follow the licence under which the collection
-was obtained.
+| Role                       | Family           | Licence     |
+| -------------------------- | ---------------- | ----------- |
+| UI, and the display lockup | Archivo Variable | SIL OFL 1.1 |
+| Every readout              | Share Tech Mono  | SIL OFL 1.1 |
+
+See `THIRD-PARTY-NOTICES.md` at the repository root for the full record.
+
+If the premium faces are licensed later, drop the TTFs back here, restore the
+`@font-face` rule in `../brand.css`, and add the licence to the notices.

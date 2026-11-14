@@ -117,6 +117,18 @@ export const backend = {
     return call<AppState>("setRecordArmed", track, armed);
   },
 
+  startRecording(): Promise<AppState> {
+    return call<AppState>("startRecording");
+  },
+
+  stopRecording(): Promise<AppState> {
+    return call<AppState>("stopRecording");
+  },
+
+  midiLearn(key: string): Promise<AppState> {
+    return call<AppState>("midiLearn", key);
+  },
+
   setMasterDim(on: boolean): Promise<AppState> {
     return call<AppState>("setMasterDim", on);
   },
@@ -144,6 +156,12 @@ export const backend = {
 
   deleteTimelineClip(index: number): Promise<AppState> {
     return call<AppState>("setClipDelete", index);
+  },
+
+  /** Voice-to-MIDI: turns the selected audio clip into a MIDI clip on the
+      same track. The host answers with the full snapshot including it. */
+  transcribeTimelineClip(index: number): Promise<AppState> {
+    return call<AppState>("transcribeClip", index);
   },
 
   /** Replaces a MIDI clip's notes; the engine sanitises them on arrival. */
@@ -187,6 +205,7 @@ export const backend = {
   importAudio(): Promise<AppState> {
     return call<AppState>("importAudio");
   },
+
   openSession(): Promise<AppState> {
     return call<AppState>("openSession");
   },

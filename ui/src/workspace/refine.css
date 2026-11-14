@@ -349,7 +349,7 @@
 
 .ws-transport {
   flex: none;
-  height: var(--ws-h-transport);
+  height: 54px;
   gap: 8px;
   padding: 0 12px;
   border-bottom: 1px solid #000;
@@ -366,20 +366,20 @@
   flex: none;
 }
 .ws-transport .ws-btn {
-  height: 32px;
-  min-width: 38px;
-  padding: 0 11px;
-  font-size: 11px;
+  height: 28px;
+  min-width: 34px;
+  padding: 0 8px;
+  font-size: 10px;
 }
 .ws-transport .ws-btn.is-icon {
-  width: 34px;
-  min-width: 34px;
-  height: 32px;
+  width: 30px;
+  min-width: 30px;
+  height: 28px;
   padding: 0;
-  font-size: 14px;
+  font-size: 13px;
 }
 .ws-transport .ws-sep {
-  height: 34px;
+  height: 28px;
 }
 
 .ws-lcd {
@@ -387,8 +387,8 @@
   flex-direction: column;
   justify-content: center;
   gap: 2px;
-  min-height: 46px;
-  padding: 0 10px;
+  min-height: 40px;
+  padding: 0 9px;
   border: 1px solid #000;
   border-radius: var(--ws-r-control);
   background: #151413;
@@ -415,7 +415,7 @@
 }
 /* Transport is 64px tall: knobs ride at 0.6 so the value row never clips. */
 .ws-transport-pitch .cs-knob {
-  zoom: 0.6;
+  zoom: 0.52;
 }
 .ws-sr-only {
   position: absolute;
@@ -699,6 +699,12 @@
   left: 4px;
   font: 500 11px/1 var(--font-mono);
   color: var(--ws-muted);
+}
+/* A number at the end of the ruler flips to the inside edge of its tick so it
+   is not cut off by the ruler's clip. */
+.ws-tick-label.is-end {
+  left: auto;
+  right: 4px;
 }
 /* Thin neon green line — no triangle, no glow tricks. */
 .ws-playhead {
@@ -1018,6 +1024,11 @@
   bottom: 0;
   overflow: hidden;
 }
+/* The volume popover hangs below its button; let it escape the body only while
+   it is open, instead of clipping the fader the user just asked for. */
+.ws-clip-body:has(.ws-clip-fader-pop) {
+  overflow: visible;
+}
 .ws-clip-vol {
   flex: none;
   padding: 1px 5px;
@@ -1093,8 +1104,12 @@
 }
 /* Pro Tools clip volume: no line across the waveform. A small symbol
    (bottom-left) pops a mini fader. */
+.ws-clip {
+  container-type: inline-size;
+}
 .ws-clip-vol-btn {
   position: absolute;
+  display: none;
   left: 4px;
   bottom: 4px;
   z-index: 4;
@@ -1107,6 +1122,16 @@
   color: var(--ws-paper);
   font: 600 11px/1 var(--font-ui);
   cursor: pointer;
+}
+/* Only a clip with room for the badge shows it; at full arrangement zoom the
+   waveform stays clean. */
+@container (min-width: 200px) {
+  .ws-clip-vol-btn {
+    display: block;
+  }
+}
+.ws-clip-vol-btn[aria-expanded="true"] {
+  display: block;
 }
 .ws-clip-vol-btn:hover {
   background: rgba(0, 0, 0, 0.8);
@@ -1136,18 +1161,6 @@
   font: 500 11px/1 var(--font-mono);
   color: var(--ws-paper);
   white-space: nowrap;
-}
-.ws-clip-body::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 72%;
-  bottom: 0;
-  border-top: 1px solid rgba(0, 0, 0, 0.55);
-  background: rgba(0, 0, 0, 0.18);
-  pointer-events: none;
-  z-index: 0;
 }
 .ws-clip-gain {
   background: rgba(224, 130, 77, 0.9);
@@ -1243,7 +1256,7 @@
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 184px;
-  gap: 2px;
+  gap: 10px;
   padding: 8px 10px 10px;
   background: #050505;
   overflow: hidden;
@@ -1253,7 +1266,7 @@
   min-height: 0;
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(138px, 1fr);
+  grid-auto-columns: minmax(112px, 1fr);
   gap: 2px;
   align-items: stretch;
   overflow-x: auto;
@@ -1270,13 +1283,11 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  padding: 0 8px 8px;
-  overflow-y: auto;
-  overflow-x: hidden;
+  gap: 3px;
+  padding: 0 7px 6px;
+  overflow: hidden;
   border: 0;
   border-radius: 0;
-  scrollbar-gutter: stable;
   background:
     linear-gradient(
       180deg,
@@ -1301,9 +1312,13 @@
   box-shadow: inset 2px 0 0 var(--ws-accent-hot);
 }
 .ws-strip.is-master {
+  /* The master is its own surface: the strips scroll underneath it, so it needs
+     a seam rather than a hard cut through the last visible channel. */
   z-index: auto;
   border-left: 1px solid #000;
-  box-shadow: inset 0 0 0 1px rgba(248, 232, 200, 0.06);
+  box-shadow:
+    -10px 0 16px rgba(0, 0, 0, 0.55),
+    inset 0 0 0 1px rgba(248, 232, 200, 0.08);
 }
 .ws-strip-tint {
   height: 3px;
@@ -1945,7 +1960,7 @@
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
-  grid-template-columns: 304px minmax(0, 1fr);
+  grid-template-columns: 262px minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   gap: 1px;
   background: #000;
@@ -1953,48 +1968,50 @@
 }
 .ws-channel-col {
   min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px 8px 24px;
+  gap: 4px;
+  padding: 6px 6px 8px;
   background: var(--ws-panel-lo);
-  scrollbar-gutter: stable;
-  scroll-padding-bottom: 24px;
 }
 .ws-channel-col > * {
   flex: none;
 }
-.ws-channel-col .ws-ins-card:last-child {
-  position: sticky;
-  bottom: 0;
-  background: #202021;
-  box-shadow: 0 -8px 16px rgba(0, 0, 0, 0.5);
-}
 .ws-channel-main {
   min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 16px 16px 32px;
+  gap: 6px;
+  padding: 8px;
   background: #171716;
-  scrollbar-gutter: stable;
-  scroll-padding-bottom: 32px;
 }
 .ws-channel-main > * {
   flex: none;
   min-height: auto;
 }
 .ws-editor-face {
-  max-height: 46vh;
+  /* The faceplate owns the editor area; the fit scale shrinks the panel to
+     whatever this box is, so no height cap is needed. */
+  max-height: none;
 }
 .ws-editor-params {
-  flex: none;
-  max-height: 32%;
-  overflow-y: auto;
+  /* The full list owns the editor area when it is toggled open, so it scrolls
+     instead of being clipped to the height it used to share with the face. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 0 10px;
+  padding: 5px 8px;
+}
+.ws-editor-param {
+  height: 18px;
+}
+.ws-editor-param span:first-child,
+.ws-editor-param b {
+  font-size: 10.5px;
 }
 .ws-editor-load {
   flex: none;
@@ -2013,8 +2030,8 @@
 .ws-ins-head {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding-bottom: 12px;
+  gap: 6px;
+  padding-bottom: 5px;
   border-bottom: 1px solid var(--ws-line);
 }
 .ws-ins-head .ws-tint {
@@ -2029,7 +2046,7 @@
   min-width: 0;
 }
 .ws-ins-name {
-  font: 600 15px/1.1 var(--font-ui);
+  font: 600 12.5px/1.1 var(--font-ui);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--ws-paper);
@@ -2069,8 +2086,8 @@
 .ws-ins-card {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px;
+  gap: 3px;
+  padding: 4px 6px;
   border: 1px solid #000;
   border-radius: var(--ws-r-control);
   background: #202021;
@@ -2078,7 +2095,7 @@
 }
 .ws-ins-card h3 {
   margin: 0;
-  font: 600 11px/1 var(--font-ui);
+  font: 600 10px/1 var(--font-ui);
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--ws-muted);
@@ -2111,18 +2128,19 @@
 }
 
 .ws-ins-slots {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px;
 }
 .ws-ins-slot {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) 6px;
+  grid-template-columns: 12px minmax(0, 1fr) 4px;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   width: 100%;
-  height: 28px;
-  padding: 0 8px;
+  min-width: 0;
+  height: 18px;
+  padding: 0 5px;
   border: 1px solid #000;
   border-radius: var(--ws-r-tight);
   background: #161514;
@@ -2146,7 +2164,7 @@
   color: var(--ws-faint);
 }
 .ws-ins-slot-name {
-  font: 500 12px/1 var(--font-ui);
+  font: 500 11px/1 var(--font-ui);
   letter-spacing: 0.01em;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2160,17 +2178,63 @@
   box-shadow: none;
 }
 .ws-ins-note {
-  margin: 0;
-  font: 500 11px/1.45 var(--font-ui);
-  letter-spacing: 0.01em;
-  color: var(--ws-faint);
+  display: none;
 }
 .ws-ins-knobs {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
-  gap: 10px;
+  gap: 2px;
   min-width: 0;
+}
+.ws-ins-knobs .cs-knob {
+  zoom: 0.56;
+}
+/* The channel column has to fit one screen: inserts, sends, channel and the
+   instrument stack all compete for the same height as the plug-in editor. */
+.ws-channel-col {
+  gap: 4px;
+}
+.ws-channel-col .ws-ins-card {
+  gap: 2px;
+  padding: 3px 5px;
+}
+.ws-channel-col .ws-ins-knobs .cs-knob {
+  zoom: 0.5;
+}
+.ws-channel-col .ws-ins-pitch {
+  zoom: 0.7;
+}
+.ws-channel-col .ws-ins-route {
+  gap: 4px;
+  padding: 1px 0;
+}
+.ws-modes {
+  display: flex;
+  gap: 2px;
+}
+.ws-mode {
+  min-width: 44px;
+  height: 26px;
+  padding: 0 8px;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+}
+.ws-mode[aria-pressed="true"] {
+  background: var(--ws-accent-hot);
+  color: #000;
+}
+.ws-ins-read {
+  gap: 4px;
+}
+.ws-ins-route-node {
+  padding: 3px 6px;
+}
+.ws-ins-route {
+  gap: 5px;
+}
+.ws-ins-pitch {
+  gap: 2px;
 }
 .ws-ins-read {
   display: grid;
@@ -2293,6 +2357,7 @@
   padding: 10px 12px;
   border: 1px solid #000;
   background: #161514;
+  overflow-y: auto;
 }
 .ws-editor-param {
   display: grid;
@@ -2336,12 +2401,6 @@
 }
 .ws-editor-load {
   align-self: flex-start;
-}
-.ws-editor-more {
-  align-self: flex-start;
-  height: 28px;
-  padding: 0 12px;
-  font-size: 11px;
 }
 .ws-ins-slot:focus-visible,
 .ws-editor-more:focus-visible {
@@ -3011,7 +3070,6 @@
    not re-clip DSP/OUT at short heights. */
 .ws-ins-card,
 .ws-card,
-.ws-editor-params,
 .ws-browser-detail,
 .ws-head,
 .ws-lane,

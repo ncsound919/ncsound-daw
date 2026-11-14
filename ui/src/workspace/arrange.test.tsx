@@ -110,6 +110,18 @@ beforeEach(() => {
 });
 
 describe("arrange parity", () => {
+  it("keeps the last bar number inside the ruler instead of clipping it", () => {
+    setup();
+
+    const labels = [...document.querySelectorAll(".ws-tick-label")];
+    expect(labels.length).toBeGreaterThan(1);
+
+    // The rightmost label sits on the final tick, where a left-aligned number
+    // runs past the ruler's clip; it flips to the inside edge instead.
+    expect(labels[labels.length - 1].className).toContain("is-end");
+    expect(labels[0].className).not.toContain("is-end");
+  });
+
   it("shows the native tool cluster, functions and loop region", () => {
     setup();
 
@@ -209,6 +221,20 @@ describe("arrange parity", () => {
     );
   });
 
+  it("zooms on a plain wheel and returns to the same window", () => {
+    setup();
+
+    const arrange = document.querySelector(".ws-arrange") as HTMLElement;
+    const read = () => document.querySelector(".ws-zoom-read b")?.textContent;
+    const before = read();
+
+    fireEvent.wheel(arrange, { deltaY: -120, clientX: 400, clientY: 40 });
+    expect(read()).not.toBe(before);
+
+    fireEvent.wheel(arrange, { deltaY: 120, clientX: 400, clientY: 40 });
+    expect(read()).toBe(before);
+  });
+
   it("renders MIDI clips from the arrangement list with their notes", () => {
     render(
       <Workspace
@@ -297,25 +323,25 @@ describe("anchored zoom buttons", () => {
     const expected = zoomWindow(1, 32, 1, "in", 4, 256);
     expect(readout()).toBe(Math.round(expected.visibleBars) + " BARS");
   });
+});
 
-  describe("track headers", () => {
-    it("gives the name row to the name and the second row to the controls", () => {
-      setup();
+describe("track headers", () => {
+  it("gives the name row to the name and the second row to the controls", () => {
+    setup();
 
-      const head = document.querySelector('.ws-head[aria-current="true"]') as HTMLElement;
-      const rows = head.querySelectorAll(":scope .ws-head-main > .ws-head-row");
-      expect(rows.length).toBe(2);
-      expect(rows[0].textContent).toContain("BASS");
-      expect(rows[0].querySelectorAll("button").length).toBe(1);
-      expect(rows[1].querySelectorAll("button").length).toBe(3);
-    });
+    const head = document.querySelector('.ws-head[aria-current="true"]') as HTMLElement;
+    const rows = head.querySelectorAll(":scope .ws-head-main > .ws-head-row");
+    expect(rows.length).toBe(2);
+    expect(rows[0].textContent).toContain("BASS");
+    expect(rows[0].querySelectorAll("button").length).toBe(1);
+    expect(rows[1].querySelectorAll("button").length).toBe(3);
+  });
 
-    it("shows the gain value with the full track label as its title", () => {
-      setup();
+  it("shows the gain value with the full track label as its title", () => {
+    setup();
 
-      const db = document.querySelector('.ws-head[aria-current="true"] .ws-head-db') as HTMLElement;
-      expect(db.textContent).toBe("0.0 dB");
-      expect(db.title).toBe("T2 · 0.0 dB");
-    });
+    const db = document.querySelector('.ws-head[aria-current="true"] .ws-head-db') as HTMLElement;
+    expect(db.textContent).toBe("0.0 dB");
+    expect(db.title).toBe("T2 · 0.0 dB");
   });
 });

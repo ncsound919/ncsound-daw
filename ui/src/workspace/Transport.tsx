@@ -11,7 +11,7 @@ export interface TransportProps {
   onBpm: (bpm: number) => void;
   onLoop: (on: boolean) => void;
   onMetronome: (on: boolean) => void;
-  /** Recording has no bridge route yet; the button stays disabled without it. */
+  /** Starts and stops capture on the armed tracks (two bridge routes). */
   onRecord?: (recording: boolean) => void;
   recording?: boolean;
   /** Global pitch lives in the empty space beside the transport controls. */

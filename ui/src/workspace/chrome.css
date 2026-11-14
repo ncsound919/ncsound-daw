@@ -453,10 +453,10 @@ button.ws-insert {
 }
 
 .ws-head {
-  height: 68px;
+  height: 56px;
   align-items: center;
-  padding: 6px 8px;
-  gap: 6px;
+  padding: 4px 6px;
+  gap: 5px;
 }
 .ws-head-main {
   display: flex;
@@ -478,8 +478,8 @@ button.ws-insert {
   flex: 1 1 auto;
 }
 .ws-head .ws-mini-btn {
-  width: 24px;
-  height: 19px;
+  width: 22px;
+  height: 17px;
   font-size: 10px;
 }
 .ws-head-db {
@@ -533,8 +533,8 @@ button.ws-insert {
 }
 .ws-head-rack {
   flex: none;
-  width: 34px;
-  height: 56px;
+  width: 30px;
+  height: 42px;
   border: 1px solid #000;
   border-radius: 2px;
   background: linear-gradient(180deg, #302d2a, #211f1d);
@@ -547,7 +547,7 @@ button.ws-insert {
   color: var(--ws-paper);
 }
 .ws-lane {
-  height: 68px;
+  height: 56px;
 }
 
 .ws-clip-gain {
