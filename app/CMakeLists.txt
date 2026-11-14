@@ -58,6 +58,11 @@ target_sources(NCMixRackTests PRIVATE
     Source/PluginRegistry.cpp
     # The engine itself, so the mixdown export is covered end to end.
     Source/AudioEngine.cpp
+    Source/AudioEngineDevice.cpp
+    Source/AudioEngineExport.cpp
+    Source/AudioEngineAssets.cpp
+    Source/AudioEngineDemo.cpp
+    Source/AudioEngineTransport.cpp
     Source/PluginHost.cpp
     Source/ExportTests.cpp
     Source/PlaybackResampleTests.cpp
@@ -178,6 +183,11 @@ target_sources(NCSoundHub PRIVATE
     Source/MainComponent.h
     Source/WebViewBridge.cpp
     Source/AudioEngine.cpp
+    Source/AudioEngineDevice.cpp
+    Source/AudioEngineExport.cpp
+    Source/AudioEngineAssets.cpp
+    Source/AudioEngineDemo.cpp
+    Source/AudioEngineTransport.cpp
     Source/AudioEngine.h
     Source/ArrangeView.cpp
     Source/ArrangeView.h

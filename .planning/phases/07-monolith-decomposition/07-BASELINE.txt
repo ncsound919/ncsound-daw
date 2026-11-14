@@ -1,5 +1,5 @@
 digest: 0x1b5398dd4a9f297a
-digest-base-commit: 6804ac9
+digest-base-commit: fb2154d
 AudioEngine.cpp: 5a6c975c31cc949623be98b330c17132ddd11f8b4cfbb4c2628ad3f344e519af
 ArrangeView.cpp: e0c71fe4824a0d5aea093f1417eb908563802671a071ebca1b7f0dabd3a0fb6f
 MainComponent.cpp: c6c1a2cb4d1133216e22686218860f4e06426c3cad7c2453b561f0b48b8dab40

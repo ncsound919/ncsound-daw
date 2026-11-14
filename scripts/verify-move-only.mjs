@@ -150,9 +150,17 @@ function extractDefinitions (text)
 /** Returns the collapsed signature when the text before a `{` is a function
     header, or null for namespaces, types, control flow, aggregates and
     lambdas. */
+/** Comments carry prose like "persistence (JUCE ApplicationProperties)" which
+    would otherwise be parsed as a function name. No signature here contains a
+    string literal, so a plain text strip is safe. */
+function stripComments (s)
+{
+    return s.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+}
+
 function signatureOf (raw)
 {
-    const signature = raw.replace(/\s+/g, ' ').trim();
+    const signature = stripComments(raw).replace(/\s+/g, ' ').trim();
 
     if (signature.length === 0)
         return null;
