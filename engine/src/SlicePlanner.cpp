@@ -179,8 +179,9 @@ std::vector<std::int64_t> detectTransients (const float* const* channelData,
     const auto bins = fftSize / 2;
 
     // Log-spaced bands avoid the frequency-dependent behaviour of a fixed
-    // linear-bin max filter. Band edges are in FFT bins so the detector stays
-    // sample-rate agnostic: low bands cover the bass, high bands the attack.
+    // linear-bin max filter. The edges are in FFT bins, which adds no
+    // sample-rate parameter; the fixed window and hop still set the time and
+    // frequency resolution in samples.
     constexpr std::size_t bandCount = 32;
     std::vector<double> bandPosition (bins, 0.0);
 
@@ -308,7 +309,20 @@ std::vector<std::int64_t> detectTransients (const float* const* channelData,
         std::swap (previous, smoothed);
     }
 
-    const auto maxSpectral = *std::max_element (spectralFlux.begin(), spectralFlux.end());
+    // A partial final window is zero-padded, so its spectral change is an
+    // artifact of the file boundary. Exclude it from normalization; otherwise
+    // one short tail can scale down every real onset in the rest of the file.
+    double maxSpectral = 0.0;
+
+    for (std::size_t f = 0; f < frameCount; ++f)
+    {
+        const auto frameStart = static_cast<std::int64_t> (f) * hop;
+
+        if (frameStart + static_cast<std::int64_t> (analysisWindow) <= numFrames)
+            maxSpectral = std::max (maxSpectral, spectralFlux[f]);
+        else
+            spectralFlux[f] = 0.0;
+    }
 
     if (maxSpectral <= 1e-9)
         return onsets;

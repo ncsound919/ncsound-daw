@@ -223,27 +223,32 @@ void ChopStationProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     }
 }
 
-bool ChopStationProcessor::loadSample (const juce::File& file)
+SamplePtr ChopStationProcessor::decodeSample (const juce::File& file, int chopCount)
 {
-    std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
+    std::unique_ptr<juce::AudioFormatReader> reader;
+
+    {
+        const juce::ScopedLock formatGuard (formatLock);
+        reader.reset (formats.createReaderFor (file));
+    }
 
     if (reader == nullptr || reader->lengthInSamples <= 0)
-        return false;
+        return {};
 
     // Hostile/header-bomb guard: reject before allocating. A malformed header
     // claiming gigabytes must not OOM the host.
     if (reader->lengthInSamples > maxSampleFrames)
-        return false;
+        return {};
 
     if (reader->numChannels <= 0 || reader->numChannels > maxSampleChannels)
-        return false;
+        return {};
 
     const auto numChannels = static_cast<int> (reader->numChannels);
     const auto numSamples = static_cast<int> (reader->lengthInSamples);
 
     // Re-check after downcast: the allocation happens once, here, with known bounds.
     if (numSamples <= 0)
-        return false;
+        return {};
 
     auto data = std::make_shared<SampleData>();
     data->sourceRate = reader->sampleRate;
@@ -260,20 +265,75 @@ bool ChopStationProcessor::loadSample (const juce::File& file)
                                               data->buffer.getNumSamples(),
                                               0.45);
 
-    const auto chopCount = static_cast<int> (apvts.getRawParameterValue ("chops")->load());
-    data->slices = planSlices (data->buffer.getNumSamples(), transients, chopCount);
+    data->slices = planSlices (data->buffer.getNumSamples(), transients,
+                               std::max (1, chopCount));
+    return data;
+}
 
+void ChopStationProcessor::commitSample (SamplePtr data, const juce::File& file)
+{
     holder.current.store (std::move (data));
 
-    sampleFile = file;
+    const juce::ScopedLock lock (metadataLock);
     sampleName = file.getFileNameWithoutExtension();
     activePath = file.getFullPathName();
+}
+
+int ChopStationProcessor::currentChopCount() const
+{
+    if (auto* param = apvts.getRawParameterValue ("chops"))
+        return static_cast<int> (param->load());
+
+    return 8;
+}
+
+bool ChopStationProcessor::loadSample (const juce::File& file)
+{
+    if (loadingSample.load (std::memory_order_acquire))
+        return false;
+
+    auto data = decodeSample (file, currentChopCount());
+
+    if (data == nullptr)
+        return false;
+
+    commitSample (std::move (data), file);
+    return true;
+}
+
+bool ChopStationProcessor::loadSampleAsync (const juce::File& file)
+{
+    if (loadingSample.exchange (true, std::memory_order_acq_rel))
+        return false;
+
+    lastLoadFailed.store (false, std::memory_order_release);
+    const auto chopCount = currentChopCount();
+
+    loadPool.addJob ([this, file, chopCount]
+    {
+        auto data = decodeSample (file, chopCount);
+
+        if (data != nullptr)
+            commitSample (std::move (data), file);
+        else
+            lastLoadFailed.store (true, std::memory_order_release);
+
+        loadingSample.store (false, std::memory_order_release);
+    });
+
     return true;
 }
 
 juce::String ChopStationProcessor::getSampleName() const
 {
+    const juce::ScopedLock lock (metadataLock);
     return sampleName;
+}
+
+juce::String ChopStationProcessor::getSamplePath() const
+{
+    const juce::ScopedLock lock (metadataLock);
+    return activePath;
 }
 
 int ChopStationProcessor::getSliceCount() const
@@ -333,6 +393,9 @@ void ChopStationProcessor::applyPreset (int index)
 
 void ChopStationProcessor::rebuildSlices()
 {
+    if (loadingSample.load (std::memory_order_acquire))
+        return;
+
     const auto current = holder.current.load();
 
     if (current == nullptr || current->buffer.getNumSamples() <= 0)
@@ -359,8 +422,16 @@ void ChopStationProcessor::rebuildSlices()
 void ChopStationProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
-    state.setProperty ("samplePath", activePath, nullptr);
-    state.setProperty ("sampleName", sampleName, nullptr);
+    juce::String savedPath, savedName;
+
+    {
+        const juce::ScopedLock lock (metadataLock);
+        savedPath = activePath;
+        savedName = sampleName;
+    }
+
+    state.setProperty ("samplePath", savedPath, nullptr);
+    state.setProperty ("sampleName", savedName, nullptr);
 
     // Embed the decoded sample as WAV so the preset travels cross-machine.
     // A 30 s stereo cap keeps state blobs bounded; longer samples save path-only.
@@ -370,8 +441,14 @@ void ChopStationProcessor::getStateInformation (juce::MemoryBlock& destData)
             && data->buffer.getNumSamples() <= 30 * 44100 * 2)
         {
             juce::MemoryBlock wav;
+            juce::WavAudioFormat* wavFormat = nullptr;
 
-            if (auto* wavFormat = dynamic_cast<juce::WavAudioFormat*> (formats.findFormatForFileExtension ("wav")))
+            {
+                const juce::ScopedLock formatGuard (formatLock);
+                wavFormat = dynamic_cast<juce::WavAudioFormat*> (formats.findFormatForFileExtension ("wav"));
+            }
+
+            if (wavFormat != nullptr)
             {
                 // The writer takes ownership of the stream (same contract as the
                 // FileOutputStream path). Heap-allocate so writer.reset() frees
@@ -421,8 +498,14 @@ void ChopStationProcessor::setStateInformation (const void* data, int sizeInByte
         if (wav.fromBase64Encoding (embedded) && wav.getSize() > 0)
         {
             auto input = std::make_unique<juce::MemoryInputStream> (wav, false);
+            juce::AudioFormatReader* newReader = nullptr;
 
-            if (auto* reader = formats.createReaderFor (std::move (input)))
+            {
+                const juce::ScopedLock formatGuard (formatLock);
+                newReader = formats.createReaderFor (std::move (input));
+            }
+
+            if (auto* reader = newReader)
             {
                 std::unique_ptr<juce::AudioFormatReader> ownedReader (reader);
 
@@ -448,9 +531,13 @@ void ChopStationProcessor::setStateInformation (const void* data, int sizeInByte
                 const auto chopCount = static_cast<int> (apvts.getRawParameterValue ("chops")->load());
                 sampleData->slices = planSlices (sampleData->buffer.getNumSamples(), transients, chopCount);
                 holder.current.store (std::move (sampleData));
-                sampleName = tree.getProperty ("sampleName").toString();
-                activePath.clear();
-                sampleFile = {};
+
+                {
+                    const juce::ScopedLock lock (metadataLock);
+                    sampleName = tree.getProperty ("sampleName").toString();
+                    activePath.clear();
+                }
+
                 return;
             }
         }

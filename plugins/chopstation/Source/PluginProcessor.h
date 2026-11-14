@@ -80,11 +80,25 @@ public:
     void getStateInformation (juce::MemoryBlock&) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
-    /** Loads an audio file, detects onsets and rebuilds the chop map. */
+    /** Loads an audio file, detects onsets and rebuilds the chop map.
+
+        This is the synchronous entry point used by tests and state restoration.
+        The editor uses loadSampleAsync so large files do not block the message
+        thread.
+    */
     bool loadSample (const juce::File& file);
+
+    /** Starts decoding and onset analysis on a worker thread. Returns false if
+        another load is already running. The existing sample remains playable
+        until the new one is committed.
+    */
+    bool loadSampleAsync (const juce::File& file);
+    bool isLoadingSample() const noexcept { return loadingSample.load (std::memory_order_acquire); }
+    bool didLastLoadFail() const noexcept { return lastLoadFailed.load (std::memory_order_acquire); }
+
     juce::String getSampleName() const;
     int getSliceCount() const;
-    juce::String getSamplePath() const { return activePath; }
+    juce::String getSamplePath() const;
 
     static constexpr int64_t maxSampleFrames = 3 * 44100 * 60; // 3 minutes-ish ceiling
     static constexpr int maxSampleChannels = 2;
@@ -99,15 +113,21 @@ public:
 private:
     juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     void rebuildSlices();
+    SamplePtr decodeSample (const juce::File& file, int chopCount);
+    void commitSample (SamplePtr data, const juce::File& file);
+    int currentChopCount() const;
 
     SampleHolder holder;
     juce::Synthesiser synth;
     juce::AudioFormatManager formats;
 
     double currentSampleRate = 44100.0;
+    mutable juce::CriticalSection metadataLock;
+    juce::CriticalSection formatLock;
     juce::String sampleName;
-    juce::File sampleFile;
     juce::String activePath;
+    std::atomic<bool> loadingSample { false };
+    std::atomic<bool> lastLoadFailed { false };
 
     // Simple state-variable filter, one per channel.
     struct Svf
@@ -139,6 +159,10 @@ private:
     int delayWrite = 0;
     juce::SmoothedValue<float> gainSmoother;
     juce::Reverb reverb;
+
+    // Declared last so its destructor waits for an in-flight decode before the
+    // members it uses are destroyed.
+    juce::ThreadPool loadPool { 1 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChopStationProcessor)
 };

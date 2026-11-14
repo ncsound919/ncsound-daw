@@ -97,6 +97,37 @@ TEST_CASE ("a transient at sample zero is not lost")
     REQUIRE (onsets.front() == 0);
 }
 
+TEST_CASE ("a partial final FFT window does not suppress earlier onsets")
+{
+    constexpr std::int64_t frames = 32000; // exactly 125 analysis hops
+    std::vector<float> audio (static_cast<size_t> (frames + 1), 0.0f);
+
+    for (std::int64_t i = 0; i < 64; ++i)
+    {
+        audio[static_cast<size_t> (5000 + i)] = 0.9f;
+        audio[static_cast<size_t> (20000 + i)] = 0.04f;
+    }
+
+    // One huge sample in the incomplete final window used to dominate the
+    // global normalization and hide the quiet but real hit.
+    audio.back() = 1000.0f;
+
+    const float* channels[] = { audio.data() };
+    const auto exact = nc::detectTransients (channels, 1, frames, 0.45);
+    const auto withTail = nc::detectTransients (channels, 1, frames + 1, 0.45);
+
+    const auto near = [] (const std::vector<std::int64_t>& onsets, std::int64_t expected)
+    {
+        return std::any_of (onsets.begin(), onsets.end(), [expected] (auto onset)
+                            { return std::llabs (onset - expected) <= 512; });
+    };
+
+    REQUIRE (near (exact, 5000));
+    REQUIRE (near (exact, 20000));
+    REQUIRE (near (withTail, 5000));
+    REQUIRE (near (withTail, 20000));
+}
+
 TEST_CASE ("vibrato does not become a stream of false onsets")
 {
     constexpr std::int64_t frames = 88200;

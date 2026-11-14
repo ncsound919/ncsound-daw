@@ -53,6 +53,26 @@ TEST_CASE ("Chop Station rejects oversized/header-bomb samples before allocating
     REQUIRE_FALSE (processor.getSampleName().isEmpty());
 }
 
+TEST_CASE ("Chop Station loads and analyzes samples in the background", "[chopstation]")
+{
+    nc::ChopStationProcessor processor;
+    juce::AudioBuffer<float> buffer (1, 44100);
+
+    for (int i = 0; i < buffer.getNumSamples(); ++i)
+        buffer.setSample (0, i, 0.4f * std::sin (2.0 * juce::MathConstants<double>::pi * 220.0 * i / 44100.0));
+
+    const auto file = writeTestWav (buffer, 44100.0);
+    REQUIRE (processor.loadSampleAsync (file));
+
+    for (int i = 0; i < 1000 && processor.isLoadingSample(); ++i)
+        juce::Thread::sleep (2);
+
+    REQUIRE_FALSE (processor.isLoadingSample());
+    REQUIRE_FALSE (processor.didLastLoadFail());
+    REQUIRE (processor.getSliceCount() > 0);
+    REQUIRE_FALSE (processor.getSampleName().isEmpty());
+}
+
 TEST_CASE ("Chop Station state round-trips embedded sample without the file", "[chopstation]")
 {
     nc::ChopStationProcessor processor;

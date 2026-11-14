@@ -31,7 +31,6 @@ struct ExpectedNote
 {
     int midi = 60;
     double startSeconds = 0.0;
-    double endSeconds = 0.0;
 };
 
 struct VoiceCase
@@ -338,34 +337,34 @@ std::vector<VoiceCase> voiceCorpus()
 
     auto steady = makeVoiceCase ("steady A4", 0.8);
     addVoiceNote (steady.audio, 0.0, 0.75, 440.0, 0.35f, 0.0, 0.0);
-    steady.truth = { { 69, 0.0, 0.75 } };
+    steady.truth = { { 69, 0.0 } };
     cases.push_back (std::move (steady));
 
     auto twoNotes = makeVoiceCase ("A4 then C5", 1.3);
     addVoiceNote (twoNotes.audio, 0.0, 0.45, 440.0, 0.35f, 0.0, 0.0);
     addVoiceNote (twoNotes.audio, 0.60, 0.45, 523.251, 0.35f, 0.0, 0.0);
-    twoNotes.truth = { { 69, 0.0, 0.45 }, { 72, 0.60, 1.05 } };
+    twoNotes.truth = { { 69, 0.0 }, { 72, 0.60 } };
     cases.push_back (std::move (twoNotes));
 
     auto repeat = makeVoiceCase ("repeated A4", 1.2);
     addVoiceNote (repeat.audio, 0.0, 0.42, 440.0, 0.35f, 0.0, 0.0);
     addVoiceNote (repeat.audio, 0.58, 0.42, 440.0, 0.35f, 0.0, 0.0);
-    repeat.truth = { { 69, 0.0, 0.42 }, { 69, 0.58, 1.0 } };
+    repeat.truth = { { 69, 0.0 }, { 69, 0.58 } };
     cases.push_back (std::move (repeat));
 
     auto vibrato = makeVoiceCase ("vibrato A4", 1.0);
     addVoiceNote (vibrato.audio, 0.0, 0.9, 440.0, 0.35f, 0.0, 35.0);
-    vibrato.truth = { { 69, 0.0, 0.9 } };
+    vibrato.truth = { { 69, 0.0 } };
     cases.push_back (std::move (vibrato));
 
     auto quiet = makeVoiceCase ("quiet A4", 0.8);
     addVoiceNote (quiet.audio, 0.0, 0.7, 440.0, 0.05f, 0.0, 0.0);
-    quiet.truth = { { 69, 0.0, 0.7 } };
+    quiet.truth = { { 69, 0.0 } };
     cases.push_back (std::move (quiet));
 
     auto harmonic = makeVoiceCase ("strong second harmonic", 0.8);
     addVoiceNote (harmonic.audio, 0.0, 0.7, 220.0, 0.35f, 0.8, 0.0);
-    harmonic.truth = { { 57, 0.0, 0.7 } };
+    harmonic.truth = { { 57, 0.0 } };
     cases.push_back (std::move (harmonic));
 
     auto consonant = makeVoiceCase ("same pitch with consonant", 1.2);
@@ -375,7 +374,7 @@ std::vector<VoiceCase> voiceCorpus()
          i < static_cast<int> (0.50 * sampleRate); ++i)
         consonant.audio[static_cast<std::size_t> (i)] *= 0.15f;
 
-    consonant.truth = { { 69, 0.0, 0.43 }, { 69, 0.50, 1.0 } };
+    consonant.truth = { { 69, 0.0 }, { 69, 0.50 } };
     cases.push_back (std::move (consonant));
 
     return cases;

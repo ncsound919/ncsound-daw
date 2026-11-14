@@ -23,6 +23,8 @@ struct V2MNote
     double startBeat = 0.0;
     double lengthBeats = 0.25;
     int velocity = 100;
+    // Mean 1 - YIN CMND of the selected candidates across the note. It is a
+    // bounded tracking signal, not a calibrated probability.
     float confidence = 0.0f;
 };
 

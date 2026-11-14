@@ -118,6 +118,21 @@ void ChopStationEditor::timerCallback()
 
 void ChopStationEditor::refreshLabels()
 {
+    if (processor.isLoadingSample())
+    {
+        loadButton.setEnabled (false);
+        statusLabel.setText ("Analyzing sample...", juce::dontSendNotification);
+        return;
+    }
+
+    loadButton.setEnabled (true);
+
+    if (processor.didLastLoadFail())
+    {
+        statusLabel.setText ("Could not analyze that sample", juce::dontSendNotification);
+        return;
+    }
+
     const auto name = processor.getSampleName();
     const auto slices = processor.getSliceCount();
 
@@ -139,7 +154,7 @@ void ChopStationEditor::chooseFile()
 
                               if (file.existsAsFile())
                               {
-                                  processor.loadSample (file);
+                                  processor.loadSampleAsync (file);
                                   refreshLabels();
                               }
                           });
