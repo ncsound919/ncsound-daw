@@ -343,8 +343,15 @@ nc::engine::ClipState AudioEngine::voiceToMidiClip (const juce::File& file, int 
     clip.startBar = 1.0;
     clip.lengthBars = 1.0 + (notes.back().startBeat + notes.back().lengthBeats) / nc::engine::beatsPerBarMidi;
     for (auto& n : notes)
+    {
         clip.notes.push_back ({n.startBeat, n.lengthBeats, n.midiNote, n.velocity, 1});
+
+        for (const auto& bend : n.bends)
+            clip.bends.push_back ({ n.startBeat + bend.beatOffset, 1, bend.value });
+    }
+
     nc::engine::sanitizeNotes (clip.notes, nc::engine::clipLengthBeats (clip.lengthBars));
+    nc::engine::sanitizeMidiBends (clip.bends, nc::engine::clipLengthBeats (clip.lengthBars));
     return clip;
 }
 

@@ -7,6 +7,7 @@
 #include <juce_dsp/juce_dsp.h>
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -115,6 +116,7 @@ private:
     void rebuildSlices();
     SamplePtr decodeSample (const juce::File& file, int chopCount);
     void commitSample (SamplePtr data, const juce::File& file);
+    void cancelPendingLoad() noexcept;
     int currentChopCount() const;
 
     SampleHolder holder;
@@ -124,10 +126,12 @@ private:
     double currentSampleRate = 44100.0;
     mutable juce::CriticalSection metadataLock;
     juce::CriticalSection formatLock;
+    juce::CriticalSection loadStateLock;
     juce::String sampleName;
     juce::String activePath;
     std::atomic<bool> loadingSample { false };
     std::atomic<bool> lastLoadFailed { false };
+    std::atomic<std::uint64_t> loadGeneration { 0 };
 
     // Simple state-variable filter, one per channel.
     struct Svf

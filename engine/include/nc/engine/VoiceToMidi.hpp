@@ -2,6 +2,8 @@
 
 // Monophonic voice-to-MIDI: FFT-accelerated YIN candidates, a small Viterbi
 // tracker over voiced/unvoiced states, then hysteresis-based note segmentation.
+// Each note carries an optional 14-bit pitch-bend trace using the configured
+// range (default +/- 2 semitones).
 //
 // The earlier implementation took the first YIN minimum below a fixed
 // threshold, which turned one noisy frame into an octave error or a new note.
@@ -13,10 +15,19 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <utility>
 #include <vector>
 
 namespace nc::engine
 {
+/** One pitch-bend point relative to its note's start. value is the MIDI
+    14-bit wheel position (8192 == centre), using the configured bend range. */
+struct V2MBend
+{
+    double beatOffset = 0.0;
+    int value = 8192;
+};
+
 struct V2MNote
 {
     int midiNote = 60;
@@ -26,6 +37,7 @@ struct V2MNote
     // Mean 1 - YIN CMND of the selected candidates across the note. It is a
     // bounded tracking signal, not a calibrated probability.
     float confidence = 0.0f;
+    std::vector<V2MBend> bends;
 };
 
 struct V2MConfig
@@ -46,6 +58,7 @@ struct V2MConfig
     float minNoteSeconds = 0.04f;
     float gapBridgeSeconds = 0.035f;
     float noteHysteresis = 0.65f; // semitones before a note change is considered
+    float pitchBendRangeSemitones = 2.0f; // 14-bit wheel range; standard +/- 2 st
 };
 
 namespace detail
@@ -437,8 +450,39 @@ inline std::vector<V2MNote> voiceToMidi (const float* mono, std::size_t frames, 
     int pendingNote = -1;
     int pendingCount = 0;
     double pendingStart = 0.0;
+    double pendingRmsSum = 0.0;
+    int pendingRmsCount = 0;
     double confidenceSum = 0.0;
     int confidenceCount = 0;
+    double pendingConfidenceSum = 0.0;
+    int pendingConfidenceCount = 0;
+    std::vector<std::pair<double, double>> currentPitch;
+    std::vector<std::pair<double, double>> pendingPitch;
+
+    const auto clearPending = [&]
+    {
+        pendingNote = -1;
+        pendingCount = 0;
+        pendingStart = 0.0;
+        pendingRmsSum = 0.0;
+        pendingRmsCount = 0;
+        pendingConfidenceSum = 0.0;
+        pendingConfidenceCount = 0;
+        pendingPitch.clear();
+    };
+
+    const auto absorbPending = [&]
+    {
+        if (pendingCount == 0)
+            return;
+
+        rmsSum += pendingRmsSum;
+        rmsCount += pendingRmsCount;
+        confidenceSum += pendingConfidenceSum;
+        confidenceCount += pendingConfidenceCount;
+        currentPitch.insert (currentPitch.end(), pendingPitch.begin(), pendingPitch.end());
+        clearPending();
+    };
 
     const auto closeNote = [&] (double endSeconds)
     {
@@ -454,24 +498,66 @@ inline std::vector<V2MNote> voiceToMidi (const float* mono, std::size_t frames, 
                                                                            * std::min (1.0, meanRms / 0.2))),
                                               1, 127);
             const auto meanConfidence = confidenceCount > 0 ? confidenceSum / confidenceCount : 0.0;
+            const auto lengthBeats = std::max (0.05, duration * bpm / 60.0);
 
             V2MNote note;
             note.midiNote = currentNote;
             note.startBeat = currentStart * bpm / 60.0;
-            note.lengthBeats = std::max (0.05, duration * bpm / 60.0);
+            note.lengthBeats = lengthBeats;
             note.velocity = velocity;
             note.confidence = static_cast<float> (std::clamp (meanConfidence, 0.0, 1.0));
+
+            const auto bendRange = std::max (0.01, static_cast<double> (cfg.pitchBendRangeSemitones));
+            std::vector<V2MBend> bends;
+
+            const auto appendBend = [&] (double beatOffset, int value)
+            {
+                const auto offset = std::clamp (beatOffset, 0.0, lengthBeats);
+                const auto clampedValue = std::clamp (value, 1, 16383);
+
+                if (! bends.empty() && std::abs (offset - bends.back().beatOffset) < 1e-9)
+                    bends.back().value = clampedValue;
+                else
+                    bends.push_back ({ offset, clampedValue });
+            };
+
+            if (currentPitch.empty())
+            {
+                appendBend (0.0, 8192);
+            }
+            else
+            {
+                if (currentPitch.front().first > currentStart + 1e-9)
+                    appendBend (0.0, 8192);
+
+                for (const auto& point : currentPitch)
+                {
+                    if (point.first < currentStart - 1e-9 || point.first > endSeconds + 1e-9)
+                        continue;
+
+                    const auto normalized = std::clamp ((point.second - currentNote) / bendRange,
+                                                        -1.0, 1.0);
+                    const auto value = 8192 + static_cast<int> (std::lround (normalized * 8191.0));
+                    appendBend ((point.first - currentStart) * bpm / 60.0, value);
+                }
+            }
+
+            // Return the wheel to centre at the note end so the next note does
+            // not inherit this note's last bend.
+            appendBend (lengthBeats, 8192);
+            note.bends = std::move (bends);
             out.push_back (note);
         }
 
         currentNote = -1;
-        pendingNote = -1;
-        pendingCount = 0;
+        currentStart = 0.0;
+        currentPitch.clear();
         rmsSum = 0.0;
         rmsCount = 0;
         confidenceSum = 0.0;
         confidenceCount = 0;
         gapFrames = 0;
+        clearPending();
     };
 
     for (std::size_t f = 0; f < frameCount; ++f)
@@ -491,6 +577,8 @@ inline std::vector<V2MNote> voiceToMidi (const float* mono, std::size_t frames, 
                 rmsCount = 1;
                 confidenceSum = selectedConfidence[f];
                 confidenceCount = 1;
+                currentPitch.clear();
+                currentPitch.push_back ({ times[f], midi });
                 gapFrames = 0;
                 continue;
             }
@@ -499,47 +587,64 @@ inline std::vector<V2MNote> voiceToMidi (const float* mono, std::size_t frames, 
 
             if (distance <= hysteresis)
             {
-                pendingNote = -1;
-                pendingCount = 0;
+                // A pending pitch excursion that came back to the current note
+                // was a glitch, not a new note, so keep its statistics.
+                absorbPending();
                 gapFrames = 0;
                 lastVoiced = times[f];
                 rmsSum += rms[f];
                 ++rmsCount;
                 confidenceSum += selectedConfidence[f];
                 ++confidenceCount;
+                currentPitch.push_back ({ times[f], midi });
                 continue;
             }
 
             if (note == pendingNote)
+            {
                 ++pendingCount;
+            }
             else
             {
+                // If the previous pending pitch never reached two frames, it
+                // belongs to the current note rather than the next one.
+                absorbPending();
                 pendingNote = note;
                 pendingCount = 1;
                 pendingStart = times[f];
+                pendingRmsSum = 0.0;
+                pendingRmsCount = 0;
+                pendingConfidenceSum = 0.0;
+                pendingConfidenceCount = 0;
+                pendingPitch.clear();
             }
+
+            pendingRmsSum += rms[f];
+            ++pendingRmsCount;
+            pendingConfidenceSum += selectedConfidence[f];
+            ++pendingConfidenceCount;
+            pendingPitch.push_back ({ times[f], midi });
+            lastVoiced = times[f];
 
             if (pendingCount >= 2)
             {
+                const auto nextRmsSum = pendingRmsSum;
+                const auto nextRmsCount = pendingRmsCount;
+                const auto nextConfidenceSum = pendingConfidenceSum;
+                const auto nextConfidenceCount = pendingConfidenceCount;
+                auto nextPitch = std::move (pendingPitch);
+
                 const auto end = std::max (currentStart, pendingStart);
                 closeNote (end);
                 currentNote = note;
                 currentStart = pendingStart;
                 lastVoiced = times[f];
-                rmsSum = rms[f];
-                rmsCount = 1;
-                confidenceSum = selectedConfidence[f];
-                confidenceCount = 1;
+                rmsSum = nextRmsSum;
+                rmsCount = nextRmsCount;
+                confidenceSum = nextConfidenceSum;
+                confidenceCount = nextConfidenceCount;
+                currentPitch = std::move (nextPitch);
                 gapFrames = 0;
-            }
-            else
-            {
-                // Do not let one frame of vibrato or a transient start a note.
-                lastVoiced = times[f];
-                rmsSum += rms[f];
-                ++rmsCount;
-                confidenceSum += selectedConfidence[f];
-                ++confidenceCount;
             }
         }
         else
@@ -547,6 +652,9 @@ inline std::vector<V2MNote> voiceToMidi (const float* mono, std::size_t frames, 
             if (currentNote < 0)
                 continue;
 
+            // A single unconfirmed pitch frame still belongs to the note that
+            // was sounding before the gap.
+            absorbPending();
             ++gapFrames;
 
             if (static_cast<double> (gapFrames) * hopSeconds > gapBridgeSeconds)
@@ -557,7 +665,10 @@ inline std::vector<V2MNote> voiceToMidi (const float* mono, std::size_t frames, 
     }
 
     if (currentNote >= 0)
+    {
+        absorbPending();
         closeNote (std::min (times.back() + hopSeconds, static_cast<double> (frames) / sampleRate));
+    }
 
     return out;
 }

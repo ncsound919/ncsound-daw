@@ -122,6 +122,51 @@ TEST_CASE ("a strong second harmonic does not double the octave", "[voicetomidi]
     REQUIRE (notes.front().midiNote == 57);
 }
 
+TEST_CASE ("pending pitch frames do not inflate the previous note", "[voicetomidi]")
+{
+    Signal joined (0.0);
+    append (joined, tone (0.45, 440.0, 0.03));
+    append (joined, tone (0.45, 523.251, 0.9));
+
+    const auto notes = transcribe (joined);
+    const auto isolated = transcribe (tone (0.45, 440.0, 0.03));
+
+    REQUIRE (isolated.size() == 1);
+    REQUIRE (notes.size() >= 2);
+    REQUIRE (notes[0].midiNote == 69);
+    REQUIRE (notes[1].midiNote == 72);
+    CAPTURE (notes[0].velocity, isolated[0].velocity,
+             notes[0].confidence, isolated[0].confidence);
+    REQUIRE (notes[0].velocity <= isolated[0].velocity + 2);
+    REQUIRE (notes[0].confidence <= isolated[0].confidence + 0.02f);
+}
+
+TEST_CASE ("pitch bends follow vibrato and return to centre", "[voicetomidi]")
+{
+    const auto notes = transcribe (tone (0.8, 440.0, 0.35, 0.0, 50.0, 5.5));
+
+    REQUIRE (notes.size() == 1);
+    const auto& bends = notes.front().bends;
+    REQUIRE (bends.size() >= 3);
+
+    auto lowest = 8192;
+    auto highest = 8192;
+
+    for (const auto& bend : bends)
+    {
+        REQUIRE (bend.beatOffset >= 0.0);
+        REQUIRE (bend.beatOffset <= notes.front().lengthBeats + 1e-9);
+        REQUIRE (bend.value >= 1);
+        REQUIRE (bend.value <= 16383);
+        lowest = std::min (lowest, bend.value);
+        highest = std::max (highest, bend.value);
+    }
+
+    REQUIRE (lowest < 8192);
+    REQUIRE (highest > 8192);
+    REQUIRE (bends.back().value == 8192);
+}
+
 TEST_CASE ("a short silent gap is bridged, a long one is not", "[voicetomidi]")
 {
     Signal shortGap (0.0);

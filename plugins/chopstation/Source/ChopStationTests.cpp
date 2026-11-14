@@ -6,11 +6,12 @@
 
 namespace
 {
-juce::File writeTestWav (juce::AudioBuffer<float>& buffer, double sampleRate)
+juce::File writeTestWav (juce::AudioBuffer<float>& buffer, double sampleRate,
+                        const juce::String& name = "test")
 {
     const auto folder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("chopstation-test");
     folder.createDirectory();
-    const auto file = folder.getChildFile ("test.wav");
+    const auto file = folder.getChildFile (name + ".wav");
     file.deleteFile();
 
     juce::WavAudioFormat wav;
@@ -71,6 +72,39 @@ TEST_CASE ("Chop Station loads and analyzes samples in the background", "[chopst
     REQUIRE_FALSE (processor.didLastLoadFail());
     REQUIRE (processor.getSliceCount() > 0);
     REQUIRE_FALSE (processor.getSampleName().isEmpty());
+}
+
+TEST_CASE ("Chop Station restore cancels an in-flight background load", "[chopstation]")
+{
+    nc::ChopStationProcessor processor;
+    juce::AudioBuffer<float> restoredBuffer (1, 44100);
+
+    for (int i = 0; i < restoredBuffer.getNumSamples(); ++i)
+        restoredBuffer.setSample (0, i, 0.3f * std::sin (2.0 * juce::MathConstants<double>::pi * 220.0 * i / 44100.0));
+
+    const auto restoredFile = writeTestWav (restoredBuffer, 44100.0, "restored");
+    REQUIRE (processor.loadSample (restoredFile));
+
+    juce::MemoryBlock state;
+    processor.getStateInformation (state);
+    REQUIRE (state.getSize() > 0);
+
+    juce::AudioBuffer<float> pendingBuffer (1, 44100 * 20);
+
+    for (int i = 0; i < pendingBuffer.getNumSamples(); ++i)
+        pendingBuffer.setSample (0, i, 0.2f * std::sin (2.0 * juce::MathConstants<double>::pi * 330.0 * i / 44100.0));
+
+    const auto pendingFile = writeTestWav (pendingBuffer, 44100.0, "pending");
+    REQUIRE (processor.loadSampleAsync (pendingFile));
+    REQUIRE (processor.isLoadingSample());
+
+    processor.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
+
+    for (int i = 0; i < 1000 && processor.isLoadingSample(); ++i)
+        juce::Thread::sleep (2);
+
+    REQUIRE_FALSE (processor.isLoadingSample());
+    REQUIRE (processor.getSampleName() == "restored");
 }
 
 TEST_CASE ("Chop Station state round-trips embedded sample without the file", "[chopstation]")

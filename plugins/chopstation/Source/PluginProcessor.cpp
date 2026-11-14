@@ -287,31 +287,58 @@ int ChopStationProcessor::currentChopCount() const
     return 8;
 }
 
+void ChopStationProcessor::cancelPendingLoad() noexcept
+{
+    const juce::ScopedLock lock (loadStateLock);
+    ++loadGeneration;
+    loadingSample.store (false, std::memory_order_release);
+}
+
 bool ChopStationProcessor::loadSample (const juce::File& file)
 {
-    if (loadingSample.load (std::memory_order_acquire))
-        return false;
+    // A synchronous restore supersedes any worker that is still decoding.
+    cancelPendingLoad();
 
     auto data = decodeSample (file, currentChopCount());
 
     if (data == nullptr)
+    {
+        lastLoadFailed.store (true, std::memory_order_release);
         return false;
+    }
 
     commitSample (std::move (data), file);
+    lastLoadFailed.store (false, std::memory_order_release);
     return true;
 }
 
 bool ChopStationProcessor::loadSampleAsync (const juce::File& file)
 {
-    if (loadingSample.exchange (true, std::memory_order_acq_rel))
-        return false;
+    std::uint64_t generation = 0;
+
+    {
+        const juce::ScopedLock lock (loadStateLock);
+
+        if (loadingSample.load (std::memory_order_acquire))
+            return false;
+
+        loadingSample.store (true, std::memory_order_release);
+        generation = ++loadGeneration;
+    }
 
     lastLoadFailed.store (false, std::memory_order_release);
     const auto chopCount = currentChopCount();
 
-    loadPool.addJob ([this, file, chopCount]
+    loadPool.addJob ([this, file, chopCount, generation]
     {
         auto data = decodeSample (file, chopCount);
+
+        // A project restore or synchronous load may have superseded this job
+        // while it was decoding. Only the newest generation may commit.
+        const juce::ScopedLock lock (loadStateLock);
+
+        if (generation != loadGeneration.load (std::memory_order_acquire))
+            return;
 
         if (data != nullptr)
             commitSample (std::move (data), file);
@@ -486,6 +513,9 @@ void ChopStationProcessor::setStateInformation (const void* data, int sizeInByte
     if (! tree.isValid())
         return;
 
+    // State restoration is authoritative: stop an older worker from
+    // committing its sample after the restored one is installed.
+    cancelPendingLoad();
     apvts.replaceState (tree);
 
     // Embedded sample wins: decode without touching the filesystem.
