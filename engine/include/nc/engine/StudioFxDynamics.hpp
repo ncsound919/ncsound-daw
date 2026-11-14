@@ -787,4 +787,142 @@ private:
     PeakMeter inputMeter;
 };
 
+/** Vocal rider: rides the programme into a target level so later dynamics see a
+    consistent performance. The level is programme RMS; the catalog calls the
+    target "LUFS", so the module works in that same dB unit over an RMS detector
+    rather than running a full BS.1770 loudness measurement per sample. */
+class VocalRiderModule final : public StudioFxModule
+{
+public:
+    explicit VocalRiderModule (float sampleRate) noexcept
+        : fs (sampleRate)
+        , rmsCoeff (static_cast<float> (std::exp (-1.0 / (0.3 * static_cast<double> (sampleRate)))))
+    {
+    }
+
+    const char* kind() const noexcept override { return "VOCAL_RIDER"; }
+    float gainReductionDb() const noexcept override { return -appliedDb; }
+
+    void configure (const FxSlot& slot) override
+    {
+        enabled = slot.enabled;
+        targetDb = slotValue (slot, "targetLufs");
+        maxBoostDb = slotValue (slot, "maxGainDb");
+        maxCutDb = slotValue (slot, "minGainDb");
+        const float sensitivity = std::min (std::max (slotValue (slot, "sensitivity"), 0.0f), 1.0f);
+        // A sensitive rider moves faster: 120 ms of smoothing at 0, 12 ms at 1.
+        const float ms = 120.0f - 108.0f * sensitivity;
+        attackCoeff = dynCoeff (ms, fs);
+        releaseCoeff = dynCoeff (ms * 3.0f, fs);
+    }
+
+    void processSampleInto (float inL, float inR, float* out) noexcept override
+    {
+        if (! enabled)
+        {
+            out[0] = inL;
+            out[1] = inR;
+            return;
+        }
+        inputMeter.update (inL, inR);
+        const float mono = (inL + inR) * 0.5f;
+        rms = rms + (1.0f - rmsCoeff) * (mono * mono - rms);
+        const float level = std::sqrt (std::max (rms, 0.0f));
+        const float desired = level > 1e-6f
+                                  ? std::min (std::max (targetDb - levelToDb (level), maxCutDb), maxBoostDb)
+                                  : 0.0f;
+        const float coeff = desired < appliedDb ? attackCoeff : releaseCoeff;
+        appliedDb = desired + coeff * (appliedDb - desired);
+        const float gain = dbToLinear (appliedDb);
+        out[0] = inL * gain;
+        out[1] = inR * gain;
+    }
+
+    void reset() noexcept override
+    {
+        rms = 0.0f;
+        appliedDb = 0.0f;
+        inputMeter.reset();
+    }
+
+private:
+    float fs;
+    float rmsCoeff;
+    float targetDb = -18.0f, maxBoostDb = 5.0f, maxCutDb = -5.0f;
+    float attackCoeff = 0.99f, releaseCoeff = 0.999f;
+    float rms = 0.0f, appliedDb = 0.0f;
+    PeakMeter inputMeter;
+};
+
+/** Resonance smoother: a dynamic, narrow notch on a harsh formant. A +12 dB
+    peaking filter monitors the band; how far that boosted band sits over the
+    threshold drives a peaking cut of up to `depthDb`, crossfaded in so the cut
+    never steps. Unlike a static EQ it only takes the band while it is loud. */
+class ResonanceSmootherModule final : public StudioFxModule
+{
+public:
+    explicit ResonanceSmootherModule (float sampleRate) noexcept
+        : bandL (sampleRate)
+        , bandR (sampleRate)
+        , notchL (sampleRate)
+        , notchR (sampleRate)
+        , detector (sampleRate, 20.0f)
+        , amountCoeff (dynCoeff (8.0f, sampleRate))
+    {
+    }
+
+    const char* kind() const noexcept override { return "RESONANCE_SMOOTHER"; }
+    float gainReductionDb() const noexcept override { return amount * depthDb; }
+
+    void configure (const FxSlot& slot) override
+    {
+        enabled = slot.enabled;
+        thresholdDb = slotValue (slot, "thresholdDb");
+        depthDb = slotValue (slot, "depthDb");
+        const float freq = slotValue (slot, "frequencyHz");
+        const float q = std::max (slotValue (slot, "qFactor"), 0.1f);
+        bandL.setPeaking (freq, 12.0f, q);
+        bandR.setPeaking (freq, 12.0f, q);
+        notchL.setPeaking (freq, -depthDb, q);
+        notchR.setPeaking (freq, -depthDb, q);
+    }
+
+    void processSampleInto (float inL, float inR, float* out) noexcept override
+    {
+        if (! enabled)
+        {
+            out[0] = inL;
+            out[1] = inR;
+            return;
+        }
+        const float mono = (inL + inR) * 0.5f;
+        const float band = detector.update (bandL.process (mono));
+        const float over = std::max (levelToDb (band) - thresholdDb, 0.0f);
+        // The monitor sits 12 dB above the input band, so a 12 dB overshoot is full depth.
+        const float target = std::min (over / 12.0f, 1.0f);
+        amount = target + amountCoeff * (amount - target);
+        const float notchedL = notchL.process (inL);
+        const float notchedR = notchR.process (inR);
+        out[0] = inL + (notchedL - inL) * amount;
+        out[1] = inR + (notchedR - inR) * amount;
+    }
+
+    void reset() noexcept override
+    {
+        bandL.reset();
+        bandR.reset();
+        notchL.reset();
+        notchR.reset();
+        detector.reset();
+        amount = 0.0f;
+    }
+
+private:
+    Biquad bandL, bandR, notchL, notchR;
+    PeakEnvelope detector;
+    float thresholdDb = -20.0f, depthDb = 6.0f;
+    float amount = 0.0f;
+    float amountCoeff;
+};
+
 } // namespace nc::engine::studiofx

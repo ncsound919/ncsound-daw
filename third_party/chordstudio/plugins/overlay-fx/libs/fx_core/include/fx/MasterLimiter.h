@@ -156,8 +156,15 @@ namespace fx
                     {
                         float acc = 0.0f;
                         const float* k = kernel + p * detectTaps;
+                        // Rolling index instead of (histPos - t + detectTaps)
+                        // % detectTaps: the modulo sat in the innermost loop,
+                        // one integer division per tap per phase per channel.
+                        int idx = histPos;
                         for (int t = 0; t < detectTaps; ++t)
-                            acc += h[(size_t) ((histPos - t + detectTaps) % detectTaps)] * k[t];
+                        {
+                            acc += h[(size_t) idx] * k[t];
+                            idx = idx == 0 ? detectTaps - 1 : idx - 1;
+                        }
                         peak = std::max (peak, std::abs (acc));
                     }
                     need[c] = peak > ceiling ? (double) ceiling / (double) peak : 1.0;
@@ -194,7 +201,12 @@ namespace fx
                 r[i] = delay[1][(size_t) rd] * (float) g[1];
                 const double gmin = std::min (g[0], g[1]);
                 minGain = std::min (minGain, (float) gmin);
-                grAvg = -20.0 * std::log10 (std::max (1.0e-6, gmin)) * (1.0 - grAvgCoef) + grAvg * grAvgCoef;
+                // The dB conversion only contributes when gain was actually
+                // reduced; gmin is capped at 1.0 above, so at unity the log
+                // term is zero and this is the same update without the log.
+                grAvg *= grAvgCoef;
+                if (gmin < 1.0)
+                    grAvg += -20.0 * std::log10 (std::max (1.0e-6, gmin)) * (1.0 - grAvgCoef);
                 ++step;
             }
 

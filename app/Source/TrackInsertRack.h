@@ -8,31 +8,40 @@
 
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
 namespace nc
 {
-/** Four serial insert slots per track plus the master slot.
+/** Eight serial insert slots per track plus the master slot.
 
     The message thread owns every InsertProcessor. The audio thread only sees
-    raw pointers published through atomics. Replaced instances are kept in
-    retiredOwned until the callback is no longer running, so no plugin is
-    destroyed underneath processBlock().
+    raw pointers published through atomics. Replaced instances are retired with
+    the block counter they were retired at and freed only once the callback has
+    begun a later block, so no plugin is destroyed underneath processBlock().
+    The "callback is running" flag alone was not enough: a pass could see it
+    false in the window before the callback reached beginBlock().
 */
 class TrackInsertRack
 {
 public:
     static constexpr int trackCount = nc::limits::maxTracks;
-    static constexpr int slotsPerTrack = 4;
+    static constexpr int slotsPerTrack = 8;
     static constexpr int maxCompensationSamples = 16384;
+
+    struct RetiredProcessor
+    {
+        std::unique_ptr<InsertProcessor> processor;
+        std::uint64_t retiredAtBlock = 0;
+    };
 
     struct Slot
     {
         std::unique_ptr<InsertProcessor> owned;
         std::atomic<InsertProcessor*> active { nullptr };
         std::atomic<bool> bypassed { false };
-        std::vector<std::unique_ptr<InsertProcessor>> retiredOwned;
+        std::vector<RetiredProcessor> retiredOwned;
         engine::PluginSlotState saved;
         juce::String displayName;
         bool missing = false;
@@ -72,14 +81,21 @@ public:
     void markMissing (int track, int slot, const engine::PluginSlotState&, juce::String displayName);
     void markInstrumentMissing (int track, const engine::PluginSlotState&, juce::String displayName);
     void markMasterMissing (const engine::PluginSlotState&, juce::String displayName);
-    void collectGarbage();
+
+    /** Frees retired processors once the audio thread has begun two blocks
+        since they were retired (the same rule the snapshot lists use), so a
+        callback that loaded the old pointer before it was unpublished has
+        finished with it. `noCallbackCanRun` frees everything and is only for
+        the destructor and a stopped device; it is not a shortcut while a
+        device is open. Message thread. */
+    void collectGarbage (bool noCallbackCanRun = false);
 
     void setBypassed (int track, int slot, bool);
     void setMasterBypassed (bool);
 
     int chainLatency (int track) const;
     int masterLatency() const;
-    int worstTrackLatency() const { return worstLatency; }
+    int worstTrackLatency() const { return worstLatency.load (std::memory_order_acquire); }
     bool overBudget() const { return overBudgetFlag; }
 
     juce::String slotName (int track, int slot) const;
@@ -112,6 +128,10 @@ private:
         void process (juce::AudioBuffer<float>&, int delaySamples);
     };
 
+    /** Moves a live processor into its slot's retirement list, stamped with the
+        block the callback had begun at that moment. */
+    void retire (Slot& slot, std::unique_ptr<InsertProcessor> processor);
+
     static bool validTrack (int track) noexcept { return juce::isPositiveAndBelow (track, trackCount); }
     static bool validSlot (int slot) noexcept { return juce::isPositiveAndBelow (slot, slotsPerTrack); }
 
@@ -132,9 +152,13 @@ private:
     std::array<int, trackCount> trackLatencies {};
     std::atomic<int> activeTracks { nc::limits::defaultActiveTracks };
     std::atomic<bool> audioInCallback { false };
+    // Incremented by beginBlock() on the audio thread; retirement ages against
+    // it. beginBlock() runs twice per engine block (tracks, then master), so
+    // +2 always spans at least one full callback boundary.
+    std::atomic<std::uint64_t> blockCount { 0 };
     double preparedSampleRate = 48000.0;
     int preparedBlockSize = 512;
-    int worstLatency = 0;
+    std::atomic<int> worstLatency { 0 };
     bool overBudgetFlag = false;
 
     JUCE_DECLARE_NON_COPYABLE (TrackInsertRack)

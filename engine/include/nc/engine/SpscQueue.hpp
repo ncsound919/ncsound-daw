@@ -44,6 +44,11 @@ public:
 
     bool empty() const noexcept { return size() == 0; }
 
+    /** Producer side. How many pushes fit before the queue starts refusing.
+        The consumer only ever frees space, so a producer that reserves this
+        many up front cannot have a later push in the same batch refused. */
+    std::size_t spaceAvailable() const noexcept { return capacity() - size(); }
+
     /** Producer side. False when full; the slot is left untouched. */
     bool tryPush (const T& value)
     {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <nc/engine/ClipTimeline.hpp>
+#include <nc/engine/ProjectLimits.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -163,8 +164,15 @@ inline BarBeat barBeatAt (double ppq) noexcept
     if (! (ppq > 0.0))
         return {};
 
-    const auto barIndex = static_cast<int> (std::floor (ppq / beatsPerBar));
-    const auto withinBar = ppq - static_cast<double> (barIndex) * beatsPerBar;
+    // ppq can come from a host's project time and be far past any real song.
+    // Saturating first keeps the int conversion defined; the display shows the
+    // final bar of the session rather than wrapping to a negative one.
+    const auto maxPpq = static_cast<double> (nc::limits::maxBars) * beatsPerBar;
+    // Stay strictly inside the final bar so the display cannot read "bar max+1".
+    const auto clamped = std::min (ppq, std::nextafter (maxPpq, 0.0));
+
+    const auto barIndex = static_cast<int> (std::floor (clamped / beatsPerBar));
+    const auto withinBar = clamped - static_cast<double> (barIndex) * beatsPerBar;
     const auto beatIndex = static_cast<int> (std::floor (withinBar));
     const auto withinBeat = withinBar - static_cast<double> (beatIndex);
     const auto tickIndex = static_cast<int> (std::floor (withinBeat * ticksPerBeat + 1.0e-6));

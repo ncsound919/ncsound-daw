@@ -78,8 +78,9 @@ void TrackInsertRack::setActiveTrackCount (int active)
 
 void TrackInsertRack::beginBlock()
 {
+    blockCount.fetch_add (1, std::memory_order_acq_rel);
     audioInCallback.store (true, std::memory_order_release);
-    worstLatency = 0;
+    int worst = 0;
     overBudgetFlag = false;
     const auto active = activeTracks.load (std::memory_order_acquire);
 
@@ -87,14 +88,15 @@ void TrackInsertRack::beginBlock()
     {
         const auto latency = track < active ? chainLatency (track) : 0;
         trackLatencies[static_cast<size_t> (track)] = latency;
-        worstLatency = juce::jmax (worstLatency, latency);
+        worst = juce::jmax (worst, latency);
     }
 
-    if (worstLatency > maxCompensationSamples)
+    if (worst > maxCompensationSamples)
     {
-        worstLatency = maxCompensationSamples;
+        worst = maxCompensationSamples;
         overBudgetFlag = true;
     }
+    worstLatency.store (worst, std::memory_order_release);
 }
 
 void TrackInsertRack::processTrack (int track, juce::AudioBuffer<float>& buffer,
@@ -123,7 +125,8 @@ void TrackInsertRack::processTrack (int track, juce::AudioBuffer<float>& buffer,
         }
     }
 
-    const auto compensation = juce::jmax (0, worstLatency - trackLatencies[static_cast<size_t> (track)]);
+    const auto compensation = juce::jmax (0, worstLatency.load (std::memory_order_acquire)
+                                                - trackLatencies[static_cast<size_t> (track)]);
     delays[static_cast<size_t> (track)].process (buffer, compensation);
 }
 
@@ -171,7 +174,7 @@ bool TrackInsertRack::install (int track, int slotIndex, std::unique_ptr<InsertP
     auto& insert = slotUnchecked (track, slotIndex);
 
     if (insert.owned != nullptr)
-        insert.retiredOwned.push_back (std::move (insert.owned));
+        retire (insert, std::move (insert.owned));
 
     insert.owned = std::move (processor);
     insert.active.store (insert.owned.get(), std::memory_order_release);
@@ -194,7 +197,7 @@ bool TrackInsertRack::installMaster (std::unique_ptr<InsertProcessor> processor,
     processor->prepare (preparedSampleRate, preparedBlockSize);
 
     if (master.owned != nullptr)
-        master.retiredOwned.push_back (std::move (master.owned));
+        retire (master, std::move (master.owned));
 
     master.owned = std::move (processor);
     master.active.store (master.owned.get(), std::memory_order_release);
@@ -247,7 +250,7 @@ bool TrackInsertRack::installInstrument (int track, std::unique_ptr<InsertProces
     auto& instrument = instruments[static_cast<size_t> (track)];
 
     if (instrument.owned != nullptr)
-        instrument.retiredOwned.push_back (std::move (instrument.owned));
+        retire (instrument, std::move (instrument.owned));
 
     instrument.owned = std::move (processor);
     instrument.active.store (instrument.owned.get(), std::memory_order_release);
@@ -298,7 +301,7 @@ void TrackInsertRack::removeInstrument (int track)
         return;
     auto& instrument = instruments[static_cast<size_t> (track)];
     if (instrument.owned != nullptr)
-        instrument.retiredOwned.push_back (std::move (instrument.owned));
+        retire (instrument, std::move (instrument.owned));
     instrument.active.store (nullptr, std::memory_order_release);
     instrument.saved = {};
     instrument.displayName = {};
@@ -313,7 +316,7 @@ void TrackInsertRack::markInstrumentMissing (int track, const engine::PluginSlot
         return;
     auto& instrument = instruments[static_cast<size_t> (track)];
     if (instrument.owned != nullptr)
-        instrument.retiredOwned.push_back (std::move (instrument.owned));
+        retire (instrument, std::move (instrument.owned));
     instrument.active.store (nullptr, std::memory_order_release);
     instrument.saved = state;
     instrument.displayName = std::move (displayName);
@@ -329,7 +332,7 @@ void TrackInsertRack::remove (int track, int slotIndex)
     auto& insert = slotUnchecked (track, slotIndex);
 
     if (insert.owned != nullptr)
-        insert.retiredOwned.push_back (std::move (insert.owned));
+        retire (insert, std::move (insert.owned));
 
     insert.active.store (nullptr, std::memory_order_release);
     insert.saved = {};
@@ -369,7 +372,7 @@ bool TrackInsertRack::moveInsert (int track, int from, int to)
 void TrackInsertRack::removeMaster()
 {
     if (master.owned != nullptr)
-        master.retiredOwned.push_back (std::move (master.owned));
+        retire (master, std::move (master.owned));
 
     master.active.store (nullptr, std::memory_order_release);
     master.saved = {};
@@ -387,7 +390,7 @@ void TrackInsertRack::markMissing (int track, int slotIndex, const engine::Plugi
     auto& insert = slotUnchecked (track, slotIndex);
 
     if (insert.owned != nullptr)
-        insert.retiredOwned.push_back (std::move (insert.owned));
+        retire (insert, std::move (insert.owned));
 
     insert.active.store (nullptr, std::memory_order_release);
     insert.saved = state;
@@ -399,7 +402,7 @@ void TrackInsertRack::markMissing (int track, int slotIndex, const engine::Plugi
 void TrackInsertRack::markMasterMissing (const engine::PluginSlotState& state, juce::String displayName)
 {
     if (master.owned != nullptr)
-        master.retiredOwned.push_back (std::move (master.owned));
+        retire (master, std::move (master.owned));
     master.active.store (nullptr, std::memory_order_release);
     master.saved = state;
     master.displayName = std::move (displayName);
@@ -407,38 +410,49 @@ void TrackInsertRack::markMasterMissing (const engine::PluginSlotState& state, j
     master.missing = true;
 }
 
-void TrackInsertRack::collectGarbage()
+void TrackInsertRack::retire (Slot& slot, std::unique_ptr<InsertProcessor> processor)
 {
-    if (audioInCallback.load (std::memory_order_acquire))
+    if (processor == nullptr)
         return;
 
+    // Stamp before the caller republishes the slot, so the age is never newer
+    // than the swap a callback could race with.
+    slot.retiredOwned.push_back ({ std::move (processor),
+                                   blockCount.load (std::memory_order_acquire) });
+}
+
+void TrackInsertRack::collectGarbage (bool noCallbackCanRun)
+{
+    const auto now = blockCount.load (std::memory_order_acquire);
+
+    const auto canFree = [now, noCallbackCanRun] (const RetiredProcessor& retired)
+    {
+        return noCallbackCanRun || retired.retiredAtBlock + 2 <= now;
+    };
+
     // An editor window built from a retired plug-in holds the raw processor the
-    // clear() below destroys. Close those windows first: closing deletes the
-    // window and detaches the editor, exactly as its close button does.
-    for (auto& track : tracks)
-        for (auto& insert : track)
-        {
-            for (auto& retired : insert.retiredOwned)
-                if (auto* hosted = dynamic_cast<HostedInsert*> (retired.get()))
+    // erase below destroys. Close its window first: closing deletes the window
+    // and detaches the editor, exactly as its close button does.
+    const auto sweep = [&canFree] (Slot& slot)
+    {
+        for (auto& retired : slot.retiredOwned)
+            if (canFree (retired))
+                if (auto* hosted = dynamic_cast<HostedInsert*> (retired.processor.get()))
                     pluginEditors::closeWindowsFor (hosted->instance());
 
-            insert.retiredOwned.clear();
-        }
+        slot.retiredOwned.erase (
+            std::remove_if (slot.retiredOwned.begin(), slot.retiredOwned.end(), canFree),
+            slot.retiredOwned.end());
+    };
+
+    for (auto& track : tracks)
+        for (auto& insert : track)
+            sweep (insert);
 
     for (auto& instrument : instruments)
-    {
-        for (auto& retired : instrument.retiredOwned)
-            if (auto* hosted = dynamic_cast<HostedInsert*> (retired.get()))
-                pluginEditors::closeWindowsFor (hosted->instance());
+        sweep (instrument);
 
-        instrument.retiredOwned.clear();
-    }
-
-    for (auto& retired : master.retiredOwned)
-        if (auto* hosted = dynamic_cast<HostedInsert*> (retired.get()))
-            pluginEditors::closeWindowsFor (hosted->instance());
-
-    master.retiredOwned.clear();
+    sweep (master);
 }
 
 void TrackInsertRack::setBypassed (int track, int slotIndex, bool shouldBeBypassed)

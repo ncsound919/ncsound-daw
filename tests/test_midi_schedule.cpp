@@ -43,6 +43,17 @@ TEST_CASE ("schedule retriggers a note already sounding at the block start")
     REQUIRE (events[0].velocity == 80);
 }
 
+TEST_CASE ("sustained silent windows when retriggering is suppressed")
+{
+    const auto map = constantTempoMap (120.0);
+    const std::vector<MidiNote> notes { { 0.0, 4.0, 64, 80, 0 } };
+
+    std::vector<MidiEvent> events;
+    // A window that directly continues the previous one: no new note-on.
+    scheduleMidiClip (notes, 1.0, 4.0, 1.0, 2.0, map, 48000.0, 24000, events, false);
+    REQUIRE (events.empty());
+}
+
 TEST_CASE ("schedule is silent outside the clip and for bad blocks")
 {
     const auto map = constantTempoMap (120.0);

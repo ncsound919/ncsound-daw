@@ -101,6 +101,12 @@ public:
     /** Replaces a MIDI clip's notes through applyMidiNotes(), so the engine's
         sanitizer (bounds, sorting, 0..127, clip length) always runs. */
     bool webSetNotes (int clipIndex, const std::vector<nc::engine::MidiNote>& notes);
+
+    /** Voice-to-MIDI: places `notes` as a new MIDI clip on `track` at
+        `startBar`, so the take's transcription plays through the track's
+        instrument. Returns false when there is nothing to place. */
+    bool webAddMidiClip (int track, double startBar,
+                         std::vector<nc::engine::MidiNote> notes);
     bool hasSelectedClip() const { return selectedClip >= 0; }
     int clipCount() const { return static_cast<int> (clips.size()); }
 

@@ -25,6 +25,7 @@ struct MidiCursor
     std::size_t ccIndex = 0;
     std::size_t bendIndex = 0;
     double lastBlockStartPpq = -1.0;
+    double lastBlockEndPpq = -1.0;
     bool valid = false;
 };
 
@@ -55,7 +56,12 @@ inline void scheduleMidiClipCursor (const std::vector<MidiNote>& notes,
     const auto endBeat = startBeat + clipLengthBeats (clipLengthBars);
     const auto blockStartSeconds = ppqToSeconds (tempoMap, blockStartPpq);
 
-    if (! cursor.valid || blockStartPpq < cursor.lastBlockStartPpq)
+    const bool rewound = ! cursor.valid || blockStartPpq < cursor.lastBlockStartPpq;
+    const bool contiguous = cursor.valid && ! rewound
+                            && std::abs (blockStartPpq - cursor.lastBlockEndPpq)
+                            < 1e-6; // accumulated ppq round-off across blocks
+
+    if (rewound)
     {
         cursor.noteIndex = 0;
         cursor.ccIndex = 0;
@@ -64,12 +70,13 @@ inline void scheduleMidiClipCursor (const std::vector<MidiNote>& notes,
     }
 
     cursor.lastBlockStartPpq = blockStartPpq;
+    cursor.lastBlockEndPpq = blockEndPpq;
 
     auto offsetForPpq = [&] (double ppq) -> int
     {
         const auto seconds = ppqToSeconds (tempoMap, ppq) - blockStartSeconds;
-        const auto samples = std::llround (seconds * sampleRate);
-        return static_cast<int> (std::clamp<int64_t> (samples, 0, blockSize));
+        const int64_t samples = std::llround (seconds * sampleRate);
+        return static_cast<int> (std::clamp<int64_t> (samples, 0, static_cast<int64_t> (blockSize) - 1));
     };
 
     // Advance past events that ended before this block.
@@ -107,7 +114,7 @@ inline void scheduleMidiClipCursor (const std::vector<MidiNote>& notes,
         if (! startsInBlock && ! endsInBlock && ! soundingAtStart)
             continue;
 
-        if (startsInBlock || soundingAtStart)
+        if (startsInBlock || (soundingAtStart && (rewound || ! contiguous)))
         {
             MidiEvent event;
             event.sampleOffset = soundingAtStart ? 0 : offsetForPpq (noteStartPpq);

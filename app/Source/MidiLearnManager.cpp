@@ -12,7 +12,8 @@ juce::Array<juce::MidiDeviceInfo> MidiLearnManager::availableDevices()
 
 bool MidiLearnManager::openDevice (const juce::String& id, juce::String& error)
 {
-    closeDevices();
+    // Independent: opening input must not tear down an output.
+    closeInput();
     input = juce::MidiInput::openDevice (id, this);
     if (input == nullptr) { error = "MIDI input open failed"; return false; }
     deviceId = id;
@@ -22,6 +23,8 @@ bool MidiLearnManager::openDevice (const juce::String& id, juce::String& error)
 
 bool MidiLearnManager::openOutput (const juce::String& id, juce::String& error)
 {
+    // Independent: opening output must not tear down an input.
+    closeOutput();
     output = juce::MidiOutput::openDevice (id);
     if (output == nullptr) { error = "MIDI output open failed"; return false; }
     outputId = id;
@@ -30,42 +33,61 @@ bool MidiLearnManager::openOutput (const juce::String& id, juce::String& error)
 
 void MidiLearnManager::closeDevices()
 {
+    closeInput();
+    closeOutput();
+}
+
+void MidiLearnManager::closeInput()
+{
     deviceId.clear();
-    outputId.clear();
     if (input) { input->stop(); input.reset(); }
+}
+
+void MidiLearnManager::closeOutput()
+{
+    outputId.clear();
     output.reset();
 }
 
 void MidiLearnManager::armLearn (const std::string& paramId, Mode mode)
 {
+    juce::ScopedLock scopedLock (lock);
     Binding b;
     b.targetParamId = paramId;
     b.mode = mode;
     learnTarget = b;
 }
 
-void MidiLearnManager::cancelLearn() { learnTarget.reset(); }
+void MidiLearnManager::cancelLearn()
+{
+    juce::ScopedLock scopedLock (lock);
+    learnTarget.reset();
+}
 
 bool MidiLearnManager::consumeNextCc (int channel, int controller, int value, bool isNote)
 {
-    if (! learnTarget.has_value())
-        return false;
-    Binding b = *learnTarget;
-    b.midiChannel = channel;
-    b.controller = controller;
-    b.isNote = isNote;
+    Binding target;
     {
-        juce::ScopedLock scopedLock (this->lock);
-        table[{channel, controller, isNote}] = b;
+        juce::ScopedLock scopedLock (lock);
+        if (! learnTarget.has_value())
+            return false;
+        target = *learnTarget;
+        learnTarget.reset();
     }
-    learnTarget.reset();
+    target.midiChannel = channel;
+    target.controller = controller;
+    target.isNote = isNote;
+    {
+        juce::ScopedLock scopedLock (lock);
+        table[{channel, controller, isNote}] = target;
+    }
     juce::ignoreUnused (value);
     return true;
 }
 
 std::optional<MidiLearnManager::Binding> MidiLearnManager::bindingFor (int channel, int controller, bool isNote) const
 {
-    juce::ScopedLock scopedLock (const_cast<juce::CriticalSection&> (lock));
+    juce::ScopedLock scopedLock (lock);
     auto it = table.find ({channel, controller, isNote});
     if (it != table.end()) return it->second;
     auto omni = table.find ({0, controller, isNote});
@@ -86,15 +108,27 @@ void MidiLearnManager::removeBinding (int channel, int controller, bool isNote)
 
 std::vector<MidiLearnManager::Binding> MidiLearnManager::bindings() const
 {
-    juce::ScopedLock scopedLock (const_cast<juce::CriticalSection&> (lock));
+    juce::ScopedLock scopedLock (lock);
     std::vector<Binding> out;
     for (auto& kv : table) out.push_back (kv.second);
     return out;
 }
 
+bool MidiLearnManager::takeChange (Change& change)
+{
+    juce::ScopedLock scopedLock (lock);
+    if (pendingChanges.empty())
+        return false;
+    change = pendingChanges.front();
+    pendingChanges.pop();
+    return true;
+}
+
 void MidiLearnManager::saveToFile (const juce::File& file) const
 {
-    juce::DynamicObject root;
+    // Heap object: juce::var (DynamicObject*) takes ownership and deletes it.
+    // Wrapping a stack object here made saveToFile delete stack memory.
+    auto* root = new juce::DynamicObject();
     juce::Array<juce::var> list;
     for (auto& b : bindings())
     {
@@ -106,9 +140,8 @@ void MidiLearnManager::saveToFile (const juce::File& file) const
         o->setProperty ("target", juce::String (b.targetParamId));
         list.add (juce::var (o));
     }
-    root.setProperty ("mappings", juce::var (list));
-    juce::var v = juce::JSON::toString (juce::var (&root), true);
-    file.replaceWithText (v);
+    root->setProperty ("mappings", juce::var (list));
+    file.replaceWithText (juce::JSON::toString (juce::var (root), true));
 }
 
 bool MidiLearnManager::loadFromFile (const juce::File& file)
@@ -138,17 +171,17 @@ bool MidiLearnManager::loadFromFile (const juce::File& file)
 
 void MidiLearnManager::loadBuiltInTemplate (const std::string& name)
 {
-    juce::ScopedLock scopedLock (this->lock);
-    table.clear();
+    // Build into a temporary table first so an unknown name is a no-op.
+    std::map<std::tuple<int,int,bool>, Binding> next;
     auto add = [&](int ch, int ctrl, const std::string& target, bool isNote = false)
     {
         Binding b; b.midiChannel = ch; b.controller = ctrl; b.isNote = isNote; b.targetParamId = target;
-        table[{ch, ctrl, isNote}] = b;
+        next[{ch, ctrl, isNote}] = b;
     };
     if (name == "Push 3")
     {
-        add (0, 74, "track.0.filterCutoff");
-        add (0, 75, "track.0.filterReso");
+        add (0, 74, "track.0.hpfFreq");
+        add (0, 75, "track.0.hmfQ");
         add (0, 71, "track.0.volume");
     }
     else if (name == "Traktor S4")
@@ -165,6 +198,12 @@ void MidiLearnManager::loadBuiltInTemplate (const std::string& name)
         add (0, 46, "transport.play");
         add (0, 47, "transport.stop");
     }
+    else
+    {
+        return;
+    }
+    juce::ScopedLock scopedLock (lock);
+    table = std::move (next);
 }
 
 void MidiLearnManager::sendLed (int channel, int controller, int value)
@@ -182,14 +221,35 @@ void MidiLearnManager::sendAllLeds (const std::map<int,int>& state)
 
 void MidiLearnManager::handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& msg)
 {
-    // Live-through to the synth timeline (MidiKeyboardState merges device +
-    // computer keys; the host feeds it to instruments).
-    juce::MidiBuffer buffer;
-    buffer.addEvent (msg, 0);
-    keyboardState.processNextMidiBuffer (buffer, 0, 1, true);
+    int channel = msg.getChannel() - 1;
+    int controller = -1;
+    int value = 0;
+    bool isNote = false;
+    // Note-offs are ignored: a note binding applies on the attack only, so a
+    // toggle bound to a pad stays engaged and an absolute binding does not
+    // drop to zero every time the key is released.
     if (msg.isController())
-        consumeNextCc (msg.getChannel()-1, msg.getControllerNumber(), msg.getControllerValue(), false);
+    {
+        controller = msg.getControllerNumber();
+        value = msg.getControllerValue();
+    }
     else if (msg.isNoteOn())
-        consumeNextCc (msg.getChannel()-1, msg.getNoteNumber(), msg.getVelocity(), true);
+    {
+        isNote = true;
+        controller = msg.getNoteNumber();
+        value = msg.getVelocity();
+    }
+    else
+    {
+        return;
+    }
+
+    if (consumeNextCc (channel, controller, value, isNote))
+        return;
+    if (auto binding = bindingFor (channel, controller, isNote))
+    {
+        juce::ScopedLock scopedLock (lock);
+        pendingChanges.push ({ *binding, value });
+    }
 }
 } // namespace nc

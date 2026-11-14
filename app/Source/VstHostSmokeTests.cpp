@@ -14,6 +14,8 @@
 #include "HostedInsert.h"
 #include "TrackInsertRack.h"
 
+#include "TestPaths.h"
+
 #include <cmath>
 #include <memory>
 #include <vector>
@@ -225,8 +227,163 @@ TEST_CASE ("a real VST3 effect loads, processes and round-trips its state", "[.v
     REQUIRE (rack.slot (0, 0).active.load() == nullptr);
     REQUIRE (rack.slotName (0, 0).isEmpty());
 
-    rack.collectGarbage();
+    rack.collectGarbage (true);
     REQUIRE (rack.slot (0, 0).owned == nullptr);
+}
+
+namespace
+{
+/** Finds one of this repository's own bundles: NC_TEST_VST3_DIR first, then the
+    build tree, so the suite-instrument gate runs without global installation. */
+juce::File findSuiteBundle (const juce::String& productName)
+{
+    juce::Array<juce::File> roots;
+
+    if (const auto override = juce::SystemStats::getEnvironmentVariable ("NC_TEST_VST3_DIR", {});
+        override.isNotEmpty())
+        roots.add (juce::File { override });
+
+    // Repo root, not the CWD: CTest starts this binary from build/app, where
+    // CWD/build/plugins never exists and every suite-bundle case silently
+    // skipped.
+    roots.add (juce::File (juce::String::fromUTF8 (ncRepoRoot))
+                   .getChildFile ("build")
+                   .getChildFile ("plugins"));
+
+    for (const auto& root : roots)
+    {
+        if (! root.isDirectory())
+            continue;
+
+        for (const auto& entry : juce::RangedDirectoryIterator (root, true, productName + ".vst3",
+                                                               juce::File::findFilesAndDirectories))
+            if (entry.getFile().isDirectory())
+                return entry.getFile();
+    }
+
+    return {};
+}
+
+float peakOf (const juce::AudioBuffer<float>& buffer)
+{
+    auto peak = 0.0f;
+
+    for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
+        peak = juce::jmax (peak, buffer.getMagnitude (channel, 0, buffer.getNumSamples()));
+
+    return peak;
+}
+} // namespace
+
+TEST_CASE ("the two NCSound instrument bundles load, play MIDI and round-trip their state",
+           "[.vst3][suite-instruments]")
+{
+    // The DAW hosts these as track instruments: MIDI in, stereo out, state in the
+    // project. This runs the same HostedInsert path the engine uses, against the
+    // bundles this repository builds.
+    juce::ScopedJuceInitialiser_GUI juceInit;
+
+    juce::AudioPluginFormatManager formats;
+    juce::addDefaultFormatsToManager (formats);
+
+    auto* vst3 = findVst3Format (formats);
+    REQUIRE (vst3 != nullptr);
+
+    // 808 Designer is a synth and must make sound from a note. Chop Station is a
+    // slicer: its voice is silent until a sample is loaded, which its own suite
+    // covers; here it only has to load, host and round-trip without inventing
+    // audio.
+    struct Expected { const char* productName; bool playsFromMidi; };
+
+    auto checked = 0;
+
+    for (const auto& expected : { Expected { "Chop Station", false },
+                                  Expected { "808 Designer", true } })
+    {
+        const auto* productName = expected.productName;
+        INFO ("Bundle " << productName);
+
+        const auto bundle = findSuiteBundle (productName);
+
+        if (! bundle.exists())
+        {
+            WARN ("No " << productName << ".vst3 bundle built; skipping");
+            continue;
+        }
+
+        juce::OwnedArray<juce::PluginDescription> descriptions;
+        vst3->findAllTypesForFile (descriptions, bundle.getFullPathName());
+        REQUIRE (! descriptions.isEmpty());
+
+        const juce::PluginDescription* instrument = nullptr;
+
+        for (const auto* description : descriptions)
+            if (description != nullptr && description->isInstrument)
+            {
+                instrument = description;
+                break;
+            }
+
+        REQUIRE (instrument != nullptr);
+
+        juce::String error;
+        auto instance = formats.createPluginInstance (*instrument, 48000.0, 512, error);
+        REQUIRE (instance != nullptr);
+
+        auto hosted = nc::HostedInsert::create (std::move (instance), 48000.0, 512, error, true);
+        REQUIRE (hosted != nullptr);
+
+        nc::engine::TransportBlock block;
+        block.numSamples = 512;
+        block.isPlaying = true;
+        block.tempo = 120.0;
+
+        juce::AudioBuffer<float> buffer (2, 512);
+        buffer.clear();
+
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 36, static_cast<juce::uint8> (100)), 0);
+
+        hosted->process (buffer, block, midi);
+
+        auto peak = peakOf (buffer);
+
+        juce::MidiBuffer silence;
+
+        for (int blockIndex = 1; blockIndex < 8 && peak <= 0.0f; ++blockIndex)
+        {
+            buffer.clear();
+            hosted->process (buffer, block, silence);
+            peak = juce::jmax (peak, peakOf (buffer));
+        }
+
+        REQUIRE (allFinite (buffer));
+
+        if (expected.playsFromMidi)
+            REQUIRE (peak > 0.0f);
+
+        nc::engine::PluginSlotState saved;
+        REQUIRE (hosted->getState (saved));
+        REQUIRE_FALSE (saved.stateBase64.empty());
+        REQUIRE (saved.format == "VST3");
+        REQUIRE (hosted->setState (saved));
+
+        if (auto* live = hosted->instance(); live != nullptr && live->hasEditor())
+        {
+            if (auto* editor = live->createEditorIfNeeded())
+            {
+                REQUIRE (editor->getWidth() > 0);
+                REQUIRE (editor->getHeight() > 0);
+                live->editorBeingDeleted (editor);
+                delete editor;
+            }
+        }
+
+        ++checked;
+    }
+
+    WARN ("Verified " << checked << " NCSound instrument bundles end to end");
+    REQUIRE (checked > 0);
 }
 
 TEST_CASE ("every bundle under NC_TEST_VST3_DIR scans, loads, renders and opens its editor",

@@ -189,8 +189,17 @@ namespace fx
             for (int p = 0; p < tpPhases; ++p)
             {
                 float acc = 0.0f;
+                const float* k = tpKernel[(size_t) p].data();
+                // Rolling index instead of (tpPos - t + tpTaps) % tpTaps: the
+                // modulo was inside the innermost loop, and on the real-time
+                // budget an integer division per tap mattered (4 phases x
+                // 12 taps x 2 channels per sample).
+                int idx = tpPos;
                 for (int t = 0; t < tpTaps; ++t)
-                    acc += hist[(size_t) ((tpPos - t + tpTaps) % tpTaps)] * tpKernel[(size_t) p][(size_t) t];
+                {
+                    acc += hist[(size_t) idx] * k[(size_t) t];
+                    idx = idx == 0 ? tpTaps - 1 : idx - 1;
+                }
                 peak = std::max (peak, std::abs (acc));
             }
             return peak;

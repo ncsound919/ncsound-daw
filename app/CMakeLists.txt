@@ -39,6 +39,8 @@ target_sources(NCMixRackTests PRIVATE
     Source/MixRackTests.cpp
     Source/TrackInsertTests.cpp
     Source/PluginCatalogTests.cpp
+    Source/PluginRegistryTests.cpp
+    Source/MidiLearnManagerTests.cpp
     Source/VstHostSmokeTests.cpp
     Source/PluginEditorWindow.cpp
     Source/HostedInsert.cpp
@@ -58,9 +60,15 @@ target_sources(NCMixRackTests PRIVATE
     Source/AudioEngine.cpp
     Source/PluginHost.cpp
     Source/ExportTests.cpp
+    Source/PlaybackResampleTests.cpp
+    Source/AuxBusTests.cpp
+    Source/DemoContentTests.cpp
+    Source/SignalIntegrityTests.cpp
+    Source/AudioQualityTests.cpp
     Source/AudioSettingsTests.cpp
     Source/RecordingTests.cpp
     Source/VoiceToMidiIntegrationTests.cpp
+    Source/VoiceToMidiTests.cpp
     Source/AutomationTests.cpp
     Source/SendsTests.cpp
     Source/MixPlanTests.cpp
@@ -82,6 +90,13 @@ target_link_libraries(NCMixRackTests PRIVATE
     Catch2::Catch2WithMain)
 
 target_compile_definitions(NCMixRackTests PRIVATE JUCE_PLUGINHOST_VST3=1)
+
+# Repository-root fixtures (plugins/registry.json) are read through a path
+# baked in at configure time: CTest launches this binary from build/app, and
+# deriving the root from the CWD made those cases silently skip there.
+configure_file("${CMAKE_CURRENT_SOURCE_DIR}/TestPaths.h.in"
+               "${CMAKE_CURRENT_BINARY_DIR}/generated/TestPaths.h" @ONLY)
+target_include_directories(NCMixRackTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 if (MSVC)
     target_compile_options(NCMixRackTests PRIVATE /utf-8 /EHsc)

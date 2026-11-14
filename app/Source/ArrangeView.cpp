@@ -161,6 +161,19 @@ ArrangeView::ArrangeView (AudioEngine& engineToUse)
     setSelectedTrack (0);
     setTool (0);
     engine.setLoopBars (loopStartBar, loopEndBar);
+
+    // The stock session is authored at unity and sums to roughly ten decibels
+    // over full scale across its tracks. Fed to the master like that, the
+    // maximizer spends every block taking more than ten decibels out of the
+    // mix, and that constant gain reduction is what sounds like distortion.
+    // A shipped session arrives already mixed: one uniform bus trim keeps the
+    // balance between the tracks exactly as written and leaves the maximizer
+    // doing what it is for -- catching peaks.
+    constexpr float demoBusTrim = 0.22f;
+
+    for (int track = 0; track < AudioEngine::trackCount; ++track)
+        engine.setTrackGain (track, demoBusTrim);
+
     publishTimeline();
 }
 
@@ -1376,25 +1389,54 @@ bool ArrangeView::webEditClip (int clipIndex, const juce::var& patch)
     if (index < 0 || index >= static_cast<int> (clips.size()) || obj == nullptr)
         return false;
 
+    // The patch is untrusted JSON. A NaN or a value past int's range is
+    // undefined behaviour in the cast, and an unbounded bar count reaches every
+    // layer that assumes the timeline ceiling, so every number is checked and
+    // clamped to the timeline here rather than trusted.
+    const auto finiteOr = [] (const juce::var& value, double fallback)
+    {
+        const auto number = static_cast<double> (value);
+        return std::isfinite (number) ? number : fallback;
+    };
+
+    const auto barOf = [&finiteOr] (const juce::var& value, int fallback)
+    {
+        const auto rounded = std::round (finiteOr (value, static_cast<double> (fallback)));
+        return static_cast<int> (juce::jlimit (1.0, static_cast<double> (nc::limits::maxBars), rounded));
+    };
+
     pushUndo();
     auto& clip = clips[static_cast<size_t> (index)];
     const auto oldStart = clip.startBar;
     const auto secondsPerBar = 240.0 / juce::jmax (1.0, engine.getBpm());
 
     if (obj->hasProperty ("startBar"))
-        clip.startBar = juce::jmax (1, (int) std::round ((double) obj->getProperty ("startBar")));
+        clip.startBar = barOf (obj->getProperty ("startBar"), clip.startBar);
 
     if (obj->hasProperty ("lengthBars"))
-        clip.lengthBars = juce::jmax (1, (int) std::round ((double) obj->getProperty ("lengthBars")));
+        clip.lengthBars = barOf (obj->getProperty ("lengthBars"), clip.lengthBars);
+
+    // Keep the whole clip inside the timeline however the two fields were
+    // edited, so no downstream layer sees a clip that starts or ends past the
+    // last bar.
+    clip.lengthBars = juce::jlimit (1, nc::limits::maxBars, clip.lengthBars);
+    clip.startBar = juce::jlimit (1, juce::jmax (1, nc::limits::maxBars - clip.lengthBars + 1),
+                                  clip.startBar);
 
     if (obj->hasProperty ("gainDb"))
-        clip.gainDb = juce::jlimit (-24.0f, 12.0f, (float) (double) obj->getProperty ("gainDb"));
+        clip.gainDb = juce::jlimit (-24.0f, 12.0f,
+                                    static_cast<float> (finiteOr (obj->getProperty ("gainDb"),
+                                                                 clip.gainDb)));
 
     const auto length = static_cast<float> (clip.lengthBars);
     if (obj->hasProperty ("fadeInBars"))
-        clip.fadeInBars = juce::jlimit (0.0f, length, (float) (double) obj->getProperty ("fadeInBars"));
+        clip.fadeInBars = juce::jlimit (0.0f, length,
+                                        static_cast<float> (finiteOr (obj->getProperty ("fadeInBars"),
+                                                                     clip.fadeInBars)));
     if (obj->hasProperty ("fadeOutBars"))
-        clip.fadeOutBars = juce::jlimit (0.0f, length, (float) (double) obj->getProperty ("fadeOutBars"));
+        clip.fadeOutBars = juce::jlimit (0.0f, length,
+                                         static_cast<float> (finiteOr (obj->getProperty ("fadeOutBars"),
+                                                                      clip.fadeOutBars)));
 
     if (obj->hasProperty ("trimmed") && (bool) obj->getProperty ("trimmed"))
         clip.sourceOffsetSeconds = juce::jmax (0.0, clip.sourceOffsetSeconds
@@ -1718,9 +1760,18 @@ void ArrangeView::publishTimeline()
     engine.setMidiClips (std::move (midiSchedule));
 
     if (dropped > 0 && onStatus)
-        onStatus (juce::String (dropped) + " CLIP" + juce::String (dropped == 1 ? "" : "S")
-                      + " BEYOND THE 1024-CLIP TIMELINE " + juce::String (dropped == 1 ? "WAS" : "WERE")
-                      + " DROPPED / SPLIT THE PROJECT TO KEEP EVERYTHING");
+    {
+        // A refused publish has its own reason (the engine kept the previous
+        // schedule); otherwise the clips went past the timeline cap.
+        const auto reason = engine.lastTimelineError();
+
+        onStatus (reason.isNotEmpty()
+                      ? juce::String (dropped) + " CLIP" + juce::String (dropped == 1 ? "" : "S")
+                            + " NOT SCHEDULED / " + reason.toUpperCase()
+                      : juce::String (dropped) + " CLIP" + juce::String (dropped == 1 ? "" : "S")
+                            + " BEYOND THE 1024-CLIP TIMELINE " + juce::String (dropped == 1 ? "WAS" : "WERE")
+                            + " DROPPED / SPLIT THE PROJECT TO KEEP EVERYTHING");
+    }
 }
 
 bool ArrangeView::placeRecordedTake (const juce::File& file, int track, double startBar)
@@ -1728,7 +1779,12 @@ bool ArrangeView::placeRecordedTake (const juce::File& file, int track, double s
     const auto assetId = engine.loadAudioFile (file);
 
     if (assetId < 0)
+    {
+        if (onStatus && engine.lastAssetError().isNotEmpty())
+            onStatus (engine.lastAssetError());
+
         return false;
+    }
 
     const auto secondsPerBar = 240.0 / juce::jmax (1.0, engine.getBpm());
     const auto duration = engine.assetDurationSeconds (assetId);
@@ -1762,7 +1818,9 @@ bool ArrangeView::importAudioFile (const juce::File& file)
     if (assetId < 0)
     {
         if (onStatus)
-            onStatus ("Import failed / unsupported or empty audio file: " + file.getFileName());
+            onStatus (engine.lastAssetError().isNotEmpty()
+                          ? engine.lastAssetError()
+                          : "Import failed / unsupported or empty audio file: " + file.getFileName());
 
         return false;
     }
@@ -2338,6 +2396,31 @@ bool ArrangeView::applyCrossfadeSelected()
     clip.crossfadeBars = clip.crossfadeBars > 0.0f ? 0.0f : juce::jmin (0.5f, budget);
     publishTimeline();
     repaint();
+    return true;
+}
+
+bool ArrangeView::webAddMidiClip (int track, double startBar,
+                                  std::vector<nc::engine::MidiNote> notes)
+{
+    if (notes.empty())
+        return false;
+
+    addClipAt (track, juce::roundToInt (startBar));
+
+    auto& clip = clips.back();
+    clip.kind = 0;
+    clip.name = "VOICE TO MIDI";
+    clip.assetId = -1;
+    clip.sourceOffsetSeconds = 0.0;
+
+    auto lastBeat = 0.0;
+
+    for (const auto& note : notes)
+        lastBeat = juce::jmax (lastBeat, note.startBeat + note.lengthBeats);
+
+    clip.lengthBars = juce::jmax (1, (int) std::ceil (lastBeat / nc::engine::beatsPerBarMidi));
+
+    applyMidiNotes ((int) clips.size() - 1, std::move (notes));
     return true;
 }
 

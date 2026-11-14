@@ -107,3 +107,13 @@ TEST_CASE ("musical position reads as bar, beat and tick")
     REQUIRE (beforeZero.beat == 1);
     REQUIRE (beforeZero.tick == 0);
 }
+
+TEST_CASE ("bar beat display saturates before integer conversion can overflow")
+{
+    const auto position = barBeatAt (1.0e20);
+
+    // The last valid position is the end of the final bar, not a bar past it.
+    REQUIRE (position.bar == nc::limits::maxBars);
+    REQUIRE (position.beat == 4);
+    REQUIRE (position.tick > 0);
+}

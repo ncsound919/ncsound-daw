@@ -20,6 +20,7 @@
 #include <nc/engine/MidiScheduler.hpp>
 #include <nc/engine/PitchStack.hpp>
 #include <nc/engine/ProjectLimits.hpp>
+#include <nc/engine/Resample.hpp>
 #include <nc/engine/SpscQueue.hpp>
 #include <nc/engine/SyncClock.hpp>
 #include <nc/engine/TempoMap.hpp>
@@ -261,6 +262,9 @@ public:
 
     std::function<void (juce::String)> onPluginStatus;
 
+    /** Fired on the message thread once an asynchronous insert load settles. */
+    std::function<void()> onInsertInstalled;
+
     static constexpr int kInsertSlotsPerTrack = 8;
 
     //==========================================================================
@@ -283,6 +287,8 @@ public:
     juce::AudioDeviceManager& audioDeviceManager() { return deviceManager; }
     MidiLearnManager& getMidiLearn() { return midiLearn; }
     const MidiLearnManager& getMidiLearn() const { return midiLearn; }
+    void setMidiLearnTrack (int track) { midiLearnTrack = juce::jlimit (0, trackCount - 1, track); }
+    int pollMidiLearnChanges();
 
     // Audio interface persistence (JUCE ApplicationProperties, XML blob).
     // Restores preferred device/rate/buffer/midi on next launch; falls back
@@ -319,6 +325,13 @@ public:
     int currentBufferSize() const { return bufferSize.load(); }
     bool isDeviceOpen() const { return deviceOpen.load(); }
     float dspLoad() const { return dspLoadValue.load(); }
+    int deviceBufferSize() const { return bufferSize.load (std::memory_order_relaxed); }
+    double deviceSampleRate() const { return sampleRate.load (std::memory_order_relaxed); }
+    /** Callbacks that overran the device budget — every one is an audible
+        dropout. Reads alongside dspBlockCount (blocks measured since the
+        device opened) so a rate can be computed. */
+    uint64_t dspOverruns() const { return dspOverrunCount.load (std::memory_order_relaxed); }
+    uint64_t dspBlocksMeasured() const { return dspBlockCount.load (std::memory_order_relaxed); }
 
     // Low latency: buffer latency + worst-track PDC + master lookahead limiter.
     // All values are measured (device getter + HostedInsert::latencySamples
@@ -326,13 +339,16 @@ public:
     double bufferLatencyMs() const;
     double worstTrackLatencyMs() const;
     double masterLatencyMs() const;
-    double totalLatencyMs() const { return bufferLatencyMs() + worstTrackLatencyMs() + masterLatencyMs(); }
+    double totalLatencyMs() { return bufferLatencyMs() + worstTrackLatencyMs() + masterLatencyMs(); }
     void setLowLatencyMode (bool shouldLow);
     bool isLowLatencyMode() const { return lowLatency.load(); }
 
     // Voice-to-MIDI (offline): runs YIN note tracking over an audio file and
     // returns an importable MIDI clip (monophonic, same path as MidiRecorder).
-    nc::engine::ClipState voiceToMidiClip (const juce::File& file, int track, double bpm);
+    nc::engine::ClipState voiceToMidiClip (const juce::File& file, int track, double bpm,
+                                           juce::String* error = nullptr);
+    void voiceToMidiClipAsync (const juce::File& file, int track, double bpm,
+                               std::function<void (nc::engine::ClipState, juce::String)> completion);
     juce::String lastVoiceError() const { return voiceError; }
     int addMidiClip (nc::engine::ClipState clip);
 
@@ -343,6 +359,7 @@ public:
     // Project audio. These calls are message-thread only.
     //==========================================================================
     int loadAudioFile (const juce::File& file);
+    juce::String lastAssetError() const { return assetError; }
     double assetDurationSeconds (int assetId) const;
     juce::String assetName (int assetId) const;
 
@@ -358,6 +375,7 @@ public:
         invalid references or beyond the 1024-clip timeline so the UI can
         report a truncated project instead of losing it silently. */
     int setTimelineClips (std::vector<TimelineClip> clips);
+    juce::String lastTimelineError() const { return timelineError; }
 
     /** Message-thread mirror of the schedule last accepted, so a UI can project
         the timeline without touching the audio callback's queue. Written only
@@ -368,6 +386,11 @@ public:
         draw the real waveform instead of a placeholder. Returns `bins` values in
         0..1, or empty when the audio is not resident (a streamed long import
         only keeps a read-ahead window). Message thread. */
+    /** Copies the resident audio a clip plays, mixed to mono, for analysis.
+        Empty for a streamed asset, whose frames are not all resident. */
+    juce::AudioBuffer<float> assetSamples (int assetId, double startSeconds,
+                                           double lengthSeconds) const;
+
     std::vector<float> assetPeakEnvelope (int assetId, double startSeconds,
                                           double lengthSeconds, int bins) const;
 
@@ -512,8 +535,10 @@ private:
     MasterRack masterRack;
     std::atomic<int> preparedRackCount { 0 };
 
-    /** Re-applies the baked vocal role to every channel. Message thread only. */
-    void applyVocalRoles();
+    /** Re-applies the baked vocal role to every channel. Message thread only.
+        When restoring, only the vocal role is retained; saved strip/master
+        state is never overwritten by baked defaults. */
+    void applyVocalRoles (bool restoringSavedState = false);
 
     void audioDeviceIOCallbackWithContext (const float* const* inputChannelData,
                                            int numInputChannels,
@@ -537,6 +562,12 @@ private:
         // reads the disk and never waits on the message thread.
         bool streamed = false;
         int64_t totalFrames = 0;
+
+        // Kernels for playing this asset at a session rate of its own. Built on
+        // the message thread when the asset is added and whenever the session
+        // rate changes; a clip whose rate already matches reads frames directly
+        // and never touches this.
+        nc::engine::resample::Bank resample;
         int64_t cacheFrames = 0;
         std::unique_ptr<juce::AudioFormatReader> reader;
         std::array<std::vector<float>, 2> cacheA;
@@ -612,6 +643,16 @@ private:
     int addAsset (std::unique_ptr<AudioAsset> asset);
     int64_t assetFrameCount (const AudioAsset& asset) const;
     float sampleAt (const AudioAsset& asset, int64_t frame, int channel) const;
+
+    /** One source frame at a fractional position, band-limited when the asset's
+        rate differs from the output rate (nullptr window when it matches). */
+    float readSourceSample (const AudioAsset& asset, double sourceFrame, double outputRate,
+                            int channel) const;
+    float readBandLimited (const AudioAsset& asset, double sourceFrame, int channel) const;
+
+    /** Rebuilds the resampling kernels of every asset for the current output
+        rate. Message thread only. */
+    void refreshResampleBanks();
     void createDemoAssets();
     bool pushCommand (const Command& command);
     void processCommands();
@@ -702,6 +743,7 @@ private:
     std::array<std::atomic<bool>, trackCount> recordArmed {};
 
     MidiRecorder midiRecorder;
+    int midiLearnTrack { 0 };
     std::vector<float> recordSilence { 16384, 0.0f }; // ThreadedWriter needs non-null channels
 
     // Streaming takes (ThreadedWriter): when non-empty, capture pushes
@@ -753,8 +795,17 @@ private:
     std::atomic<bool> deviceOpen { false };
     std::atomic<uint64_t> audioBlockCount { 0 };
     std::atomic<float> dspLoadValue { 0.0f };
+    // Callbacks that ran longer than the device budget (elapsed > blockSize /
+    // rate). Every one is a guaranteed audible dropout: the device had already
+    // been fed nothing and interpolates or repeats the previous block.
+    std::atomic<uint64_t> dspOverrunCount { 0 };
+    std::atomic<uint64_t> dspBlockCount { 0 };
     std::atomic<bool> lowLatency { false };
+    std::atomic<int> previousBufferSize { 0 };
+    std::atomic<double> previousSampleRate { 0.0 };
     mutable juce::String voiceError;
+    juce::String timelineError;
+    juce::String assetError;
 
     void setPluginStatus (juce::String message);
     std::vector<CatalogEntry> loadablePluginEntries() const;
@@ -787,14 +838,21 @@ private:
     double clickPhase = 0.0;
     double clickEnvelope = 0.0;
     double clickOscillator = 0.0;
+    double probePhase = 0.0;   // diagnostic sine phase (NC_TEST_TONE_HZ)
     int clickBeat = 0;
     float smoothedGain[trackCount] {};
     float smoothedPan[trackCount] {};
     float smoothedSendA[trackCount] {};
     float smoothedSendB[trackCount] {};
     float smoothedWidth[trackCount] {};
+    // Equal-power pan gains, recomputed only when smoothedPan moves (audio
+    // thread only; NaN-free defaults so the first block is correct either way).
+    float cachedPanValue[trackCount] { -2.0f };
+    float cachedPanLeft[trackCount] { 0.7071f };
+    float cachedPanRight[trackCount] { 0.7071f };
     float smoothedMaster = 0.8f;
     bool smoothingPrimed = false;
+    bool transportWasPlaying = false;
 
     // Aux returns: send sums are accumulated here per block, processed by
     // AuxBus (tail state), then added to the master mix. Sized in prepare().

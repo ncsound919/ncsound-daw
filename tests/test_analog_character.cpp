@@ -178,3 +178,27 @@ TEST_CASE ("Character output stays finite at full scale", "[character]")
         REQUIRE (std::abs (left) <= 1.0f);
     }
 }
+
+TEST_CASE ("A block reads one settings snapshot and ignores later knob moves")
+{
+    AnalogCharacter character;
+    character.prepare (48000.0);
+    auto settings = enabledSettings (CharacterCircuit::neveBa283, 12.0f);
+    settings.mix = 0.0f;
+    character.setSettings (settings);
+
+    character.beginBlock();
+
+    // The message thread moves the knobs mid-block; the audio thread must keep
+    // using the snapshot it latched, so a dry setting stays dry for the block.
+    settings.mix = 1.0f;
+    settings.circuit = CharacterCircuit::redd6dj8;
+    character.setSettings (settings);
+
+    float left = 0.5f, right = 0.5f;
+    for (int i = 0; i < 256; ++i)
+        character.processSample (left, right);
+
+    REQUIRE (left == Approx (0.5f).margin (0.01));
+    REQUIRE (right == Approx (0.5f).margin (0.01));
+}

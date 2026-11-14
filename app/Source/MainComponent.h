@@ -6,6 +6,7 @@
 #include <nc/engine/Autosave.hpp>
 
 #include <array>
+#include <atomic>
 #include <optional>
 #include <memory>
 
@@ -72,15 +73,22 @@ private:
     bool saveAutosaveSibling();
     void setStatus (juce::String message, bool alert = false, double seconds = 5.0);
     void setPitchViewOpen (bool shouldOpen);
+    /** Everything below the native header: the React workspace's area. */
+    juce::Rectangle<int> reactArea() const;
     void addMarkerAtPlayhead();
     void deleteMarkerAtPlayhead();
     void jumpToMarker (bool next);
     juce::WebBrowserComponent::Options buildWebOptions();
+    /** Serves one file from the embedded React bundle. Matches the whole
+        bundle-relative path (see WebResourceLookup.h); the root serves
+        index.html and nothing else falls back to it. */
     std::optional<juce::WebBrowserComponent::Resource> getWebResource (const juce::String& path);
     juce::var buildState() const;
     juce::var buildTransport() const;
     juce::var buildPitch() const;
-    void pushState();
+    /** Emits stateChanged and returns the snapshot it built, so a route can
+        answer with the same snapshot instead of building a second copy. */
+    juce::var pushState();
     void paintHeader (juce::Graphics&);
     void paintStatus (juce::Graphics&);
     int menuAt (juce::Point<int>) const;
@@ -94,7 +102,7 @@ private:
     MixerPanel mixer;
     BrowserOverlay browser;
     std::unique_ptr<juce::WebBrowserComponent> webView;
-    bool pitchOpen = false;
+    bool pitchOpen = true;
 
     HardwareButton newButton { HardwareButton::Icon::plus, "NEW" };
     HardwareButton settingsButton { HardwareButton::Icon::settings };
@@ -106,6 +114,11 @@ private:
     int hoverMenu = -1;
     int tick = 0;
     bool deviceBannerShown = false;
+
+    /** One voice-to-MIDI worker at a time: each holds a mono copy of the take,
+        so a burst of clicks must not queue several. Reset on the message
+        thread when the job answers. */
+    std::atomic<bool> transcriptionInFlight { false };
 
     juce::TooltipWindow tooltipWindow { this, 700 };
 

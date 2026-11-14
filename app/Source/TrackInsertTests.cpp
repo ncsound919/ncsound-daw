@@ -1,5 +1,5 @@
-#include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
+#include <catch2/catch_test_macros.hpp>
 
 #include "BuiltinStudioFx.h"
 #include "TrackInsertRack.h"
@@ -190,7 +190,7 @@ TEST_CASE ("replaced inserts are destroyed only after garbage collection")
         REQUIRE (rack.install (0, 0, std::make_unique<FakeInsert> (0), stateFor ("second"), error));
         REQUIRE (FakeInsert::destroyed.load() == 0);
 
-        rack.collectGarbage();
+        rack.collectGarbage (true); // no callback can run in this test
         REQUIRE (FakeInsert::destroyed.load() == 1);
     }
 
@@ -207,7 +207,7 @@ TEST_CASE ("remove clears the active slot and saved metadata")
     REQUIRE_FALSE (rack.slotState (0, 0).isEmpty());
 
     rack.remove (0, 0);
-    rack.collectGarbage();
+    rack.collectGarbage (true);
 
     REQUIRE (rack.slotState (0, 0).isEmpty());
     REQUIRE_FALSE (rack.isMissing (0, 0));
@@ -277,7 +277,7 @@ TEST_CASE ("a move outside the rack is refused and changes nothing", "[inserts]"
     REQUIRE (rack.install (0, 0, std::make_unique<FakeInsert> (32), stateFor ("stay"), error));
 
     REQUIRE_FALSE (rack.moveInsert (0, 0, 0));    // same slot
-    REQUIRE_FALSE (rack.moveInsert (0, 0, 4));    // past the last slot
+    REQUIRE_FALSE (rack.moveInsert (0, 0, nc::TrackInsertRack::slotsPerTrack));  // past the last slot
     REQUIRE_FALSE (rack.moveInsert (-1, 0, 1));   // no such track
 
     REQUIRE (rack.slot (0, 0).active.load() != nullptr);
@@ -300,7 +300,7 @@ TEST_CASE ("master slot installs, bypasses, reports latency and clears", "[inser
     REQUIRE (rack.masterLatency() == 0);
 
     rack.removeMaster();
-    rack.collectGarbage();
+    rack.collectGarbage (true);
     REQUIRE (rack.masterState().isEmpty());
     REQUIRE (rack.masterLatency() == 0);
 }

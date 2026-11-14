@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstddef>
@@ -306,6 +307,15 @@ struct KWeighting
     exceed the sample peak) but its error near Nyquist is larger than a
     48-tap windowed-sinc. Every tap access is clamped, including i+2 at the
     end of the render, and non-finite samples read as 0. */
+inline double cubicEval (double p0, double p1, double p2, double p3, double t) noexcept
+{
+    const auto t2 = t * t;
+    const auto t3 = t2 * t;
+
+    return 0.5 * ((2.0 * p1) + (-p0 + p2) * t + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+                  + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3);
+}
+
 inline double cubicAt (const float* channel, std::size_t frames, std::size_t i, double t) noexcept
 {
     const auto last = frames - 1;
@@ -318,11 +328,8 @@ inline double cubicAt (const float* channel, std::size_t frames, std::size_t i, 
     const auto p1 = at (i);
     const auto p2 = at (i + 1);
     const auto p3 = at (i + 2);
-    const auto t2 = t * t;
-    const auto t3 = t2 * t;
 
-    return 0.5 * ((2.0 * p1) + (-p0 + p2) * t + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
-                  + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3);
+    return cubicEval (p0, p1, p2, p3, t);
 }
 } // namespace detail
 
@@ -455,6 +462,229 @@ inline LoudnessResult measureLoudness (const float* left, const float* right,
     result.silent = false;
     return result;
 }
+
+/** Streaming loudness meter for renders too long to hold in RAM.
+
+    Feed every render block with push() and read finish() once. It applies the
+    same K-weighting, 400 ms blocks at 75 % overlap, absolute/relative gates and
+    4x cubic true-peak scan as measureLoudness(), but keeps only a 400 ms ring
+    of K-weighted samples: memory follows the sample rate, not the render
+    length. Blocks close on the same hop grid, so the two agree to within
+    floating-point summation order.
+*/
+class LoudnessMeter
+{
+public:
+    LoudnessMeter (double sampleRate, bool isStereo)
+        : rate (std::isfinite (sampleRate) && sampleRate > 0.0 ? sampleRate : 48000.0),
+          stereo (isStereo),
+          kL (rate),
+          kR (rate)
+    {
+        blockFrames = static_cast<std::size_t> (std::llround (0.4 * rate));
+        hopFrames = blockFrames / 4;
+
+        if (blockFrames > 0)
+        {
+            ringL.assign (blockFrames, 0.0);
+
+            if (stereo)
+                ringR.assign (blockFrames, 0.0);
+        }
+    }
+
+    void push (const float* left, const float* right, std::size_t frames)
+    {
+        if (left == nullptr || frames == 0)
+            return;
+
+        for (std::size_t i = 0; i < frames; ++i)
+        {
+            const auto l = safe (left[i]);
+            const auto r = stereo ? safe (right[i]) : l;
+
+            samplePeak = std::max (samplePeak, std::max (std::abs (l), std::abs (r)));
+
+            const auto filteredL = kL.process (l);
+            const auto filteredR = stereo ? kR.process (r) : 0.0;
+
+            if (blockFrames > 0)
+            {
+                const auto slot = static_cast<std::size_t> (framesSeen
+                                                            % static_cast<int64_t> (blockFrames));
+                ringL[slot] = filteredL;
+
+                if (stereo)
+                    ringR[slot] = filteredR;
+            }
+
+            pushHistory (histL, l);
+
+            if (stereo)
+                pushHistory (histR, r);
+
+            // Cubic reconstruction needs one sample either side, so index
+            // (count - 2) can be evaluated once three samples have arrived.
+            // The last index is closed in finish() with the edge clamped, as
+            // measureLoudness() does.
+            if (framesSeen >= 2)
+            {
+                const auto atIndex = framesSeen - 2;
+                addTruePeak (atIndex == 0 ? histL[2] : histL[3], histL[2], histL[1], histL[0]);
+
+                if (stereo)
+                    addTruePeak (atIndex == 0 ? histR[2] : histR[3], histR[2], histR[1], histR[0]);
+            }
+
+            ++framesSeen;
+
+            if (blockFrames > 0 && hopFrames > 0
+                && framesSeen >= static_cast<int64_t> (blockFrames)
+                && ((framesSeen - static_cast<int64_t> (blockFrames))
+                    % static_cast<int64_t> (hopFrames)) == 0)
+                closeBlock();
+        }
+    }
+
+    LoudnessResult finish()
+    {
+        LoudnessResult result;
+        result.sampleRate = rate;
+        result.frames = framesSeen;
+        result.durationSeconds = static_cast<double> (framesSeen) / rate;
+        result.samplePeakDb = samplePeak > 0.0 ? 20.0 * std::log10 (samplePeak) : -120.0;
+
+        if (framesSeen >= 2)
+        {
+            // The one index the streaming scan could not close: i = count - 2
+            // reads s[count] clamped to s[count - 1].
+            const auto atIndex = framesSeen - 2;
+            addTruePeak (atIndex == 0 ? histL[1] : histL[2], histL[1], histL[0], histL[0]);
+
+            if (stereo)
+                addTruePeak (atIndex == 0 ? histR[1] : histR[2], histR[1], histR[0], histR[0]);
+        }
+
+        truePeak = std::max (truePeak, samplePeak);
+        result.truePeakDbTp = truePeak > 0.0 ? 20.0 * std::log10 (truePeak) : -120.0;
+
+        if (framesSeen == 0 || blockFrames == 0 || hopFrames == 0)
+            return result;
+
+        if (framesSeen < static_cast<int64_t> (blockFrames))
+        {
+            // Shorter than one 400 ms block: same ungated fallback.
+            double sum = 0.0;
+
+            for (std::size_t i = 0; i < static_cast<std::size_t> (framesSeen); ++i)
+            {
+                sum += ringL[i] * ringL[i];
+
+                if (stereo)
+                    sum += ringR[i] * ringR[i];
+            }
+
+            const auto meanSq = sum / static_cast<double> (framesSeen);
+
+            if (meanSq <= 0.0)
+                return result;
+
+            const auto lufs = -0.691 + 10.0 * std::log10 (meanSq);
+
+            if (lufs < -70.0)
+                return result;
+
+            result.integratedLufs = lufs;
+            result.silent = false;
+            return result;
+        }
+
+        if (blockEnergies.empty())
+            return result;
+
+        double ungatedSum = 0.0;
+
+        for (const auto energy : blockEnergies)
+            ungatedSum += energy;
+
+        const auto ungatedMean = ungatedSum / static_cast<double> (blockEnergies.size());
+        const auto ungatedLufs = -0.691 + 10.0 * std::log10 (ungatedMean);
+        const auto thresholdMean = std::pow (10.0, (ungatedLufs - 10.0 + 0.691) / 10.0);
+
+        double gatedSum = 0.0;
+        std::size_t gatedCount = 0;
+
+        for (const auto energy : blockEnergies)
+        {
+            if (energy >= thresholdMean)
+            {
+                gatedSum += energy;
+                ++gatedCount;
+            }
+        }
+
+        if (gatedCount == 0)
+            return result;
+
+        result.integratedLufs = -0.691 + 10.0 * std::log10 (gatedSum / static_cast<double> (gatedCount));
+        result.silent = false;
+        return result;
+    }
+
+private:
+    static double safe (float value) noexcept
+    {
+        return std::isfinite (value) ? static_cast<double> (value) : 0.0;
+    }
+
+    static void pushHistory (std::array<double, 4>& history, double value) noexcept
+    {
+        history[3] = history[2];
+        history[2] = history[1];
+        history[1] = history[0];
+        history[0] = value;
+    }
+
+    void addTruePeak (double p0, double p1, double p2, double p3) noexcept
+    {
+        for (int q = 1; q < 4; ++q)
+            truePeak = std::max (truePeak, std::abs (detail::cubicEval (p0, p1, p2, p3, q * 0.25)));
+    }
+
+    void closeBlock() noexcept
+    {
+        double sum = 0.0;
+
+        for (std::size_t i = 0; i < blockFrames; ++i)
+        {
+            sum += ringL[i] * ringL[i];
+
+            if (stereo)
+                sum += ringR[i] * ringR[i];
+        }
+
+        const auto meanSq = sum / static_cast<double> (blockFrames);
+        const auto lufs = meanSq > 0.0 ? -0.691 + 10.0 * std::log10 (meanSq) : -120.0;
+
+        if (lufs >= -70.0)
+            blockEnergies.push_back (meanSq);
+    }
+
+    double rate;
+    bool stereo;
+    detail::KWeighting kL;
+    detail::KWeighting kR;
+    std::size_t blockFrames = 0;
+    std::size_t hopFrames = 0;
+    int64_t framesSeen = 0;
+    double samplePeak = 0.0;
+    double truePeak = 0.0;
+    std::vector<double> ringL;
+    std::vector<double> ringR;
+    std::vector<double> blockEnergies;
+    std::array<double, 4> histL {};
+    std::array<double, 4> histR {};
+};
 
 /** Gain (dB) that moves a measured render onto the loudness target.
     Silence -> 0 dB (nothing to normalise). */

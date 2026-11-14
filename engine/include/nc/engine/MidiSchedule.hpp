@@ -37,7 +37,12 @@ struct MidiEvent
 
     `clipLengthBars` sizes the clip; notes past its end are ignored.
     Pure and allocation-free per event (output is caller-owned), so the
-    audio callback can build a juce::MidiBuffer from it without a lock. */
+    audio callback can build a juce::MidiBuffer from it without a lock.
+
+    `retriggerSustained` controls the "sounding at the window start"
+    catch-up: pass true for a seek/loop entry (or a stateless one-off
+    call) and false for windows that directly continue the previous one,
+    so a note longer than one block is not re-attacked on every block. */
 inline void scheduleMidiClip (const std::vector<MidiNote>& notes,
                               double clipStartBar,
                               double clipLengthBars,
@@ -46,7 +51,8 @@ inline void scheduleMidiClip (const std::vector<MidiNote>& notes,
                               const TempoMap& tempoMap,
                               double sampleRate,
                               int blockSize,
-                              std::vector<MidiEvent>& out)
+                              std::vector<MidiEvent>& out,
+                              bool retriggerSustained = true)
 {
     if (sampleRate <= 0.0 || ! std::isfinite (sampleRate) || blockSize <= 0)
         return;
@@ -61,8 +67,8 @@ inline void scheduleMidiClip (const std::vector<MidiNote>& notes,
     auto offsetForPpq = [&] (double ppq) -> int
     {
         const auto seconds = ppqToSeconds (tempoMap, ppq) - blockStartSeconds;
-        const auto samples = std::llround (seconds * sampleRate);
-        return static_cast<int> (std::clamp<int64_t> (samples, 0, blockSize));
+        const int64_t samples = std::llround (seconds * sampleRate);
+        return static_cast<int> (std::clamp<int64_t> (samples, 0, static_cast<int64_t> (blockSize) - 1));
     };
 
     for (const auto& note : notes)
@@ -80,7 +86,7 @@ inline void scheduleMidiClip (const std::vector<MidiNote>& notes,
         if (! startsInBlock && ! endsInBlock && ! soundingAtStart)
             continue;
 
-        if (startsInBlock || soundingAtStart)
+        if (startsInBlock || (soundingAtStart && retriggerSustained))
         {
             const auto offset = soundingAtStart ? 0 : offsetForPpq (noteStartPpq);
             MidiEvent event;

@@ -90,12 +90,14 @@ MainComponent::MainComponent (juce::File registryFile)
     addAndMakeVisible (newButton);
     addAndMakeVisible (settingsButton);
 
-    // React pitch UI (WebView2). Hidden until View > Pitch UI is chosen;
-    // it overlays the body like the plugin browser and talks to AudioEngine
-    // through the routes in WebViewBridge.cpp.
+    // The React workspace (WebView2) is the app's UI: it covers everything
+    // below the native header, so its own transport, arrangement, mixer and
+    // browser are what the user works in. View > React Workspace still toggles
+    // back to the legacy JUCE surfaces. It talks to AudioEngine through the
+    // routes in WebViewBridge.cpp.
     webView = std::make_unique<juce::WebBrowserComponent> (buildWebOptions());
-    addChildComponent (webView.get());
-    webView->setVisible (false);
+    addAndMakeVisible (webView.get());
+    webView->setVisible (true);
 
     arrange.onTrackSelected = [this] (int track)
     {
@@ -216,9 +218,9 @@ MainComponent::MainComponent (juce::File registryFile)
             return;
         }
 
-        if (browserSlot < 0 || browserSlot > 3)
+        if (browserSlot < 0 || browserSlot >= AudioEngine::kInsertSlotsPerTrack)
         {
-            setStatus ("Choose a user insert slot (1-4), not the native strip", true);
+            setStatus ("Choose a user insert slot (1-8), not the native strip", true);
             return;
         }
 
@@ -235,8 +237,14 @@ MainComponent::MainComponent (juce::File registryFile)
 
     engine.onPluginStatus = [this] (juce::String message)
     {
-        setStatus (std::move (message), false, 4.0);
+        setStatus (message, false, 4.0);
+
+        // The React status strip reads the message out of the state, so a load
+        // failure has to reach it, not just the native strip behind it.
+        pushState();
     };
+
+    engine.onInsertInstalled = [this] { pushState(); };
 
     // Link installed bundles to their registry rows in the background; a clicked
     // row still resolves its own bundle if this has not finished yet.
@@ -363,6 +371,7 @@ void MainComponent::setView (View newView)
 void MainComponent::setSelectedTrack (int track)
 {
     selectedTrack = juce::jlimit (0, juce::jmax (0, engine.getActiveTrackCount() - 1), track);
+    engine.setMidiLearnTrack (selectedTrack);
     arrange.setSelectedTrack (selectedTrack);
     mixer.setSelectedTrack (selectedTrack);
     if (pitchOpen)
@@ -427,11 +436,25 @@ void MainComponent::setStatus (juce::String message, bool alert, double seconds)
 }
 
 //==============================================================================
+juce::Rectangle<int> MainComponent::reactArea() const
+{
+    // The React workspace draws its own header, transport and status strip, so
+    // it owns the whole window. Leaving the native header on top stacked two
+    // headers in the standalone.
+    if (pitchOpen)
+        return getLocalBounds();
+
+    const auto top = headerArea.getBottom();
+    return { 0, top, getWidth(), juce::jmax (0, getHeight() - top) };
+}
+
 void MainComponent::resized()
 {
     auto area = getLocalBounds();
 
-    headerArea = area.removeFromTop (44);
+    // One header, not two: while the React workspace is open it supplies the
+    // header, transport and status strip, and the native chrome is not drawn.
+    headerArea = pitchOpen ? juce::Rectangle<int>() : area.removeFromTop (44);
     transportArea = area.removeFromTop (100);
     statusArea = area.removeFromBottom (30);
     bodyArea = area;
@@ -441,23 +464,39 @@ void MainComponent::resized()
     mixer.setBounds (bodyArea);
     browser.setBounds (bodyArea);
     if (webView != nullptr)
-        webView->setBounds (bodyArea);
+        webView->setBounds (pitchOpen ? reactArea() : bodyArea);
 
-    auto header = headerArea.reduced (16, 0);
-    logoArea = header.removeFromLeft (216);
-    header.removeFromLeft (8);
+    if (headerArea.isEmpty())
+    {
+        // Hidden chrome keeps no hit areas, so the menus and the hardware
+        // buttons cannot be clicked through the React header.
+        logoArea = {};
+        headerRightArea = {};
+        cpuArea = {};
+        settingsButton.setBounds ({});
+        newButton.setBounds ({});
 
-    for (auto& menu : menuAreas)
-        menu = header.removeFromLeft (58);
+        for (auto& menu : menuAreas)
+            menu = {};
+    }
+    else
+    {
+        auto header = headerArea.reduced (16, 0);
+        logoArea = header.removeFromLeft (216);
+        header.removeFromLeft (8);
 
-    auto right = headerArea.reduced (16, 0);
-    settingsButton.setBounds (right.removeFromRight (34).withSizeKeepingCentre (34, 30));
-    right.removeFromRight (10);
-    newButton.setBounds (right.removeFromRight (92).withSizeKeepingCentre (92, 30));
-    right.removeFromRight (16);
+        for (auto& menu : menuAreas)
+            menu = header.removeFromLeft (58);
 
-    cpuArea = right.removeFromRight (140);
-    headerRightArea = right;
+        auto right = headerArea.reduced (16, 0);
+        settingsButton.setBounds (right.removeFromRight (34).withSizeKeepingCentre (34, 30));
+        right.removeFromRight (10);
+        newButton.setBounds (right.removeFromRight (92).withSizeKeepingCentre (92, 30));
+        right.removeFromRight (16);
+
+        cpuArea = right.removeFromRight (140);
+        headerRightArea = right;
+    }
 
     statusMessageArea = statusArea.reduced (14, 0).removeFromLeft (juce::jmin (500, statusArea.getWidth() / 2));
 }
@@ -479,6 +518,9 @@ void MainComponent::paint (juce::Graphics& g)
 
 void MainComponent::paintHeader (juce::Graphics& g)
 {
+    if (headerArea.isEmpty())
+        return;
+
     const auto area = headerArea.toFloat();
 
     juce::ColourGradient background (juce::Colour (0xff2c2926), area.getX(), area.getY(),
@@ -681,14 +723,31 @@ void MainComponent::finishRecording()
     }
 
     auto placed = 0;
+    auto empty = 0;
 
     for (const auto& take : takes)
     {
+        // A take with no frames has nothing to read peaks from; placing it used
+        // to take the app down instead of saying the input was silent.
+        if (take.frames <= 0)
+        {
+            ++empty;
+            continue;
+        }
+
         const auto startBar = 1.0 + static_cast<double> (take.startFrame)
                               / juce::jmax (1.0, engine.currentSampleRate())
                               / (240.0 / juce::jmax (1.0, engine.getBpm()));
         if (arrange.placeRecordedTake (take.file, take.track, startBar))
             ++placed;
+    }
+
+    if (placed == 0)
+    {
+        setStatus (empty > 0 ? juce::String ("RECORD / NO AUDIO CAPTURED — CHECK THE INPUT")
+                             : juce::String ("RECORD / NO TAKES PLACED"),
+                   true);
+        return;
     }
 
     setStatus ("TAKES PLACED / " + juce::String (placed) + " OF " + juce::String (static_cast<int> (takes.size())));
@@ -820,43 +879,40 @@ bool MainComponent::confirmClose()
         return true;
     }
 
-    auto dialog = std::make_unique<juce::AlertWindow> ("Unsaved changes",
+    auto dialog = std::make_shared<juce::AlertWindow> ("Unsaved changes",
                                                        "This session has unsaved work. Save before quitting?",
                                                        juce::AlertWindow::QuestionIcon, this);
     dialog->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey, 0, 0));
     dialog->addButton ("Discard", 2);
     dialog->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey, 0, 0));
 
-    // AlertWindow has no runModalLoop; enterModalState + a nested dispatch
-    // loop is the JUCE way to read the choice synchronously here.
-    int result = 0;
+    // The close request must hand control straight back to the message loop. A
+    // nested runDispatchLoop() here never returns, which is why every quit hung
+    // and had to be killed from Task Manager: the choice arrives in a callback
+    // that commits the quit itself.
     dialog->enterModalState (true,
                              juce::ModalCallbackFunction::create (
-                                 [&result, dialog = dialog.get()] (int modalResult) mutable
+                                 [dialog, safe = juce::Component::SafePointer<MainComponent> (this)] (int modalResult) mutable
                                  {
-                                     result = modalResult;
-                                     dialog->exitModalState (modalResult);
+                                     if (safe == nullptr || modalResult == 0)
+                                         return; // Cancel: keep working.
+
+                                     if (modalResult == 1)
+                                     {
+                                         if (safe->currentProjectFile == juce::File())
+                                         {
+                                             safe->setStatus ("NO PROJECT FILE YET / USE SAVE SESSION AS", true);
+                                             return;
+                                         }
+
+                                         safe->writeProject (safe->currentProjectFile);
+                                     }
+
+                                     safe->writeCleanExitMarker();
+
+                                     if (auto* app = juce::JUCEApplication::getInstance())
+                                         app->systemRequestedQuit();
                                  }));
-    juce::MessageManager::getInstance()->runDispatchLoop();
-    if (result == 1)
-    {
-        if (currentProjectFile == juce::File())
-        {
-            setStatus ("NO PROJECT FILE YET / USE SAVE SESSION AS", true);
-            return false;
-        }
-
-        writeProject (currentProjectFile);
-        writeCleanExitMarker();
-        return true;
-    }
-
-    if (result == 2)
-    {
-        // Discard: no marker write (clean exit still counts as intentional).
-        writeCleanExitMarker();
-        return true;
-    }
 
     return false;
 }
@@ -984,6 +1040,19 @@ void MainComponent::timerCallback()
     if (engine.isMidiRecording())
         engine.drainMidiRecording();
 
+    const auto learned = engine.pollMidiLearnChanges();
+    if (learned > 0)
+    {
+        if (view == View::mix)
+            mixer.syncFromEngine();
+        else
+            arrange.refresh();
+        // Channel parameters travel only in buildState, so the React mixer
+        // and inspector need a state push too, not just the legacy surfaces.
+        pushState();
+        setStatus ("MIDI / " + juce::String (learned) + " LEARNED VALUE" + (learned == 1 ? "" : "S") + " APPLIED", false, 2.5);
+    }
+
     if (engine.pluginCatalog().isScanning())
         browser.setScanState (true, engine.pluginCatalog().scanProgress());
 
@@ -996,7 +1065,9 @@ void MainComponent::timerCallback()
 
     // Idle the meters and the header when the transport is parked, instead of
     // repainting the whole surface 30 times a second at rest.
-    if (playing || tick % 15 == 0)
+    // The legacy surfaces are invisible while the React workspace covers them,
+    // so refreshing them would only cost work nobody sees.
+    if (! pitchOpen && (playing || tick % 15 == 0))
     {
         if (view == View::arrange)
             arrange.refresh();
@@ -1094,7 +1165,7 @@ bool MainComponent::saveAutosaveSibling()
         state.pitch = engine.trackPitchStack (track);
         state.instrumentPitch = engine.instrumentPitchStack (track);
 
-        for (int slot = 0; slot < 4; ++slot)
+        for (int slot = 0; slot < AudioEngine::kInsertSlotsPerTrack; ++slot)
             state.inserts[static_cast<size_t> (slot)] = engine.trackInsertState (track, slot);
 
         state.instrument = engine.trackInstrumentState (track);
@@ -1803,9 +1874,9 @@ void MainComponent::handleMenuResult (int result)
         case 2065:
         case 2066:
         {
-            // MIDI Learn placeholder — next CC/Note binds to the selected
-            // track's first filter knob (wire a knob's Learn button here).
-            engine.getMidiLearn().armLearn (("track." + juce::String (selectedTrack) + ".filterCutoff").toStdString(), nc::MidiLearnManager::Mode::absolute);
+            // Per-knob Learn buttons in the panel use the same manager.
+            // The menu entry binds the selected track's filter frequency.
+            engine.getMidiLearn().armLearn (("track." + juce::String (selectedTrack) + ".hpfFreq").toStdString(), nc::MidiLearnManager::Mode::absolute);
             setStatus ("MIDI LEARN ARMED / turn a knob on your controller", false, 4.0);
             break;
         }
@@ -1819,16 +1890,27 @@ void MainComponent::handleMenuResult (int result)
                                   {
                                       if (safe == nullptr || chosen.getResult() == juce::File())
                                           return;
-                                      auto clip = safe->engine.voiceToMidiClip (chosen.getResult(), safe->selectedTrack, safe->engine.getBpm());
-                                      if (clip.notes.empty())
-                                      {
-                                          safe->setStatus ("VOICE TO MIDI FAILED / " + safe->engine.lastVoiceError(), true, 6.0);
-                                          return;
-                                      }
-                                      const auto index = safe->engine.addMidiClip (clip);
-                                      (void) index;
-                                      safe->arrange.refresh();
-                                      safe->setStatus ("VOICE TO MIDI / " + juce::String (clip.notes.size()) + " NOTES FROM " + chosen.getResult().getFileName(), false, 6.0);
+                                      const auto file = chosen.getResult();
+                                      safe->setStatus ("VOICE TO MIDI / ANALYSING " + file.getFileName(), false, 4.0);
+                                      safe->engine.voiceToMidiClipAsync (file, safe->selectedTrack, safe->engine.getBpm(),
+                                        [safe, file] (nc::engine::ClipState clip, juce::String error)
+                                        {
+                                            if (safe == nullptr)
+                                                return;
+                                            if (clip.notes.empty())
+                                            {
+                                                safe->setStatus ("VOICE TO MIDI FAILED / " + error, true, 6.0);
+                                                return;
+                                            }
+                                            const auto index = safe->engine.addMidiClip (clip);
+                                            if (index < 0)
+                                            {
+                                                safe->setStatus ("VOICE TO MIDI FAILED / CLIP LIMIT REACHED", true, 6.0);
+                                                return;
+                                            }
+                                            safe->arrange.refresh();
+                                            safe->setStatus ("VOICE TO MIDI / " + juce::String (clip.notes.size()) + " NOTES FROM " + file.getFileName(), false, 6.0);
+                                        });
                                   });
             break;
         }
@@ -2403,7 +2485,7 @@ void MainComponent::writeProject (const juce::File& file)
         state.pitch = engine.trackPitchStack (track);
         state.instrumentPitch = engine.instrumentPitchStack (track);
 
-        for (int slot = 0; slot < 4; ++slot)
+        for (int slot = 0; slot < AudioEngine::kInsertSlotsPerTrack; ++slot)
             state.inserts[static_cast<size_t> (slot)] = engine.trackInsertState (track, slot);
 
         state.instrument = engine.trackInstrumentState (track);
@@ -2540,7 +2622,7 @@ void MainComponent::readProject (const juce::File& file)
         const auto& trackState = static_cast<size_t> (track) < document->tracks.size()
                                      ? document->tracks[static_cast<size_t> (track)] : emptyTrack;
 
-        for (int slot = 0; slot < 4; ++slot)
+        for (int slot = 0; slot < AudioEngine::kInsertSlotsPerTrack; ++slot)
         {
             const auto& insert = trackState.inserts[static_cast<size_t> (slot)];
 

@@ -5,6 +5,34 @@
 
 namespace nc
 {
+namespace
+{
+// PolyBLEP correction around the waveform discontinuity. A sawtooth built
+// straight from the phase ramp carries harmonics past Nyquist, and everything
+// above it folds back down as inharmonic hash -- the fizzy digital noise a
+// naive oscillator makes on every note. Subtracting this residual band-limits
+// the step without changing the pitch or the tone below Nyquist.
+double polyBlep (double t, double dt) noexcept
+{
+    if (dt <= 0.0 || dt >= 1.0)
+        return 0.0;
+
+    if (t < dt)
+    {
+        const auto x = t / dt;
+        return x + x - x * x - 1.0;
+    }
+
+    if (t > 1.0 - dt)
+    {
+        const auto x = (t - 1.0) / dt;
+        return x * x + x + x + 1.0;
+    }
+
+    return 0.0;
+}
+} // namespace
+
 BuiltinSynth::Preset BuiltinSynth::presetFor (PresetId id)
 {
     Preset preset;
@@ -189,10 +217,25 @@ bool BuiltinSynth::setState (const nc::engine::PluginSlotState& state)
         return true;
     }
 
-    if (memory.getSize() < 11 * sizeof (int))
+    // The legacy blobs are shorter than the current one, so the size is
+    // validated against the version that was actually written instead of a
+    // single worst-case length (which rejected every v2 session).
+    if (memory.getSize() < 3 * sizeof (int))
         return false;
 
     int version = 0;
+    memory.copyTo (&version, 0, sizeof (int));
+
+    if (version != 2 && version != 3)
+        return false;
+
+    const auto requiredBytes = version >= 3
+                                   ? 5 * sizeof (int) + 10 * sizeof (float)
+                                   : 3 * sizeof (int) + 6 * sizeof (float);
+
+    if (memory.getSize() < requiredBytes)
+        return false;
+
     int presetInt = 0;
     int waveInt = 0;
     float cutoffHz = 0.0f;
@@ -214,9 +257,6 @@ bool BuiltinSynth::setState (const nc::engine::PluginSlotState& state)
     };
 
     readInt (version);
-
-    if (version != 2 && version != 3)
-        return false;
 
     readInt (presetInt);
     readInt (waveInt);
@@ -275,6 +315,7 @@ void BuiltinSynth::Voice::startNote (int midiNoteNumber, float velocity,
     baseFrequency = juce::MidiMessage::getMidiNoteInHertz (midiNoteNumber, 440.0);
     envLevel = 0.0f;
     filterState = 0.0f;
+    filterState2 = 0.0f;
     envStage = 0;
     noteHeld = true;
     phase = 0.0;
@@ -313,7 +354,11 @@ void BuiltinSynth::Voice::renderNextBlock (juce::AudioBuffer<float>& outputBuffe
     const auto rate = juce::jmax (1.0, getSampleRate());
     const auto channels = juce::jmin (outputBuffer.getNumChannels(), 2);
 
-    const auto peak = preset.level * 2.0f;
+    // Envelope peak is the preset level itself. Doubling it here gave every
+    // voice 0.6 of full scale, so a three-note chord left the instrument at
+    // +3.4 dBFS and the master maximizer flattened it on every note -- the
+    // grinding distortion a held chord was heard as.
+    const auto peak = preset.level;
     const auto attackRate = preset.attackMs > 0.0f
                                 ? peak / (preset.attackMs * 0.001f * static_cast<float> (rate))
                                 : peak;
@@ -324,8 +369,10 @@ void BuiltinSynth::Voice::renderNextBlock (juce::AudioBuffer<float>& outputBuffe
     const auto releaseFactor = static_cast<float> (
         std::exp (-4.0 / juce::jmax (1.0, preset.releaseMs * 0.001f * rate)));
 
-    // Key-tracked one-pole lowpass: higher notes stay bright.
-    const auto keyCutoff = juce::jlimit (40.0f, 18000.0f,
+    // Key-tracked lowpass: higher notes stay bright. Two cascaded one-poles
+    // give 12 dB/oct, which keeps the tone under control below Nyquist instead
+    // of leaving a single 6 dB/oct slope to smear the top octave.
+    const auto keyCutoff = juce::jlimit (40.0f, static_cast<float> (rate * 0.45),
                                          preset.cutoffHz * (0.5f + 0.5f * static_cast<float> (baseFrequency / 440.0)));
     const auto filterCoef = static_cast<float> (
         1.0 - std::exp (-2.0 * juce::MathConstants<double>::pi * static_cast<double> (keyCutoff) / rate));
@@ -377,12 +424,16 @@ void BuiltinSynth::Voice::renderNextBlock (juce::AudioBuffer<float>& outputBuffe
                 sample = 1.0f - 4.0f * std::abs (phase - 0.5f);
                 break;
             case Wave::saw:
-                sample = static_cast<float> (2.0 * phase - 1.0) * 0.6f;
+                // Band-limited ramp: the polyBLEP residual only exists in the
+                // sample either side of the wrap, so the aliasing that used to
+                // ride on every note is cancelled at the source.
+                sample = static_cast<float> (2.0 * phase - 1.0 - polyBlep (phase, phaseStep)) * 0.6f;
                 break;
         }
 
         filterState += filterCoef * (sample - filterState);
-        const auto value = filterState * envLevel;
+        filterState2 += filterCoef * (filterState - filterState2);
+        const auto value = filterState2 * envLevel;
         const auto actualSample = startSample + i;
 
         for (int channel = 0; channel < channels; ++channel)

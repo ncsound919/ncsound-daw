@@ -460,6 +460,11 @@ TEST_CASE ("LUFS normalisation can boost when the true-peak ceiling allows it", 
     const auto loud = engine.lastExportLoudness();
     REQUIRE_FALSE (loud.silent);
 
+    INFO ("quiet " << quietLoudness.integratedLufs << " LUFS / " << quietLoudness.truePeakDbTp
+                   << " dBTP; target gain " << nc::engine::export_::gainDbForTarget (quietLoudness, -14.0)
+                   << " dB; ceiling allows " << nc::engine::export_::maxBoostForTruePeak (quietLoudness, -1.0)
+                   << " dB; got " << loud.integratedLufs << " LUFS / " << loud.truePeakDbTp << " dBTP");
+
     // gainDbForTruePeak() returns <= 0, so clamping with it made every boost a
     // no-op; the ceiling has to be applied as a maximum boost instead. This
     // material's crest factor is wide enough that the ceiling, not -14 LUFS,

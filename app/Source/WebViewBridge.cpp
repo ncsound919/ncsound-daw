@@ -230,6 +230,16 @@ juce::var MainComponent::buildTransport() const
     o->setProperty ("masterPeakRight", (double) engine.masterPeakRight());
     o->setProperty ("masterDim", engine.isMasterDimOn());
     o->setProperty ("masterMono", engine.isMasterMonoOn());
+    // Real-time audio health: measured callback load and the count of blocks
+    // that missed the device deadline (each one is an audible dropout).
+    o->setProperty ("dspLoad", (double) engine.dspLoad());
+    o->setProperty ("dspOverruns", (double) engine.dspOverruns());
+    o->setProperty ("dspBlocks", (double) engine.dspBlocksMeasured());
+    // The open device's own rate and block size: the budget every callback
+    // must fit inside, and the first thing to check when audio crackles.
+    o->setProperty ("deviceSampleRate", engine.deviceSampleRate());
+    o->setProperty ("deviceBufferSize", engine.deviceBufferSize());
+    o->setProperty ("recording", engine.isRecording() || engine.isMidiRecording());
     o->setProperty ("loopStartBar", engine.getLoopStartBar());
     o->setProperty ("loopEndBar", engine.getLoopEndBar());
 
@@ -248,10 +258,10 @@ juce::var MainComponent::buildState() const
     o->setProperty ("bpm", engine.getBpm());
     o->setProperty ("selectedTrack", selectedTrack);
     o->setProperty ("globalPitch", pitchToVar (engine.globalPitchStack()));
+    o->setProperty ("projectDirty", false);
     o->setProperty ("statusMessage", statusMessage);
     o->setProperty ("statusAlert", statusAlert);
     o->setProperty ("hasMasterPlugin", engine.hasMasterPlugin());
-    o->setProperty ("projectDirty", false);
     o->setProperty ("undoDepth", static_cast<int> (arrange.undoDepth()));
     o->setProperty ("redoDepth", static_cast<int> (arrange.redoDepth()));
     o->setProperty ("transport", buildTransport());
@@ -333,7 +343,7 @@ juce::var MainComponent::buildState() const
         // Insert rack: the four user slots only. Slot 0 is the baked native
         // strip, which the console reports separately as the track's channel.
         juce::Array<juce::var> inserts;
-        for (int slot = 0; slot < 4; ++slot)
+        for (int slot = 0; slot < 8; ++slot)
         {
             auto* s = new juce::DynamicObject();
             s->setProperty ("name", engine.trackInsertName (i, slot));
@@ -360,7 +370,11 @@ juce::var MainComponent::buildState() const
         p->setProperty ("category", entry.isInstrument ? "instrument" : "effect");
         p->setProperty ("format", entry.description.pluginFormatName);
         p->setProperty ("path", entry.description.fileOrIdentifier);
-        p->setProperty ("missing", entry.external && ! entry.scanned);
+        // "Missing" means not installed, not "the startup scan has not reached
+        // it yet". Rows were disabled for the whole scan, so nothing could load.
+        p->setProperty ("missing",
+                        entry.external && ! entry.scanned
+                            && ! engine.pluginCatalog().isScanning());
         p->setProperty ("scanned", entry.scanned);
         p->setProperty ("registryRow", entry.registryRow);
         plugins.add (juce::var (p));
@@ -390,10 +404,14 @@ juce::var MainComponent::buildState() const
     return juce::var (o);
 }
 
-void MainComponent::pushState()
+juce::var MainComponent::pushState()
 {
+    auto state = buildState();
+
     if (webView != nullptr)
-        webView->emitEventIfBrowserIsVisible ("stateChanged", buildState());
+        webView->emitEventIfBrowserIsVisible ("stateChanged", state);
+
+    return state;
 }
 
 juce::WebBrowserComponent::Options MainComponent::buildWebOptions()
@@ -498,6 +516,19 @@ juce::WebBrowserComponent::Options MainComponent::buildWebOptions()
           {
               if (! a.isEmpty())
                   engine.setMetronome ((bool) a[0]);
+              done (buildState());
+          } },
+        // Recording reuses the native transport's own start/finish steps, so a
+        // take is captured, trimmed, written to disk and placed on the timeline
+        // exactly as it is from the JUCE transport.
+        { "startRecording", [this] (const Args&, Completion done)
+          {
+              startRecording();
+              done (buildState());
+          } },
+        { "stopRecording", [this] (const Args&, Completion done)
+          {
+              finishRecording();
               done (buildState());
           } },
         { "setTrackGain", [this] (const Args& a, Completion done)
@@ -641,6 +672,74 @@ juce::WebBrowserComponent::Options MainComponent::buildWebOptions()
               pushState();
               done (buildState());
           } },
+        { "transcribeClip", [this] (const Args& a, Completion done)
+          {
+              // Voice-to-MIDI: analyse the audio a clip plays and place the
+              // result as a new MIDI clip on the same track, so the track's
+              // instrument immediately plays what was sung.
+              bool ok = false;
+              auto message = juce::String ("Select an audio clip to transcribe");
+
+              if (! a.isEmpty())
+              {
+                  const auto index = (int) std::round (finiteOr (a[0], -1.0));
+                  ArrangeView::WebClipView view;
+
+                  if (arrange.webClipAt (index, view) && view.kind == 1 && view.assetId >= 0)
+                  {
+                      const auto secondsPerBar = 240.0 / juce::jmax (1.0, engine.getBpm());
+                      const auto samples = engine.assetSamples (view.assetId,
+                                                                view.sourceOffsetSeconds,
+                                                                view.lengthBars * secondsPerBar);
+
+                      if (samples.getNumSamples() > 0)
+                      {
+                          nc::engine::V2MConfig cfg;
+                          cfg.sampleRate = (int) std::round (engine.assetSampleRate (view.assetId));
+                          cfg.bpm = engine.getBpm();
+
+                          const auto tracked = nc::engine::voiceToMidi (
+                              samples.getReadPointer (0),
+                              (std::size_t) samples.getNumSamples(), cfg);
+
+                          std::vector<nc::engine::MidiNote> notes;
+                          notes.reserve (tracked.size());
+
+                          for (const auto& note : tracked)
+                          {
+                              nc::engine::MidiNote midi;
+                              midi.startBeat = note.startBeat;
+                              midi.lengthBeats = note.lengthBeats;
+                              midi.pitch = note.midiNote;
+                              midi.velocity = note.velocity;
+                              notes.push_back (midi);
+                          }
+
+                          const auto count = (int) notes.size();
+
+                          if (arrange.webAddMidiClip (view.track,
+                                                      view.startBar + view.lengthBars,
+                                                      std::move (notes)))
+                          {
+                              ok = true;
+                              message = "VOICE TO MIDI / " + juce::String (count) + " NOTES";
+                          }
+                          else
+                          {
+                              message = "No voice found in that clip";
+                          }
+                      }
+                      else
+                      {
+                          message = "That clip has no resident audio to analyse";
+                      }
+                  }
+              }
+
+              setStatus (message, ! ok);
+              pushState();
+              done (buildState());
+          } },
         { "setAutomationLane", [this] (const Args& a, Completion done)
           {
               if (a.size() >= 2)
@@ -711,8 +810,8 @@ juce::WebBrowserComponent::Options MainComponent::buildWebOptions()
                       ok = engine.loadTrackInstrumentFromId (track, id, error);
                       message = ok ? "LOADING " + entry->name : error;
                   }
-                  else if (slot < 0 || slot > 3)
-                      message = "Choose a user insert slot (1-4)";
+                  else if (slot < 0 || slot > 7)
+                      message = "Choose a user insert slot (1-8)";
                   else
                   {
                       juce::String error;
@@ -910,9 +1009,14 @@ void MainComponent::setPitchViewOpen (bool shouldOpen)
     pitchOpen = shouldOpen;
     if (webView == nullptr)
         return;
+
+    // Lay the window out again: opening the workspace hides the native header,
+    // closing it brings the header back.
+    resized();
+
     if (pitchOpen)
     {
-        webView->setBounds (bodyArea);
+        webView->setBounds (reactArea());
         webView->toFront (false);
         webView->setVisible (true);
         pushState();
@@ -921,6 +1025,7 @@ void MainComponent::setPitchViewOpen (bool shouldOpen)
     else
     {
         webView->setVisible (false);
+        repaint();
     }
 }
 } // namespace nc

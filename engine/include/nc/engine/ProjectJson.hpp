@@ -186,12 +186,50 @@ private:
             out += static_cast<char> (0xC0 | (code >> 6));
             out += static_cast<char> (0x80 | (code & 0x3F));
         }
-        else
+        else if (code < 0x10000)
         {
             out += static_cast<char> (0xE0 | (code >> 12));
             out += static_cast<char> (0x80 | ((code >> 6) & 0x3F));
             out += static_cast<char> (0x80 | (code & 0x3F));
         }
+        else
+        {
+            // A surrogate pair combines into one non-BMP code point, which is
+            // four UTF-8 bytes. Encoding the halves separately would produce
+            // CESU-8 that every text renderer rejects.
+            out += static_cast<char> (0xF0 | (code >> 18));
+            out += static_cast<char> (0x80 | ((code >> 12) & 0x3F));
+            out += static_cast<char> (0x80 | ((code >> 6) & 0x3F));
+            out += static_cast<char> (0x80 | (code & 0x3F));
+        }
+    }
+
+    /** Four hex digits at `at`, or nullopt when any digit is not hex. */
+    std::optional<unsigned int> hex4 (size_t at) const
+    {
+        if (at + 4 > input->size())
+            return std::nullopt;
+
+        unsigned int value = 0;
+
+        for (size_t i = 0; i < 4; ++i)
+        {
+            const auto c = static_cast<unsigned char> ((*input)[at + i]);
+            unsigned int digit = 0;
+
+            if (c >= '0' && c <= '9')
+                digit = c - '0';
+            else if (c >= 'a' && c <= 'f')
+                digit = 10u + (c - 'a');
+            else if (c >= 'A' && c <= 'F')
+                digit = 10u + (c - 'A');
+            else
+                return std::nullopt;
+
+            value = (value << 4) | digit;
+        }
+
+        return value;
     }
 
     bool parseString (std::string& out)
@@ -232,12 +270,33 @@ private:
                 case 't': out += 9; break;
                 case 'u':
                 {
-                    if (position + 4 > input->size())
+                    const auto first = hex4 (position);
+
+                    if (! first.has_value())
                         return false;
 
-                    const auto code = std::strtoul (input->substr (position, 4).c_str(), nullptr, 16);
                     position += 4;
-                    appendUtf8 (out, static_cast<unsigned int> (code));
+                    auto code = *first;
+
+                    if (code >= 0xDC00 && code <= 0xDFFF)
+                        return false; // a low half with no high half before it
+
+                    if (code >= 0xD800 && code <= 0xDBFF)
+                    {
+                        if (position + 2 > input->size()
+                            || (*input)[position] != slash || (*input)[position + 1] != 'u')
+                            return false;
+
+                        const auto second = hex4 (position + 2);
+
+                        if (! second.has_value() || *second < 0xDC00 || *second > 0xDFFF)
+                            return false;
+
+                        position += 6;
+                        code = 0x10000 + ((code - 0xD800) << 10) + (*second - 0xDC00);
+                    }
+
+                    appendUtf8 (out, code);
                     break;
                 }
                 default: return false;
@@ -454,6 +513,8 @@ inline std::string toJson (const ProjectDocument& document)
     json::writeNumber (out, document.loopEndBar);
     out += ",\"masterInsert\":{\"identifier\":";
     json::writeString (out, document.masterInsert.identifier);
+    out += ",\"descriptionXml\":";
+    json::writeString (out, document.masterInsert.descriptionXml);
     out += ",\"format\":";
     json::writeString (out, document.masterInsert.format);
     out += ",\"stateBase64\":";
@@ -762,6 +823,7 @@ inline std::optional<ProjectDocument> fromJson (const std::string& text)
         insert != nullptr && insert->type == json::Value::Type::object)
     {
         document.masterInsert.identifier = detail::stringField (*insert, "identifier");
+        document.masterInsert.descriptionXml = detail::stringField (*insert, "descriptionXml");
         document.masterInsert.format = detail::stringField (*insert, "format");
         document.masterInsert.stateBase64 = detail::stringField (*insert, "stateBase64");
         document.masterInsert.bypassed = detail::boolField (*insert, "bypassed", false);

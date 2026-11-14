@@ -12,6 +12,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <thread>
+#include <utility>
 
 namespace nc
 {
@@ -24,6 +26,94 @@ float softLimit (float value)
 {
     return std::tanh (value);
 }
+
+// Diagnostic only: NC_TEST_TONE_HZ=<freq> injects a pure sine at a known level
+// so a distortion analyser can measure THD+N of one stage at a time instead of
+// guessing from programme material. NC_TEST_TONE_TARGET=bus (default) injects at
+// the mix bus (master rack only); =track0 injects ahead of that track's channel
+// strip. NC_TEST_TONE_MUTE=1 silences the session content and the click, so the
+// captured file is the tone and nothing else. Unset = no effect on the audio.
+struct ToneProbe
+{
+    bool on = false;
+    bool mute = false;
+    bool noSend = false;     // keep the tone out of the aux sends (reverb return)
+    bool afterStrip = false; // inject after the strip instead of before it
+    bool noStrip = false;    // bypass that lane's strip entirely
+    int track = -1;          // -1 = mix bus, else that track's lane
+    double hz = 1000.0;
+    float gain = 0.1f;
+};
+
+ToneProbe& toneProbe()
+{
+    static ToneProbe probe = []
+    {
+        ToneProbe p;
+        const auto hz = juce::SystemStats::getEnvironmentVariable ("NC_TEST_TONE_HZ", {});
+        p.on = hz.isNotEmpty();
+        p.hz = juce::jlimit (20.0, 20000.0, hz.getDoubleValue());
+        p.gain = juce::Decibels::decibelsToGain ((float) juce::SystemStats::getEnvironmentVariable ("NC_TEST_TONE_DB", "-20").getDoubleValue());
+        p.mute = juce::SystemStats::getEnvironmentVariable ("NC_TEST_TONE_MUTE", {}) == "1";
+        p.noSend = juce::SystemStats::getEnvironmentVariable ("NC_TEST_TONE_NOSEND", {}) == "1";
+        const auto target = juce::SystemStats::getEnvironmentVariable ("NC_TEST_TONE_TARGET", "bus");
+        p.track = target.startsWith ("track") ? target.substring (5).getIntValue() : -1;
+        p.afterStrip = target.endsWith ("b");
+        p.noStrip = juce::SystemStats::getEnvironmentVariable ("NC_TEST_TONE_NOSTRIP", {}) == "1";
+        return p;
+    }();
+    return probe;
+}
+
+// Diagnostic only: NC_AUDIO_DUMP=<path> writes the first eight seconds of the
+// playing audio at two points in the chain - before and after the master rack -
+// as interleaved float32 stereo, so a fault can be attributed to a stage on disk
+// instead of by ear. No effect when the variable is unset.
+struct DumpSink
+{
+    std::unique_ptr<juce::FileOutputStream> stream;
+    int64_t framesLeft = 0;
+    bool initialised = false;
+};
+
+void dumpStage (const char* stage, const juce::AudioBuffer<float>& buffer,
+                int numSamples, bool playing)
+{
+    static DumpSink preSink, postSink;
+    auto& sink = (stage[0] == 'p' && stage[1] == 'r') ? preSink : postSink;
+
+    if (! sink.initialised)
+    {
+        sink.initialised = true;
+        const auto base = juce::SystemStats::getEnvironmentVariable ("NC_AUDIO_DUMP", {});
+
+        if (base.isNotEmpty())
+        {
+            const auto baseFile = juce::File (base);
+            const auto file = baseFile.getSiblingFile (juce::String (stage) + "-" + baseFile.getFileName());
+            sink.stream = std::make_unique<juce::FileOutputStream> (file);
+            sink.framesLeft = static_cast<int64_t> (48000 * 8);
+        }
+    }
+
+    // Only playing audio is captured, so the window is independent of how long
+    // the window takes to load before the transport is started.
+    if (! playing || sink.framesLeft <= 0 || sink.stream == nullptr || buffer.getNumChannels() < 2)
+        return;
+
+    const auto count = static_cast<int> (juce::jmin<int64_t> (numSamples, sink.framesLeft));
+
+    for (int i = 0; i < count; ++i)
+    {
+        const float sample[2] { buffer.getSample (0, i), buffer.getSample (1, i) };
+        sink.stream->write (sample, 8);
+    }
+
+    sink.framesLeft -= count;
+
+    if (sink.framesLeft == 0)
+        sink.stream->flush();
+}
 } // namespace
 
 AudioEngine::AudioEngine()
@@ -31,8 +121,16 @@ AudioEngine::AudioEngine()
     engineAlive = std::make_shared<std::atomic<bool>> (true);
     formats.registerBasicFormats();
 
-    for (auto& monitor : trackMonitor)
-        monitor.store (true, std::memory_order_relaxed);
+    // Pan cache: element 0's brace initializer only seeds lane 0; every other
+    // lane would start at 0 and skip the first trig, leaving its gains at zero.
+    std::fill_n (cachedPanValue, trackCount, -2.0f);
+    std::fill_n (cachedPanLeft, trackCount, 0.7071f);
+    std::fill_n (cachedPanRight, trackCount, 0.7071f);
+
+    // Input monitoring is off until a track is armed for recording. A monitored
+    // track sums its input into the mix, so with every track monitoring by
+    // default a room with a microphone and speakers fed back into a drone the
+    // moment the transport rolled.
 
     {
         const auto& specs = sessionTracks();
@@ -83,12 +181,6 @@ AudioEngine::AudioEngine()
 // ----------------------------------------------------------------------
 // Audio interface persistence (JUCE ApplicationProperties).
 // ----------------------------------------------------------------------
-static juce::File audioSettingsFile()
-{
-    return juce::File::getSpecialLocation (juce::File::commonApplicationDataDirectory)
-        .getChildFile ("NCSound Music Hub").getChildFile ("audio-settings.xml");
-}
-
 static juce::PropertiesFile::Options audioPropsOptions()
 {
     juce::PropertiesFile::Options o;
@@ -103,12 +195,17 @@ void AudioEngine::saveAudioSettings()
     juce::ApplicationProperties props;
     props.setStorageParameters (audioPropsOptions());
     auto xml = deviceManager.createStateXml();
-    if (xml != nullptr)
-    {
-        xml->setAttribute ("midiInput", midiRecorder.activeDeviceId());
-        props.getUserSettings()->setValue ("audioDeviceSetup", xml.get());
-        props.saveIfNeeded();
-    }
+    // A null state means no device opened this session. That is usually a
+    // transient failure at exit, not a deliberate removal, so keep the last
+    // good setup: restoreAudioSettings falls back to default devices when
+    // the stored one cannot be initialised.
+    if (xml == nullptr)
+        return;
+    xml->setAttribute ("midiInput", midiRecorder.activeDeviceId());
+    xml->setAttribute ("midiLearnInput", midiLearn.activeDeviceId());
+    xml->setAttribute ("midiLearnOutput", midiLearn.activeOutputId());
+    props.getUserSettings()->setValue ("audioDeviceSetup", xml.get());
+    props.saveIfNeeded();
 }
 
 void AudioEngine::restoreAudioSettings()
@@ -121,6 +218,9 @@ void AudioEngine::restoreAudioSettings()
     auto error = deviceManager.initialise (2, 2, stored.get(), true);
     if (error.isNotEmpty())
         error = deviceManager.initialiseWithDefaultDevices (2, 2);
+    if (error.isNotEmpty())
+        error = deviceManager.initialiseWithDefaultDevices (0, 2);
+
     if (error.isEmpty())
     {
         auto midiId = stored->getStringAttribute ("midiInput");
@@ -128,6 +228,18 @@ void AudioEngine::restoreAudioSettings()
         {
             juce::String ignored;
             openMidiDevice (midiId, ignored);
+        }
+        auto learnId = stored->getStringAttribute ("midiLearnInput");
+        if (learnId.isNotEmpty())
+        {
+            juce::String ignored;
+            midiLearn.openDevice (learnId, ignored);
+        }
+        auto learnOutputId = stored->getStringAttribute ("midiLearnOutput");
+        if (learnOutputId.isNotEmpty())
+        {
+            juce::String ignored;
+            midiLearn.openOutput (learnOutputId, ignored);
         }
     }
 }
@@ -271,13 +383,15 @@ juce::var AudioEngine::applyAudioSettings (const juce::String& deviceType,
     return juce::var (o);
 }
 
-
-
-
 double AudioEngine::bufferLatencyMs() const
 {
     const double rate = currentSampleRate();
-    return rate > 0.0 ? (double) currentBufferSize() * 1000.0 / rate : 0.0;
+    if (rate <= 0.0)
+        return 0.0;
+    int samples = currentBufferSize();
+    if (auto* device = deviceManager.getCurrentAudioDevice())
+        samples = juce::jmax (samples, device->getOutputLatencyInSamples());
+    return (double) samples * 1000.0 / rate;
 }
 
 double AudioEngine::worstTrackLatencyMs() const
@@ -296,28 +410,67 @@ double AudioEngine::masterLatencyMs() const
 
 void AudioEngine::setLowLatencyMode (bool shouldLow)
 {
-    lowLatency.store (shouldLow);
-    if (! shouldLow)
-        return;
     auto setup = deviceManager.getAudioDeviceSetup();
-    setup.bufferSize = 64;
-    setup.sampleRate = 48000.0;
-    deviceManager.setAudioDeviceSetup (setup, true);
-    saveAudioSettings();
+    if (shouldLow)
+    {
+        if (lowLatency.load())
+            return;
+        previousBufferSize.store (setup.bufferSize);
+        previousSampleRate.store (setup.sampleRate);
+        setup.bufferSize = juce::jmin (setup.bufferSize, 64);
+    }
+    else
+    {
+        if (! lowLatency.load())
+            return;
+        if (previousBufferSize.load() > 0)
+            setup.bufferSize = previousBufferSize.load();
+        if (previousSampleRate.load() > 0.0)
+            setup.sampleRate = previousSampleRate.load();
+    }
+    const auto error = deviceManager.setAudioDeviceSetup (setup, true);
+    lowLatency.store (error.isEmpty());
+    if (error.isEmpty())
+        saveAudioSettings();
 }
 
-nc::engine::ClipState AudioEngine::voiceToMidiClip (const juce::File& file, int track, double bpm)
+nc::engine::ClipState AudioEngine::voiceToMidiClip (const juce::File& file, int track, double bpm,
+                                                   juce::String* error)
 {
     voiceError.clear();
+    if (error != nullptr)
+        error->clear();
+
+    // A failed transcription still returns a MIDI clip: callers can place it
+    // (empty) and show `error`, rather than special-casing a default state.
+    auto failed = [track] {
+        nc::engine::ClipState clip;
+        clip.isMidi = true;
+        clip.track = track;
+        return clip;
+    };
     std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
     if (reader == nullptr)
     {
         voiceError = "Could not open " + file.getFileName();
-        return {};
+        if (error != nullptr)
+            *error = voiceError;
+        return failed();
     }
-    const auto frames = (std::size_t) juce::jmin<juce::int64> (reader->lengthInSamples, 4800000); // cap ~100s
-    juce::AudioBuffer<float> buf ((int) juce::jmax<juce::int64> (1, reader->numChannels), (int) frames);
-    reader->read (&buf, 0, (int) frames, 0, true, true);
+    constexpr std::size_t kMaxVoiceFrames = 4800000; // ~100 s
+    const auto requestedFrames = (std::size_t) juce::jmin<juce::int64> (reader->lengthInSamples,
+                                                                            static_cast<juce::int64> (kMaxVoiceFrames));
+    if (reader->lengthInSamples > static_cast<juce::int64> (kMaxVoiceFrames))
+        voiceError = "Input truncated to ~100 s for analysis";
+    juce::AudioBuffer<float> buf ((int) juce::jmax<juce::int64> (1, reader->numChannels),
+                                  (int) requestedFrames);
+    if (! reader->read (&buf, 0, (int) requestedFrames, 0, true, true))
+    {
+        voiceError = "Could not read the full audio file";
+        if (error != nullptr)
+            *error = voiceError;
+        return failed();
+    }
     // Mono mix.
     juce::AudioBuffer<float> mono (1, buf.getNumSamples());
     mono.clear();
@@ -333,7 +486,9 @@ nc::engine::ClipState AudioEngine::voiceToMidiClip (const juce::File& file, int 
     if (notes.empty())
     {
         voiceError = "No voiced notes found (too quiet, or not melodic)";
-        return {};
+        if (error != nullptr)
+            *error = voiceError;
+        return failed();
     }
 
     nc::engine::ClipState clip;
@@ -353,6 +508,124 @@ nc::engine::ClipState AudioEngine::voiceToMidiClip (const juce::File& file, int 
     nc::engine::sanitizeNotes (clip.notes, nc::engine::clipLengthBeats (clip.lengthBars));
     nc::engine::sanitizeMidiBends (clip.bends, nc::engine::clipLengthBeats (clip.lengthBars));
     return clip;
+}
+
+void AudioEngine::voiceToMidiClipAsync (const juce::File& file, int track, double bpm,
+                                        std::function<void (nc::engine::ClipState, juce::String)> completion)
+{
+    // YIN can take seconds on long takes; keep it off the message thread.
+    std::thread ([this, file, track, bpm, completion = std::move (completion)] () mutable
+    {
+        juce::String error;
+        auto clip = voiceToMidiClip (file, track, bpm, &error);
+        auto deliver = std::move (completion);
+        juce::MessageManager::getInstance()->callAsync (
+            [this, deliver = std::move (deliver), clip = std::move (clip), error] () mutable
+            {
+                voiceError = error;
+                if (deliver != nullptr)
+                    deliver (std::move (clip), error);
+            });
+    }).detach();
+}
+
+int AudioEngine::pollMidiLearnChanges()
+{
+    struct Range { float low, high; bool logarithmic = false; bool boolean = false; };
+    auto rangeFor = [] (const juce::String& id, Range& out) -> bool
+    {
+        if (id == "stripOn" || id == "vocal" || id == "openMicOn" || id == "eqOn"
+            || id == "hpfOn" || id == "lpfOn" || id == "compOn" || id == "satOn")
+            { out = { 0.0f, 1.0f, false, true }; return true; }
+        if (id == "openMicDrive") { out = { -12.0f, 24.0f }; return true; }
+        if (id == "openMicMix") { out = { 0.0f, 1.0f }; return true; }
+        if (id == "openMicTrim") { out = { -24.0f, 24.0f }; return true; }
+        if (id == "hpfFreq") { out = { 20.0f, 500.0f, true }; return true; }
+        if (id == "lpfFreq") { out = { 1000.0f, 20000.0f, true }; return true; }
+        if (id == "lowFreq") { out = { 20.0f, 400.0f, true }; return true; }
+        if (id == "lowGain") { out = { -18.0f, 18.0f }; return true; }
+        if (id == "lmfFreq") { out = { 150.0f, 3000.0f, true }; return true; }
+        if (id == "lmfGain") { out = { -18.0f, 18.0f }; return true; }
+        if (id == "lmfQ") { out = { 0.2f, 10.0f, true }; return true; }
+        if (id == "hmfFreq") { out = { 1000.0f, 12000.0f, true }; return true; }
+        if (id == "hmfGain") { out = { -18.0f, 18.0f }; return true; }
+        if (id == "hmfQ") { out = { 0.2f, 10.0f, true }; return true; }
+        if (id == "highFreq") { out = { 5000.0f, 20000.0f, true }; return true; }
+        if (id == "highGain") { out = { -18.0f, 18.0f }; return true; }
+        if (id == "compThresh") { out = { -60.0f, 0.0f }; return true; }
+        if (id == "compRatio") { out = { 1.0f, 20.0f, true }; return true; }
+        if (id == "compAttack") { out = { 0.1f, 200.0f, true }; return true; }
+        if (id == "compRelease") { out = { 10.0f, 1000.0f, true }; return true; }
+        if (id == "compMakeup") { out = { -12.0f, 24.0f }; return true; }
+        if (id == "satDrive") { out = { 0.0f, 24.0f }; return true; }
+        if (id == "satMix") { out = { 0.0f, 1.0f }; return true; }
+        if (id == "outputDb") { out = { -24.0f, 12.0f }; return true; }
+        return false;
+    };
+    auto mapped = [] (const Range& range, float norm) -> float
+    {
+        if (range.boolean)
+            return norm >= 0.5f ? 1.0f : 0.0f;
+        if (range.logarithmic)
+            return range.low * std::pow (range.high / range.low, norm);
+        return range.low + norm * (range.high - range.low);
+    };
+    auto normalised = [] (const Range& range, float real) -> float
+    {
+        if (range.boolean)
+            return real >= 0.5f ? 1.0f : 0.0f;
+        if (range.logarithmic)
+            return std::clamp (std::log (juce::jmax (range.low, real) / range.low)
+                               / std::log (range.high / range.low), 0.0f, 1.0f);
+        return std::clamp ((real - range.low) / (range.high - range.low), 0.0f, 1.0f);
+    };
+
+    int applied = 0;
+    MidiLearnManager::Change change;
+    while (midiLearn.takeChange (change))
+    {
+        const auto target = juce::String (change.binding.targetParamId);
+        if (target == "transport.play")
+        {
+            setPlaying (change.rawValue > 0);
+            ++applied;
+            continue;
+        }
+        if (target == "transport.stop")
+        {
+            setPlaying (false);
+            ++applied;
+            continue;
+        }
+        int track = midiLearnTrack;
+        juce::String parameter = target;
+        if (target.startsWith ("track."))
+        {
+            const auto rest = target.substring (6);
+            track = rest.upToFirstOccurrenceOf (".", false, false).getIntValue();
+            parameter = rest.fromFirstOccurrenceOf (".", false, false);
+        }
+        if (! juce::isPositiveAndBelow (track, getActiveTrackCount()))
+            continue;
+        Range range;
+        if (! rangeFor (parameter, range))
+            continue;
+        auto& channel = mixChannel (track);
+        float nextNorm;
+        if (change.binding.mode == MidiLearnManager::Mode::toggle)
+            nextNorm = channel.getParam (parameter) >= 0.5f ? 0.0f : 1.0f;
+        else if (change.binding.mode == MidiLearnManager::Mode::relative)
+        {
+            int delta = change.rawValue < 64 ? change.rawValue : change.rawValue - 128;
+            nextNorm = std::clamp (normalised (range, channel.getParam (parameter)) + delta / 128.0f,
+                                   0.0f, 1.0f);
+        }
+        else
+            nextNorm = std::clamp (change.rawValue / 127.0f, 0.0f, 1.0f);
+        channel.setParam (parameter, mapped (range, nextNorm));
+        ++applied;
+    }
+    return applied;
 }
 
 AudioEngine::~AudioEngine()
@@ -404,6 +677,13 @@ void AudioEngine::setMarkers (std::vector<nc::engine::Marker> markers)
 
 void AudioEngine::setMidiClips (std::vector<MidiTimelineClip> clips)
 {
+    // The audio callback indexes midiCursors, a fixed array of maxClips
+    // entries; a snapshot longer than that would read past the array on
+    // every block. The project sanitiser applies the same ceiling, so this
+    // only rejects hand-built snapshots that bypass it.
+    if (clips.size() > (std::size_t) nc::limits::maxClips)
+        clips.resize ((std::size_t) nc::limits::maxClips);
+
     for (auto& clip : clips)
     {
         clip.track = juce::jlimit (0, trackCount - 1, clip.track);
@@ -509,6 +789,8 @@ int AudioEngine::importMidiFile (const juce::File& file, int track, double start
 int AudioEngine::addMidiClip (nc::engine::ClipState clip)
 {
     auto clips = midiClips();
+    if (static_cast<int> (clips.size()) >= maxClips)
+        return -1;
     MidiTimelineClip timeline;
     timeline.track = clip.track;
     timeline.startBar = clip.startBar;
@@ -1182,13 +1464,29 @@ void AudioEngine::setLoopBars (double startBar, double endBar)
 //==============================================================================
 int AudioEngine::loadAudioFile (const juce::File& file)
 {
+    assetError.clear();
+
     if (! file.existsAsFile())
+    {
+        assetError = "File not found: " + file.getFileName();
         return -1;
+    }
 
     std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
 
     if (reader == nullptr || reader->lengthInSamples <= 0 || reader->numChannels == 0)
+    {
+        assetError = "Unsupported or empty audio file: " + file.getFileName();
         return -1;
+    }
+
+    const auto finish = [this, &file] (int id)
+    {
+        if (id < 0)
+            assetError = "Could not import audio file: " + file.getFileName();
+
+        return id;
+    };
 
     // A bounded message-thread load against the central 30-minute ceiling at
     // the file's own rate. Full disk streaming replaces this RAM hold when
@@ -1216,7 +1514,7 @@ int AudioEngine::loadAudioFile (const juce::File& file)
             buffer.assign (static_cast<size_t> (asset->cacheFrames), 0.0f);
 
         asset->reader = std::move (reader);
-        return addAsset (std::move (asset));
+        return finish (addAsset (std::move (asset)));
     }
 
     const auto frames64 = nc::limits::clampAssetFrames (sourceFrames, fileRate);
@@ -1226,9 +1524,12 @@ int AudioEngine::loadAudioFile (const juce::File& file)
     asset->buffer.setSize (channels, frames);
 
     if (! reader->read (&asset->buffer, 0, frames, 0, true, true))
+    {
+        assetError = "Could not read audio file: " + file.getFileName();
         return -1;
+    }
 
-    return addAsset (std::move (asset));
+    return finish (addAsset (std::move (asset)));
 }
 
 double AudioEngine::assetDurationSeconds (int assetId) const
@@ -1269,6 +1570,9 @@ int AudioEngine::addAsset (std::unique_ptr<AudioAsset> asset)
         return -1;
 
     assets.push_back (std::move (asset));
+
+    auto& added = *assets.back();
+    added.resample.build (added.sampleRate, juce::jmax (1.0, sampleRate.load()));
     return static_cast<int> (assets.size()) - 1;
 }
 
@@ -1378,8 +1682,118 @@ float AudioEngine::sampleAt (const AudioAsset& asset, int64_t frame, int channel
     return index < data.size() ? data[index] : 0.0f;
 }
 
+float AudioEngine::readSourceSample (const AudioAsset& asset, double sourceFrame, double outputRate,
+                                     int channel) const
+{
+    if (std::abs (asset.sampleRate - outputRate) <= nc::engine::resample::rateEpsilon)
+        return sampleAt (asset, static_cast<int64_t> (std::llround (sourceFrame)), channel);
+
+    if (asset.resample.matches (asset.sampleRate, outputRate))
+        return readBandLimited (asset, sourceFrame, channel);
+
+    // The session rate changed and the message thread has not rebuilt the
+    // kernels yet: read neighbours rather than stall the callback.
+    const auto frame0 = static_cast<int64_t> (std::floor (sourceFrame));
+    const auto frame1 = frame0 + 1;
+    const auto fraction = static_cast<float> (sourceFrame - static_cast<double> (frame0));
+    const auto start = sampleAt (asset, frame0, channel);
+    const auto end = sampleAt (asset, frame1, channel);
+    return static_cast<float> (start + (end - start) * fraction);
+}
+
+float AudioEngine::readBandLimited (const AudioAsset& asset, double sourceFrame, int channel) const
+{
+    const auto& weights = asset.resample;
+    const auto first = static_cast<int64_t> (std::floor (sourceFrame));
+    const auto* w = weights.weights (sourceFrame - static_cast<double> (first));
+    const auto start = first - (nc::engine::resample::taps / 2 - 1);
+    double sum = 0.0;
+
+    if (! asset.streamed)
+    {
+        const auto channels = asset.buffer.getNumChannels();
+        const auto frames = static_cast<int64_t> (asset.buffer.getNumSamples());
+
+        if (channels <= 0 || frames <= 0)
+            return 0.0f;
+
+        const auto* data = asset.buffer.getReadPointer (juce::jlimit (0, channels - 1, channel));
+
+        // Interior frames are a contiguous window: four accumulators keep the
+        // taps from serialising on one dependency chain, which is what the
+        // delivered Debug build of the audio path runs. Only the asset's edges
+        // need the clamped read (repeating the edge keeps a clip click-free).
+        static_assert (nc::engine::resample::taps % 4 == 0);
+
+        if (start >= 0 && start + nc::engine::resample::taps <= frames)
+        {
+            const auto* x = data + start;
+            float a0 = 0.0f, a1 = 0.0f, a2 = 0.0f, a3 = 0.0f;
+
+            for (int tap = 0; tap < nc::engine::resample::taps; tap += 4)
+            {
+                a0 += w[tap] * x[tap];
+                a1 += w[tap + 1] * x[tap + 1];
+                a2 += w[tap + 2] * x[tap + 2];
+                a3 += w[tap + 3] * x[tap + 3];
+            }
+
+            return (a0 + a1) + (a2 + a3);
+        }
+
+        for (int tap = 0; tap < nc::engine::resample::taps; ++tap)
+            sum += w[tap] * data[juce::jlimit<int64_t> (0, frames - 1, start + tap)];
+
+        return static_cast<float> (sum);
+    }
+
+    const auto slot = static_cast<size_t> (asset.activeCache.load (std::memory_order_acquire));
+    const auto windowStart = asset.slotStart[slot].load (std::memory_order_acquire);
+    const auto windowLength = asset.slotLength[slot].load (std::memory_order_acquire);
+
+    if (windowLength <= 0)
+        return 0.0f; // not resident yet: silence, never a disk read here
+
+    // The window ends mid-kernel all the time; a read that does not reach it
+    // at all is a clip whose audio is not resident and must stay silent rather
+    // than repeat a distant edge sample.
+    if (start + nc::engine::resample::taps <= windowStart || start >= windowStart + windowLength)
+        return 0.0f;
+
+    const auto& data = channel == 0 ? asset.cacheA[slot] : asset.cacheB[slot];
+
+    for (int tap = 0; tap < nc::engine::resample::taps; ++tap)
+    {
+        const auto frame = start + tap;
+        const auto index = juce::jlimit<int64_t> (0, windowLength - 1, frame - windowStart);
+
+        if (index < static_cast<int64_t> (data.size()))
+            sum += w[tap] * data[static_cast<size_t> (index)];
+    }
+
+    return static_cast<float> (sum);
+}
+
+void AudioEngine::refreshResampleBanks()
+{
+    const auto rate = sampleRate.load();
+
+    for (auto& assetPtr : assets)
+    {
+        auto& asset = *assetPtr;
+
+        if (! asset.resample.matches (asset.sampleRate, rate))
+            asset.resample.build (asset.sampleRate, rate);
+    }
+}
+
 void AudioEngine::serviceStreaming()
 {
+    // A session-rate change (a device swap, an export at another rate) leaves
+    // the playback kernels stale; this runs on the message thread often
+    // enough to rebuild them before the callback needs them again.
+    refreshResampleBanks();
+
     const auto seconds = positionSeconds();
 
     for (auto& assetPtr : assets)
@@ -1454,6 +1868,10 @@ void AudioEngine::createDemoAssets()
         auto env = [] (double t, double decay) { return t >= 0.0 ? std::exp (-t / decay) : 0.0; };
         auto note = [] (double base, int semitones) { return base * std::pow (2.0, semitones / 12.0); };
 
+        // One chord per bar, as semitone offsets from A3 (220 Hz). Every
+        // harmonic track draws from it so the loops agree with each other.
+        static const int chords[4][3] { { 0, 4, 7 }, { 5, 9, 12 }, { 7, 11, 14 }, { 3, 7, 10 } };
+
         float peak = 0.0f;
 
         for (int frame = 0; frame < frames; ++frame)
@@ -1493,7 +1911,6 @@ void AudioEngine::createDemoAssets()
 
                 case 2: // keys
                 {
-                    static const int chords[4][3] { { 0, 4, 7 }, { 5, 9, 12 }, { 7, 11, 14 }, { 3, 7, 10 } };
                     for (const auto semitone : chords[bar % 4])
                         sample += std::sin (twoPi * note (220.0, semitone) * t) * 0.10;
 
@@ -1536,8 +1953,100 @@ void AudioEngine::createDemoAssets()
                            * 0.035 * (0.55 + 0.45 * std::sin (twoPi * t / 8.0));
                     break;
 
-                default: // delay return guide
-                    sample = static_cast<double> (noise()) * 0.018;
+                case 7: // delay return: the keys chord one bar behind, decaying
+                {
+                    const auto decay = env (barTime, 0.85) * 0.30;
+
+                    if (decay > 0.002)
+                        for (const auto semitone : chords[(bar + 3) % 4])
+                            sample += std::sin (twoPi * note (220.0, semitone) * t) * decay;
+
+                    break;
+                }
+
+                case 8: // strings: a slow bowed swell on the bar's chord
+                {
+                    const auto swell = (1.0 - std::exp (-barTime / 0.45))
+                                     * env (secondsPerBar - barTime, 0.30);
+
+                    for (const auto semitone : chords[bar % 4])
+                    {
+                        const auto f = note (220.0, semitone);
+                        sample += (std::sin (twoPi * f * t)
+                                 + 0.30 * std::sin (twoPi * 2.0 * f * t))
+                                * 0.16 * swell;
+                    }
+
+                    break;
+                }
+
+                case 9: // pad: the chord detuned a few cents, breathing slowly
+                {
+                    const auto breathe = 0.6 + 0.4 * std::sin (twoPi * t / 8.0);
+
+                    for (const auto semitone : chords[bar % 4])
+                    {
+                        const auto f = note (220.0, semitone);
+                        sample += (std::sin (twoPi * f * t) + std::sin (twoPi * f * 1.004 * t))
+                                * 0.10 * breathe;
+                    }
+
+                    break;
+                }
+
+                case 10: // lead: a pentatonic answer, one note per eighth
+                {
+                    static const int melody[8] { 12, 15, 17, 15, 12, 10, 7, 10 };
+                    const auto eighth = static_cast<int> (barTime / 0.25) % 8;
+                    const auto frequency = note (220.0, melody[eighth]);
+                    const auto vibrato = 1.0 + 0.004 * std::sin (twoPi * 5.5 * t);
+
+                    sample = std::sin (twoPi * frequency * vibrato * t)
+                           * env (std::fmod (barTime, 0.25), 0.35) * 0.30;
+                    break;
+                }
+
+                case 11: // FX 1: a short rising tone every four bars
+                {
+                    const auto sweepTime = std::fmod (t, 8.0);
+
+                    if (sweepTime < 0.9)
+                    {
+                        const auto sweepHz = 220.0 + 660.0 * (sweepTime / 0.9);
+                        sample = std::sin (twoPi * sweepHz * t) * env (sweepTime, 0.45) * 0.24;
+                    }
+
+                    break;
+                }
+
+                case 12: // FX 2: a low impact on the first bar of every four
+                {
+                    if (bar % 4 == 0)
+                        sample = std::sin (twoPi * (70.0 - 30.0 * barTime) * t)
+                               * env (barTime, 0.55) * 0.45;
+
+                    break;
+                }
+
+                case 13: // bus print: the chord, low and steady
+                {
+                    for (const auto semitone : chords[bar % 4])
+                        sample += std::sin (twoPi * note (220.0, semitone) * t) * 0.06;
+
+                    sample *= 0.7 + 0.3 * env (barTime, 1.2);
+                    break;
+                }
+
+                case 14: // aux 3 return
+                case 15: // aux 4 return
+                {
+                    for (const auto semitone : chords[bar % 4])
+                        sample += std::sin (twoPi * note (110.0, semitone) * barTime) * 0.05;
+
+                    break;
+                }
+
+                default:
                     break;
             }
 
@@ -1554,6 +2063,12 @@ void AudioEngine::createDemoAssets()
                                                  0.20f, 0.18f, 0.22f, 0.10f,
                                                  0.10f, 0.15f, 0.08f, 0.08f };
 
+        // The per-track targets balance the loop and already leave the ship
+        // headroom: with all sixteen tracks playing at unity the sum (sends
+        // included) measures about -2.6 dBFS peak, so the master maximizer
+        // rides transients instead of holding the whole mix down. An extra
+        // constant trim here is not a substitute for that measurement -- an
+        // earlier 0.18 left the demo at -33 dBFS RMS, which reads as silence.
         if (peak > 0.0f)
             for (int frame = 0; frame < frames; ++frame)
                 data[frame] = data[frame] / peak * trackPeaks[track];
@@ -1564,16 +2079,20 @@ void AudioEngine::createDemoAssets()
 
 int AudioEngine::setTimelineClips (std::vector<TimelineClip> newClips)
 {
-    // The UI projection reads this mirror, so it only carries clips the engine
-    // actually accepted -- a rejected asset must not appear on the timeline.
-    timelineMirror.clear();
+    timelineError.clear();
 
     Command clear;
     clear.type = CommandType::clear;
 
+    // The UI projection reads this mirror, so a refused publish must leave the
+    // previous schedule visible instead of painting an empty timeline.
     if (! pushCommand (clear))
+    {
+        timelineError = "Timeline command queue is full";
         return static_cast<int> (newClips.size());
+    }
 
+    timelineMirror.clear();
     const auto cap = engine::truncateClipCount (static_cast<int> (newClips.size()), maxClips);
     int accepted = 0;
     double endBar = 1.0;
@@ -1602,7 +2121,10 @@ int AudioEngine::setTimelineClips (std::vector<TimelineClip> newClips)
         add.clip.crossfadeBars = juce::jmax (0.0f, clip.crossfadeBars);
 
         if (! pushCommand (add))
+        {
+            timelineError = "Timeline command queue filled before all clips were scheduled";
             break;
+        }
 
         timelineMirror.push_back (clip);
         endBar = juce::jmax (endBar, add.clip.startBar + add.clip.lengthBars);
@@ -1611,7 +2133,43 @@ int AudioEngine::setTimelineClips (std::vector<TimelineClip> newClips)
 
     contentEnd.store (endBar);
 
-    return static_cast<int> (newClips.size()) - accepted;
+    const auto dropped = static_cast<int> (newClips.size()) - accepted;
+
+    if (dropped > 0 && timelineError.isEmpty())
+        timelineError = "Some clips were outside the timeline limits";
+
+    return dropped;
+}
+
+juce::AudioBuffer<float> AudioEngine::assetSamples (int assetId, double startSeconds,
+                                                    double lengthSeconds) const
+{
+    juce::AudioBuffer<float> mono;
+
+    if (! juce::isPositiveAndBelow (assetId, static_cast<int> (assets.size())))
+        return mono;
+
+    const auto& asset = *assets[static_cast<size_t> (assetId)];
+    const auto frames = asset.buffer.getNumSamples();
+
+    // A streamed import keeps only a window resident; analysing a fragment and
+    // calling it the take would put invented notes in the session.
+    if (asset.streamed || frames <= 0 || asset.sampleRate <= 0.0)
+        return mono;
+
+    const auto start = juce::jlimit (0, juce::jmax (0, frames - 1),
+                                     static_cast<int> (std::floor (startSeconds * asset.sampleRate)));
+    const auto wanted = juce::jmax (1, static_cast<int> (std::floor (lengthSeconds * asset.sampleRate)));
+    const auto length = juce::jmax (1, juce::jmin (wanted, frames - start));
+    const auto channels = juce::jmax (1, asset.buffer.getNumChannels());
+
+    mono.setSize (1, length);
+    mono.clear();
+
+    for (int channel = 0; channel < channels; ++channel)
+        mono.addFrom (0, 0, asset.buffer, channel, start, length, 1.0f / (float) channels);
+
+    return mono;
 }
 
 std::vector<float> AudioEngine::assetPeakEnvelope (int assetId, double startSeconds,
@@ -1715,6 +2273,15 @@ void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
                        static_cast<AuxBus::Engine> (auxReverbEngine.load()));
     auxDelay.prepare (sampleRate.load(), maxBlock,
                       static_cast<AuxBus::Engine> (auxDelayEngine.load()));
+
+    if (juce::SystemStats::getEnvironmentVariable ("NC_AUDIO_DUMP", {}).isNotEmpty())
+        juce::File (juce::SystemStats::getEnvironmentVariable ("NC_AUDIO_DUMP", {}))
+            .getSiblingFile ("audio-diag.txt")
+            .replaceWithText ("device=" + deviceInfo
+                              + "\nsampleRate=" + juce::String (sampleRate.load())
+                              + "\nbufferSize=" + juce::String (bufferSize.load())
+                              + "\nactiveTracks=" + juce::String (activeTrackCount.load())
+                              + "\ninputsAvailable=" + juce::String (captureAvailable.load() ? 1 : 0));
 }
 
 void AudioEngine::setAuxEngine (int aux, AuxBus::Engine newEngine)
@@ -1728,12 +2295,12 @@ void AudioEngine::setAuxEngine (int aux, AuxBus::Engine newEngine)
     if (aux == 0)
     {
         auxReverbEngine.store (static_cast<int> (newEngine));
-        auxReverb.setEngine (newEngine);
+        auxReverb.setEngine (newEngine, dspBlocksMeasured());
     }
     else if (aux == 1)
     {
         auxDelayEngine.store (static_cast<int> (newEngine));
-        auxDelay.setEngine (newEngine);
+        auxDelay.setEngine (newEngine, dspBlocksMeasured());
     }
 }
 
@@ -1827,11 +2394,22 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     const auto budget = static_cast<double> (numSamples) / juce::jmax (1.0, sampleRate.load());
     const auto ratio = budget > 0.0 ? static_cast<float> (elapsed / budget) : 0.0f;
     dspLoadValue.store (juce::jlimit (0.0f, 1.0f, dspLoadValue.load() * 0.82f + juce::jlimit (0.0f, 1.0f, ratio) * 0.18f));
+    dspBlockCount.fetch_add (1, std::memory_order_relaxed);
+    if (ratio > 1.0f)
+        dspOverrunCount.fetch_add (1, std::memory_order_relaxed);
 }
 
 void AudioEngine::renderBlock (const float* const* inputChannelData, int numInputChannels,
                                float* const* outputChannelData, int numOutputChannels, int numSamples)
 {
+    // Flush denormals for the whole native chain. The aux reverb combs and
+    // allpasses (x0.84 / x0.5 feedback per pass) and the delay's feedback
+    // lowpass (x0.75 per sample) all decay exponentially towards zero, and
+    // the hosted-plugin wrappers carry their own scope, so without this the
+    // feedback state sits in denormal arithmetic for seconds after every
+    // tail — a several-fold real-time cost on the audio thread that the
+    // listener hears as crackle.
+    const juce::ScopedNoDenormals noDenormals;
 
     for (int channel = 0; channel < numOutputChannels; ++channel)
         if (outputChannelData[channel] != nullptr)
@@ -1878,6 +2456,29 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
 
     const auto rate = sampleRate.load();
     const auto isPlaying = playing.load();
+
+    // Faders set while stopped are never smoothed (the per-sample loop below
+    // only runs during playback), so the first block after Play would ramp from
+    // the stale value -- usually unity -- down to the gain the session really
+    // has. That ramp is a full-scale burst on the first samples of every play,
+    // and the master maximizer's reaction to it is the metallic crack at the
+    // start. Prime every smoother from the live values on the transition into
+    // play so the transport starts at the gain the session actually has.
+    if (isPlaying && ! transportWasPlaying)
+    {
+        for (int track = 0; track < trackCount; ++track)
+        {
+            smoothedGain[track] = tracks[static_cast<size_t> (track)].gain.load();
+            smoothedPan[track] = tracks[static_cast<size_t> (track)].pan.load();
+            smoothedSendA[track] = tracks[static_cast<size_t> (track)].sendA.load();
+            smoothedSendB[track] = tracks[static_cast<size_t> (track)].sendB.load();
+            smoothedWidth[track] = tracks[static_cast<size_t> (track)].width.load();
+        }
+
+        smoothedMaster = masterGainValue.load();
+    }
+
+    transportWasPlaying = isPlaying;
     const auto clickOn = metronome.load();
 
     if (rate <= 0.0)
@@ -2014,9 +2615,6 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
             if (frame0 < 0 || frame0 >= sourceFrames)
                 continue;
 
-            const auto frame1 = juce::jmin (frame0 + 1, sourceFrames - 1);
-            const auto fraction = static_cast<float> (sourceFrame - static_cast<double> (frame0));
-
             // Equal-power when a crossfade is set (constant loudness through
             // the overlap); linear otherwise, preserving legacy fades.
             const auto fade = clip.crossfadeSeconds > 0.0
@@ -2032,14 +2630,11 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
 
             // RAM or streamed window: one accessor serves both, so a
             // streamed clip that is not resident yet contributes silence
-            // instead of stalling the callback on the disk.
-            const auto start0 = sampleAt (*clip.asset, frame0, 0);
-            const auto end0 = sampleAt (*clip.asset, frame1, 0);
-            const auto start1 = sampleAt (*clip.asset, frame0, 1);
-            const auto end1 = sampleAt (*clip.asset, frame1, 1);
-
-            const auto sample0 = static_cast<float> (start0 + (end0 - start0) * fraction);
-            const auto sample1 = static_cast<float> (start1 + (end1 - start1) * fraction);
+            // instead of stalling the callback on the disk. A source at the
+            // session rate is read frame for frame; any other rate goes
+            // through the band-limited kernels instead of a straight line.
+            const auto sample0 = readSourceSample (*clip.asset, sourceFrame, rate, 0);
+            const auto sample1 = readSourceSample (*clip.asset, sourceFrame, rate, 1);
 
             const auto lane = static_cast<size_t> (juce::jlimit (0, trackCount - 1, clip.track));
             trackLeftScratch[lane] += sample0 * gain;
@@ -2129,7 +2724,11 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
                 juce::MidiBuffer midi;
                 auto& events = midiEventScratch;
 
-                for (size_t clipIndex = 0; clipIndex < midiClipsPtr->size(); ++clipIndex)
+                // Defends against a snapshot that somehow bypassed the
+                // setMidiClips ceiling: never index past the cursor array.
+                const auto cursorClips = std::min (midiClipsPtr->size(), midiCursors.size());
+
+                for (size_t clipIndex = 0; clipIndex < cursorClips; ++clipIndex)
                 {
                     const auto& clip = (*midiClipsPtr)[clipIndex];
 
@@ -2239,11 +2838,43 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
     auto* auxBRight = auxBBuffer.getNumSamples() >= numSamples ? auxBBuffer.getWritePointer (1) : nullptr;
 
     // Pass 3: native strip, fader/pan, click and master gain.
+    // Loop-invariant: the probe config is read once per block, not per sample.
+    const auto& probe = toneProbe();
+
+    // Per-block snapshots of the fader-adjacent message-thread params the
+    // sample loop used to read through atomics five times per track per
+    // sample (~80 atomic loads per sample across the bus). These params move
+    // at most once per UI event, so sampling them once per block is standard
+    // practice; the per-sample smoothing still glides towards the snapshot.
+    float blockSendA[trackCount] {};
+    float blockSendB[trackCount] {};
+    float blockWidth[trackCount] {};
+    bool blockAudible[trackCount] {};
+
+    for (int trackIndex = 0; trackIndex < trackCount; ++trackIndex)
+    {
+        const auto& track = tracks[static_cast<size_t> (trackIndex)];
+        blockSendA[trackIndex] = track.sendA.load();
+        blockSendB[trackIndex] = track.sendB.load();
+        blockWidth[trackIndex] = track.width.load();
+        blockAudible[trackIndex] = ! track.muted.load() && (! anySolo || track.soloed.load());
+    }
+
     for (int sample = 0; sample < numSamples; ++sample)
     {
         float left = 0.0f;
         float right = 0.0f;
         float click = 0.0f;
+        float probeTone = 0.0f;
+
+        if (probe.on)
+        {
+            probeTone = probe.gain * static_cast<float> (std::sin (probePhase));
+            probePhase += juce::MathConstants<double>::twoPi * probe.hz / juce::jmax (1.0, rate);
+
+            if (probePhase >= juce::MathConstants<double>::twoPi)
+                probePhase -= juce::MathConstants<double>::twoPi;
+        }
 
         if (isPlaying)
         {
@@ -2253,15 +2884,31 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
 
                 smoothedGain[trackIndex] += (automatedGain[trackIndex] - smoothedGain[trackIndex]) * smoothingCoefficient;
                 smoothedPan[trackIndex] += (automatedPan[trackIndex] - smoothedPan[trackIndex]) * smoothingCoefficient;
-                smoothedSendA[trackIndex] += (track.sendA.load() - smoothedSendA[trackIndex]) * smoothingCoefficient;
-                smoothedSendB[trackIndex] += (track.sendB.load() - smoothedSendB[trackIndex]) * smoothingCoefficient;
-                smoothedWidth[trackIndex] += (track.width.load() - smoothedWidth[trackIndex]) * smoothingCoefficient;
+                smoothedSendA[trackIndex] += (blockSendA[trackIndex] - smoothedSendA[trackIndex]) * smoothingCoefficient;
+                smoothedSendB[trackIndex] += (blockSendB[trackIndex] - smoothedSendB[trackIndex]) * smoothingCoefficient;
+                smoothedWidth[trackIndex] += (blockWidth[trackIndex] - smoothedWidth[trackIndex]) * smoothingCoefficient;
 
-                const auto audible = ! track.muted.load() && (! anySolo || track.soloed.load());
+                const auto audible = blockAudible[trackIndex];
                 const auto gain = audible ? smoothedGain[trackIndex] : 0.0f;
-                const auto angle = (smoothedPan[trackIndex] + 1.0f) * 0.25f * juce::MathConstants<float>::pi;
-                const auto panLeft = std::cos (angle);
-                const auto panRight = std::sin (angle);
+
+                // Equal-power pan needs cos/sin of the smoothed angle. While
+                // the fader sits still — the normal case — the angle is
+                // constant, and a trig pair per track per sample was a large
+                // slice of the strip's audio budget on a slow CPU. Recompute
+                // the pair only when the smoothed value has actually moved.
+                auto& panL = cachedPanLeft[trackIndex];
+                auto& panR = cachedPanRight[trackIndex];
+
+                if (std::abs (smoothedPan[trackIndex] - cachedPanValue[trackIndex]) > 1.0e-5f)
+                {
+                    const auto angle = (smoothedPan[trackIndex] + 1.0f) * 0.25f * juce::MathConstants<float>::pi;
+                    panL = std::cos (angle);
+                    panR = std::sin (angle);
+                    cachedPanValue[trackIndex] = smoothedPan[trackIndex];
+                }
+
+                const auto panLeft = panL;
+                const auto panRight = panR;
 
                 const auto sourceLeft = trackBufferReady
                                             ? trackBlock.getSample (trackIndex * 2, sample) : 0.0f;
@@ -2271,9 +2918,23 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
                 auto trackLeft = sourceLeft * gain * panLeft;
                 auto trackRight = sourceRight * gain * panRight;
 
+                if (probe.mute)
+                {
+                    trackLeft = 0.0f;
+                    trackRight = 0.0f;
+                }
+
+                // Ahead of the strip, so the strip itself is measured.
+                if (probe.on && probe.track == trackIndex && ! probe.afterStrip)
+                {
+                    trackLeft += probeTone;
+                    trackRight += probeTone;
+                }
+
                 // The channel strip is baked into every track. It runs after
                 // the inserts/PDC and before the bus sum.
-                mixRack[static_cast<size_t> (trackIndex)].processSample (trackLeft, trackRight);
+                if (! (probe.noStrip && probe.track == trackIndex))
+                    mixRack[static_cast<size_t> (trackIndex)].processSample (trackLeft, trackRight);
 
                 // Stereo width: mid/side scaling (0.5 = unity). Applied on the
                 // post-strip track bus before the sum.
@@ -2288,7 +2949,7 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
                 // the dry bus: audible already zeroes the dry path, so a muted
                 // track sends silence — the user hears the dry bus, not a ghost
                 // reverb. That is the intended test contract.
-                if (audible)
+                if (audible && ! probe.noSend)
                 {
                     if (auxALeft != nullptr && auxARight != nullptr)
                     {
@@ -2303,6 +2964,14 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
                         auxBLeft[sample] += trackLeft * sendB;
                         auxBRight[sample] += trackRight * sendB;
                     }
+                }
+
+                // After the strip and its send taps, so a comparison against
+                // the pre-strip injection isolates the strip and width only.
+                if (probe.on && probe.track == trackIndex && probe.afterStrip)
+                {
+                    trackLeft += probeTone;
+                    trackRight += probeTone;
                 }
 
                 left += trackLeft;
@@ -2322,7 +2991,7 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
 
             clickPhase += 1.0;
 
-            if (clickOn && clickEnvelope > 0.0001)
+            if (clickOn && ! probe.mute && clickEnvelope > 0.0001)
             {
                 const auto frequency = clickBeat % 4 == 0 ? 1600.0 : 1000.0;
                 clickOscillator += twoPi * frequency / rate;
@@ -2334,6 +3003,12 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
         smoothedMaster += (masterGainValue.load() - smoothedMaster) * smoothingCoefficient;
         left = (left + click) * smoothedMaster;
         right = (right + click) * smoothedMaster;
+
+        if (probe.on && probe.track < 0)
+        {
+            left += probeTone;
+            right += probeTone;
+        }
 
         if (mixLeft != nullptr)
         {
@@ -2356,6 +3031,9 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
         const auto auxReady = auxALeft != nullptr && auxBLeft != nullptr
                               && auxABuffer.getNumSamples() >= numSamples
                               && auxBBuffer.getNumSamples() >= numSamples;
+
+        // Unconditional boundary so the stage indices mean the same thing on
+        // every block, auxReady or not.
 
         if (auxReady)
         {
@@ -2393,6 +3071,8 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
     {
         juce::AudioBuffer<float> mixed (mixBuffer.getArrayOfWritePointers(), 2, numSamples);
 
+        dumpStage ("pre", mixed, numSamples, isPlaying);
+
         masterRack.process (mixed, numSamples);
 
         inserts.processMaster (mixed, engine::blockContext (blockStartSamples, numSamples, tempo, rate,
@@ -2416,6 +3096,15 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
         if (masterDim.load())
             mixed.applyGain (0, numSamples, juce::Decibels::decibelsToGain (-20.0f));
 
+        // Nothing outside [-1, 1] may reach the device: a driver given a larger
+        // float will either wrap or hard-clip it, and both are the harshest
+        // distortion the chain can produce.
+        for (int channel = 0; channel < 2; ++channel)
+        {
+            auto* samples = mixed.getWritePointer (channel);
+            juce::FloatVectorOperations::clip (samples, samples, -1.0f, 1.0f, numSamples);
+        }
+
         masterPeakLeft = mixed.getMagnitude (0, 0, numSamples);
         masterPeakRight = mixed.getMagnitude (1, 0, numSamples);
         masterPeak = juce::jmax (masterPeakLeft, masterPeakRight);
@@ -2424,6 +3113,8 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
             if (outputChannelData[channel] != nullptr)
                 juce::FloatVectorOperations::copy (outputChannelData[channel],
                                                    mixed.getReadPointer (channel), numSamples);
+
+        dumpStage ("post", mixed, numSamples, isPlaying);
     }
     else
     {
@@ -2549,7 +3240,10 @@ void AudioEngine::setPluginStatus (juce::String message)
 bool AudioEngine::loadTrackInsert (int track, int slot, const juce::PluginDescription& description,
                                    juce::String& error)
 {
-    if (! juce::isPositiveAndBelow (track, activeTrackCount.load()) || ! juce::isPositiveAndBelow (slot, 4))
+    // Eight user slots per track, matching the rack and the editor's two banks.
+    // The old four-slot cap rejected every load from bank B.
+    if (! juce::isPositiveAndBelow (track, activeTrackCount.load())
+        || ! juce::isPositiveAndBelow (slot, kInsertSlotsPerTrack))
     {
         error = "Insert target is outside the session";
         return false;
@@ -2566,9 +3260,23 @@ bool AudioEngine::loadTrackInsert (int track, int slot, const juce::PluginDescri
                              if (! alive->load (std::memory_order_acquire))
                                  return;
 
+                             // The instance only exists now, on this thread. The view
+                             // has to be told, or the slot keeps reading "empty" after
+                             // a load that actually worked.
+                             const auto announce = [this, alive]
+                             {
+                                 juce::MessageManager::callAsync ([this, alive]
+                                 {
+                                     if (alive->load (std::memory_order_acquire)
+                                         && onInsertInstalled != nullptr)
+                                         onInsertInstalled();
+                                 });
+                             };
+
                              if (instance == nullptr)
                              {
                                  setPluginStatus ("INSERT FAILED / " + creationError);
+                                 announce();
                                  return;
                              }
 
@@ -2578,6 +3286,7 @@ bool AudioEngine::loadTrackInsert (int track, int slot, const juce::PluginDescri
                              if (hosted == nullptr)
                              {
                                  setPluginStatus ("INSERT FAILED / " + error);
+                                 announce();
                                  return;
                              }
 
@@ -2591,11 +3300,13 @@ bool AudioEngine::loadTrackInsert (int track, int slot, const juce::PluginDescri
                              if (! inserts.install (track, slot, std::move (hosted), state, error))
                              {
                                  setPluginStatus ("INSERT FAILED / " + error);
+                                 announce();
                                  return;
                              }
 
                              setPluginStatus ("INSERT / " + description.name + " / TRACK "
                                                + juce::String (track + 1) + " / INS " + juce::String (slot + 1));
+                             announce();
                          });
 
     return true;
@@ -2645,7 +3356,8 @@ bool AudioEngine::loadTrackInsertFromId (int track, int slot, const juce::String
 bool AudioEngine::restoreTrackInsert (int track, int slot, const nc::engine::PluginSlotState& state,
                                       juce::String& error)
 {
-    if (! juce::isPositiveAndBelow (track, activeTrackCount.load()) || ! juce::isPositiveAndBelow (slot, 4))
+    if (! juce::isPositiveAndBelow (track, activeTrackCount.load())
+        || ! juce::isPositiveAndBelow (slot, kInsertSlotsPerTrack))
     {
         error = "Insert target is outside the session";
         return false;
@@ -2810,13 +3522,14 @@ bool AudioEngine::restoreMixRackStateJson (const juce::String& state)
 
     // A restored project owns its mix, but the vocal role stays a property of
     // the track itself: vocal tracks keep the Open Mic stage unless the saved
-    // session recorded an explicit override.
-    applyVocalRoles();
+    // session recorded an explicit override. Do not overwrite saved strip or
+    // master parameters with baked defaults here.
+    applyVocalRoles (true);
 
     return true;
 }
 
-void AudioEngine::applyVocalRoles()
+void AudioEngine::applyVocalRoles (bool restoringSavedState)
 {
     const auto& tracks = sessionTracks();
 
@@ -2824,22 +3537,26 @@ void AudioEngine::applyVocalRoles()
     {
         mixRack[static_cast<size_t> (track)]
             .setVocal (isVocalTrackName (tracks[static_cast<size_t> (track)].name));
-        // Channel Strip is baked into every mixer track (never Aux or Master).
-        // stripOn defaults to true; we re-assert it so a fresh track is never
-        // silently un-stripped.
-        mixRack[static_cast<size_t> (track)].setParam ("stripOn", 1.0f);
+        if (! restoringSavedState)
+        {
+            // Fresh baked default only. Channel Strip is already on track
+            // channels by default and is never present on Aux or Master.
+            mixRack[static_cast<size_t> (track)].setParam ("stripOn", 1.0f);
+        }
     }
 
-    // Overlay Master is baked into the master channel (MasterRack).
-    // Mixology is its default master shape (VOCAL FOCUS): eq on, one
-    // subtractive low/mid cut, maximizer ceiling -1 dB.
-    masterRack.setParam ("eqOn", 1.0f);
-    masterRack.setParam ("lowFreq", 100.0f);
-    masterRack.setParam ("lowGain", -1.5f);
-    masterRack.setParam ("midFreq", 1000.0f);
-    masterRack.setParam ("midGain", -1.0f);
-    masterRack.setParam ("maxOn", 1.0f);
-    masterRack.setParam ("ceiling", -1.0f);
+    if (! restoringSavedState)
+    {
+        // Overlay Master is baked into the master channel (MasterRack).
+        // Mixology is its default master shape.
+        masterRack.setParam ("eqOn", 1.0f);
+        masterRack.setParam ("lowFreq", 100.0f);
+        masterRack.setParam ("lowGain", -1.5f);
+        masterRack.setParam ("midFreq", 1000.0f);
+        masterRack.setParam ("midGain", -1.0f);
+        masterRack.setParam ("maxOn", 1.0f);
+        masterRack.setParam ("ceiling", -1.0f);
+    }
 }
 
 //==============================================================================
@@ -2872,6 +3589,10 @@ void AudioEngine::prepareForRender (double rate, int maxBlock)
     inserts.prepare (rate, block, active);
     auxReverb.prepare (rate, block, static_cast<AuxBus::Engine> (auxReverbEngine.load()));
     auxDelay.prepare (rate, block, static_cast<AuxBus::Engine> (auxDelayEngine.load()));
+
+    // Both the device path and an offline render reach the mix through this
+    // rate, so the kernels are rebuilt here for everything that is resident.
+    refreshResampleBanks();
 }
 
 bool AudioEngine::renderToWav (const juce::File& destination,
@@ -3665,6 +4386,25 @@ std::vector<AudioEngine::RecordedTake> AudioEngine::stopRecording (const juce::F
 
     for (auto& monitor : trackMonitor)
         monitor.store (false, std::memory_order_relaxed);
+
+    // A callback that was already inside captureInputBlock when the flag
+    // flipped is still using the writers it found in threadedTakes. Wait for
+    // two later blocks to start (callbacks are strictly serial) before
+    // touching the take list — the same retiredAtBlock + 2 rule the snapshot
+    // sweeps apply. Without this, stop could free a writer mid-write.
+    if (deviceOpen.load (std::memory_order_acquire))
+    {
+        const auto started = audioBlockCount.load (std::memory_order_acquire);
+        const auto deadline = juce::Time::getMillisecondCounterHiRes() + 500.0;
+
+        while (audioBlockCount.load (std::memory_order_acquire) < started + 2)
+        {
+            if (juce::Time::getMillisecondCounterHiRes() > deadline)
+                break; // a wedged driver must not hang the UI
+
+            juce::Thread::sleep (1);
+        }
+    }
 
     // Streaming takes are already on disk; deleting the writers flushes.
     // Note: the latency trim that the RAM path applies is not applied to

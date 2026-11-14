@@ -108,6 +108,8 @@ inline std::unique_ptr<StudioFxModule> createModule (const std::string& kindName
     if (kindName == "CHANNEL_LIMITER") return std::make_unique<ChannelLimiterModule> (sampleRate);
     if (kindName == "PHONE_NOISE_REDUCTION") return std::make_unique<PhoneNoiseReductionModule> (sampleRate);
     if (kindName == "PHONE_MIC_EMULATION") return std::make_unique<PhoneMicEmulationModule> (sampleRate);
+    if (kindName == "VOCAL_RIDER") return std::make_unique<VocalRiderModule> (sampleRate);
+    if (kindName == "RESONANCE_SMOOTHER") return std::make_unique<ResonanceSmootherModule> (sampleRate);
     return nullptr;
 }
 

@@ -20,7 +20,7 @@ ProjectDocument richDocument()
     doc.loopEndBar = 11.0;
 
     TrackState lead;
-    lead.name = "Lead \"Vox\" \ take 2\nnext";
+    lead.name = "Lead \"Vox\" \t take 2\nnext";
     lead.gainDb = -3.5;
     lead.pan = 0.25;
     lead.muted = true;
@@ -47,6 +47,7 @@ ProjectDocument richDocument()
     doc.clips = { clip };
 
     doc.masterInsert.identifier = "VST3-abc123";
+    doc.masterInsert.descriptionXml = "<PLUGIN name=\"Master EQ\" />";
     doc.masterInsert.format = "VST3";
     doc.masterInsert.stateBase64 = "AAECAwQ=";
 
@@ -101,6 +102,7 @@ TEST_CASE ("a full project survives a write and read unchanged")
     REQUIRE (doc.clips[0].sourceOffsetSeconds == 0.5);
     REQUIRE (std::abs (doc.clips[0].fadeInBars - 0.1) < 1e-9);
     REQUIRE (doc.masterInsert.stateBase64 == "AAECAwQ=");
+    REQUIRE (doc.masterInsert.descriptionXml == "<PLUGIN name=\"Master EQ\" />");
 }
 
 TEST_CASE ("quotes, backslashes and newlines in names come back verbatim")
@@ -110,6 +112,16 @@ TEST_CASE ("quotes, backslashes and newlines in names come back verbatim")
 
     REQUIRE (restored.has_value());
     REQUIRE (restored->tracks[0].name == original.tracks[0].name);
+}
+
+TEST_CASE ("JSON unicode escapes decode surrogate pairs and reject non-hex digits")
+{
+    const auto emoji = fromJson ("{\"version\":9,\"tracks\":[{\"name\":\"\\uD83D\\uDE00\"}]}");
+    REQUIRE (emoji.has_value());
+    REQUIRE (emoji->tracks[0].name == "\xF0\x9F\x98\x80");
+
+    REQUIRE_FALSE (fromJson ("{\"tracks\":[{\"name\":\"\\u12G4\"}]}").has_value());
+    REQUIRE_FALSE (fromJson ("{\"tracks\":[{\"name\":\"\\uD83D\"}]}").has_value());
 }
 
 TEST_CASE ("the saved text is one readable JSON object carrying the version")

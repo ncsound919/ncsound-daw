@@ -65,7 +65,7 @@ TEST_CASE ("cursor scheduler matches the reference scheduler block by block")
         referenceEvents.clear();
 
         scheduleMidiClipCursor (notes, {}, {}, 1.0, 4.0, ppq, ppq + 0.25, map, 48000.0, 6000, cursor, cursorEvents);
-        scheduleMidiClip (notes, 1.0, 4.0, ppq, ppq + 0.25, map, 48000.0, 6000, referenceEvents);
+        scheduleMidiClip (notes, 1.0, 4.0, ppq, ppq + 0.25, map, 48000.0, 6000, referenceEvents, ppq == 0.0);
 
         REQUIRE (sameNoteEvents (cursorEvents, referenceEvents));
     }
@@ -119,6 +119,33 @@ TEST_CASE ("cursor scheduler rewinds on seek and retriggers sounding notes")
     REQUIRE (events[0].sampleOffset == 0);
 }
 
+TEST_CASE ("cursor scheduler does not re-attack sustained notes on contiguous blocks")
+{
+    const auto map = constantTempoMap (120.0);
+    const std::vector<MidiNote> notes { { 0.0, 4.0, 64, 80, 0 } };
+
+    MidiCursor cursor;
+    int noteOns = 0;
+    int noteOffs = 0;
+
+    for (double ppq = 0.0; ppq < 4.0; ppq += 0.5)
+    {
+        std::vector<MidiEvent> events;
+        scheduleMidiClipCursor (notes, {}, {}, 1.0, 4.0, ppq, ppq + 0.5, map, 48000.0, 6000, cursor, events);
+
+        for (const auto& event : events)
+        {
+            if (event.kind == MidiEvent::Kind::noteOn)
+                ++noteOns;
+            else if (event.kind == MidiEvent::Kind::noteOff)
+                ++noteOffs;
+        }
+    }
+
+    // One attack, one release across the whole four-beat note.
+    REQUIRE (noteOns == 1);
+    REQUIRE (noteOffs == 1);
+}
 TEST_CASE ("cc and bends survive a project round trip")
 {
     ProjectDocument doc;

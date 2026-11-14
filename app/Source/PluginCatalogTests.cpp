@@ -3,6 +3,8 @@
 #include "HostedInsert.h"
 #include "PluginCatalog.h"
 
+#include "TestPaths.h"
+
 #include <algorithm>
 #include <memory>
 #include <vector>
@@ -22,6 +24,15 @@ public:
 private:
     nc::ScannerReply reply;
 };
+
+/** plugins/registry.json from the repository root, which CMake baked into the
+    build. Reading it relative to the CWD made these cases skip under CTest. */
+juce::File repoRegistryFile()
+{
+    return juce::File (juce::String::fromUTF8 (ncRepoRoot))
+               .getChildFile ("plugins")
+               .getChildFile ("registry.json");
+}
 
 juce::PluginDescription makeDescription (const juce::String& name, const juce::String& file, int uniqueId)
 {
@@ -250,17 +261,71 @@ TEST_CASE ("an uninstalled registry row stays non-loadable", "[catalog]")
     REQUIRE (unknownError.containsIgnoreCase ("scanned"));
 }
 
+TEST_CASE ("the shipped registry links its own built instruments instead of duplicating them", "[catalog]")
+{
+    // Chop Station and 808 Designer are built by this repository. Before the
+    // registry named their bundles they appeared twice: a 'native' row that
+    // could never load, and a separate scanned row that could. Each suite
+    // instrument has to be exactly one row, and that row has to load.
+    const auto registryFile = repoRegistryFile();
+
+    // A hard failure, not a warning: as a warning-and-return this case dropped
+    // every assertion below whenever CTest ran it from build/app, and the
+    // suite still reported success.
+    if (! registryFile.existsAsFile())
+        FAIL ("plugins/registry.json not found at " << registryFile.getFullPathName());
+
+    const auto registry = nc::loadRegistry (registryFile);
+    nc::PluginCatalog catalog (registry.plugins);
+
+    auto chop = makeDescription ("Chop Station", "C:/build/Chop Station.vst3", 501);
+    chop.isInstrument = true;
+    chop.category = "Instrument";
+
+    auto eight = makeDescription ("808 Designer", "C:/build/808 Designer.vst3", 502);
+    eight.isInstrument = true;
+    eight.category = "Instrument";
+
+    catalog.mergeScannedDescriptions ({ chop, eight });
+
+    struct Expected { const char* id; const char* bundle; };
+
+    for (const auto& expected : { Expected { "chopstation", "Chop Station" },
+                                  Expected { "eightoheight", "808 Designer" } })
+    {
+        INFO ("registry id " << expected.id << " -> " << expected.bundle);
+
+        const auto entry = catalog.find (expected.id);
+        REQUIRE (entry.has_value());
+        REQUIRE (entry->registryRow);
+        REQUIRE (entry->scanned);
+        REQUIRE (entry->external);
+        REQUIRE (entry->isInstrument);
+
+        const auto description = catalog.findDescription (expected.id);
+        REQUIRE (description.has_value());
+        REQUIRE (description->name == expected.bundle);
+
+        // A dead registry row beside a scanned duplicate is the bug this pins.
+        auto rowsWithThisName = 0;
+
+        for (const auto& row : catalog.snapshot())
+            if (row.name.equalsIgnoreCase (expected.bundle))
+                ++rowsWithThisName;
+
+        REQUIRE (rowsWithThisName == 1);
+    }
+}
+
 TEST_CASE ("the shipped registry instantiates its installed suite plugins", "[.registry]")
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
 
-    const auto registryFile = juce::File::getCurrentWorkingDirectory()
-                                  .getChildFile ("plugins")
-                                  .getChildFile ("registry.json");
+    const auto registryFile = repoRegistryFile();
 
     if (! registryFile.existsAsFile())
     {
-        WARN ("plugins/registry.json not found from " << juce::File::getCurrentWorkingDirectory().getFullPathName());
+        WARN ("plugins/registry.json not found at " << registryFile.getFullPathName());
         return;
     }
 

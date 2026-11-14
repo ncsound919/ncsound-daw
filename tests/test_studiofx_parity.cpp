@@ -44,18 +44,31 @@ TEST_CASE ("studio FX parity fixture loads and matches the catalog", "[studiofx]
 
     const auto catalog = nc::engine::json::Parser::parse (readFile (fixtureDir() + "catalog.json"));
     REQUIRE (catalog.has_value());
-    std::size_t implemented = 0;
+    std::size_t withGoldenVectors = 0;
     for (const auto& kind : require (*catalog, "kinds").array)
     {
         const std::string id = require (kind, "id").string;
+        // These two are implemented ("every catalog kind builds a module"), but the
+        // Kotlin engine has no golden render for them yet, so the fixture cannot
+        // compare them.
         if (id != "VOCAL_RIDER" && id != "RESONANCE_SMOOTHER")
-            ++implemented;
+            ++withGoldenVectors;
     }
 
     const auto& cases = require (*fixtures, "cases").array;
-    // One case per implemented module plus the full-chain case.
-    REQUIRE (cases.size() == implemented + 1);
+    // One case per module with a golden vector plus the full-chain case.
+    REQUIRE (cases.size() == withGoldenVectors + 1);
     REQUIRE (cases.size() == 27);
+}
+
+TEST_CASE ("every catalog kind builds a module", "[studiofx]")
+{
+    for (std::size_t i = 0; i < kNumFxKinds; ++i)
+    {
+        INFO (kFxKinds[i].id);
+        const auto module = createModule (kFxKinds[i].id, 48000.0f);
+        REQUIRE (module != nullptr);
+    }
 }
 
 TEST_CASE ("C++ renderer matches the golden vectors", "[studiofx]")

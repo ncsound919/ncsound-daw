@@ -102,9 +102,9 @@ struct TrackState
     PitchStack pitch;
     PitchStack instrumentPitch;
 
-    // Four user insert slots. Slot 0 in the UI is the baked native strip; these
-    // are the four slots the browser can load into.
-    std::array<PluginSlotState, 4> inserts {};
+    // Eight user insert slots, shown in the UI as two banks (1-4 and 5-8). The
+    // baked channel strip is separate; all eight slots are hostable.
+    std::array<PluginSlotState, 8> inserts {};
 
     // The track's instrument: MIDI in, stereo out, playing into slot 0 of the
     // insert chain. Built-in synth is identified by identifier

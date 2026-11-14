@@ -2,6 +2,77 @@ cmake_minimum_required(VERSION 3.22)
 
 project(NCSoundDAW VERSION 0.1.0 LANGUAGES C CXX)
 
+# Guard: an MSVC Release-class build must actually be optimized. When the build
+# tree is configured from a shell whose environment lost the CMake defaults,
+# the per-configuration C++ flag sets can end up empty; every C++ file then
+# compiles at /Od and the audio engine cannot meet its real-time budget (the
+# render alone exceeds the 10 ms WASAPI shared-mode block, which the user
+# hears as periodic distortion). Every optimized configuration is covered, not
+# just Release: RelWithDebInfo is what performance work is profiled in, and
+# MinSizeRel is what size-constrained targets ship.
+#
+# Repair: an emptied flag set gets the platform default back, so a clean
+# configure on a broken shell still produces an optimized build. A non-empty
+# explicit override is never touched.
+#
+# Refuse: a non-empty override carrying no optimizer for a configuration this
+# tree will compile fails configure, instead of quietly shipping an /Od
+# "Release" that cannot hold the real-time budget. Only the configurations
+# that will actually be compiled are checked, so a single-config Debug tree
+# is not held to release flags it never uses.
+if(MSVC)
+    # What the environment should have supplied, keyed by configuration.
+    set(_nc_opt_defaults_RELEASE        "/O2 /Ob2 /DNDEBUG")
+    set(_nc_opt_defaults_RELWITHDEBINFO "/O2 /Ob2 /DNDEBUG")
+    # MinSizeRel is deliberately size-optimized, so restore CMake's own
+    # default rather than upgrading it to /O2 behind the user's back.
+    set(_nc_opt_defaults_MINSIZEREL     "/O1 /Ob1 /DNDEBUG")
+    # The switches that satisfy each configuration (MinSizeRel accepts /O2 too,
+    # so an explicit /O2 there is not flagged as a regression).
+    set(_nc_opt_ok_RELEASE        "/(O2|Ox)")
+    set(_nc_opt_ok_RELWITHDEBINFO "/(O2|Ox)")
+    set(_nc_opt_ok_MINSIZEREL     "/(O1|O2|Ox)")
+
+    foreach(_nc_cfg RELEASE RELWITHDEBINFO MINSIZEREL)
+        if("${CMAKE_CXX_FLAGS_${_nc_cfg}}" STREQUAL "")
+            set(CMAKE_CXX_FLAGS_${_nc_cfg} "${_nc_opt_defaults_${_nc_cfg}}"
+                CACHE STRING "CXX ${_nc_cfg} flags" FORCE)
+        endif()
+    endforeach()
+
+    if(CMAKE_CONFIGURATION_TYPES)
+        set(_nc_built_configs ${CMAKE_CONFIGURATION_TYPES})
+    else()
+        set(_nc_built_configs ${CMAKE_BUILD_TYPE})
+    endif()
+
+    foreach(_nc_cfg IN LISTS _nc_built_configs)
+        string(TOUPPER "${_nc_cfg}" _nc_cfg_upper)
+
+        if(NOT DEFINED _nc_opt_ok_${_nc_cfg_upper})
+            continue()
+        endif()
+
+        set(_nc_flags "${CMAKE_CXX_FLAGS_${_nc_cfg_upper}}")
+
+        if(NOT _nc_flags MATCHES "${_nc_opt_ok_${_nc_cfg_upper}}")
+            message(FATAL_ERROR
+                "CMAKE_CXX_FLAGS_${_nc_cfg_upper} has no optimization switch "
+                "(expected ${_nc_opt_ok_${_nc_cfg_upper}}):\n"
+                "  \"${_nc_flags}\"\n"
+                "A ${_nc_cfg_upper} C++ build here compiles the audio engine at /Od "
+                "and cannot meet the real-time block budget. Fix it with:\n"
+                "  -DCMAKE_CXX_FLAGS_${_nc_cfg_upper}=\"${_nc_opt_defaults_${_nc_cfg_upper}}\"\n"
+                "or delete that cache entry and re-configure.")
+        endif()
+    endforeach()
+endif()
+
+# Android needs 16 KB ELF alignment; no effect on desktop VST3 builds.
+if(ANDROID)
+    add_link_options(-Wl,-z,max-page-size=16384)
+endif()
+
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(CPM)
 include(NcTargets)

@@ -59,6 +59,21 @@ inline constexpr int64_t maxAssetFrames (double sampleRate) noexcept
     return static_cast<int64_t> (safeRate * static_cast<double> (maxAssetSeconds));
 }
 
+// A RAM-resident import is bounded by bytes as well as by duration. Thirty
+// minutes at 192 kHz stereo is 2.7 GB of float samples, past what a 32-bit
+// build or a machine already running plugins can allocate; a corrupt header is
+// enough to ask for it. 512 MB holds 30 minutes at 48 kHz stereo, and anything
+// longer than the streaming threshold is read from disk instead.
+inline constexpr int64_t maxResidentAssetBytes = 512LL * 1024 * 1024;
+
+inline constexpr int64_t maxResidentAssetFrames (double sampleRate, int channels) noexcept
+{
+    const auto ch = std::clamp (channels, 1, 2);
+    const auto byBytes = maxResidentAssetBytes / (static_cast<int64_t> (ch) * 4);
+    const auto byDuration = maxAssetFrames (sampleRate);
+    return byBytes < byDuration ? byBytes : byDuration;
+}
+
 // Rows a session starts with. Tracks beyond this are real but empty until the
 // user adds them; the 64-track ceiling is the same one the engine allocates.
 inline constexpr int defaultActiveTracks = 16;

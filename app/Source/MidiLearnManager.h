@@ -1,10 +1,13 @@
 #pragma once
 
-#include <juce_audio_utils/juce_audio_utils.h>
+#include <juce_audio_basics/juce_audio_basics.h>
+#include <juce_audio_devices/juce_audio_devices.h>
+#include <juce_core/juce_core.h>
 #include <juce_events/juce_events.h>
 
 #include <map>
 #include <optional>
+#include <queue>
 #include <string>
 
 namespace nc
@@ -32,11 +35,13 @@ public:
     static juce::Array<juce::MidiDeviceInfo> availableDevices();
     bool openDevice (const juce::String& id, juce::String& error);
     bool openOutput (const juce::String& id, juce::String& error);
-    void closeDevices();
+    void closeDevices(); // closes input and output
+    void closeInput();
+    void closeOutput();
     juce::String activeDeviceId() const { return deviceId; }
     juce::String activeOutputId() const { return outputId; }
 
-    bool isLearnArmed() const noexcept { return learnTarget.has_value(); }
+    bool isLearnArmed() const noexcept { juce::ScopedLock scopedLock (lock); return learnTarget.has_value(); }
     void armLearn (const std::string& paramId, Mode mode = Mode::absolute);
     void cancelLearn();
     bool consumeNextCc (int channel, int controller, int value, bool isNote);
@@ -46,6 +51,13 @@ public:
     void removeBinding (int channel, int controller, bool isNote);
     std::vector<Binding> bindings() const;
 
+    struct Change
+    {
+        Binding binding;
+        int rawValue = 0;
+    };
+    bool takeChange (Change& change);
+
     void saveToFile (const juce::File& file) const;
     bool loadFromFile (const juce::File& file);
     void loadBuiltInTemplate (const std::string& name);
@@ -53,8 +65,6 @@ public:
     // LED feedback: call from the message thread when a parameter changes.
     void sendLed (int channel, int controller, int value);
     void sendAllLeds (const std::map<int,int>& state);
-
-    juce::MidiKeyboardState keyboardState;
 
 private:
     void handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& message) override;
@@ -64,7 +74,8 @@ private:
     juce::String deviceId, outputId;
     std::optional<Binding> learnTarget;
     std::map<std::tuple<int,int,bool>, Binding> table;
-    juce::CriticalSection lock;
+    std::queue<Change> pendingChanges;
+    mutable juce::CriticalSection lock;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MidiLearnManager)
 };

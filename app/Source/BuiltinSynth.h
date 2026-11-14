@@ -74,6 +74,7 @@ private:
         double bendSemitones = 0.0;
         float envLevel = 0.0f;
         float filterState = 0.0f;
+        float filterState2 = 0.0f;
         int envStage = 0; // 0 attack, 1 decay, 2 sustain, 3 release
         bool noteHeld = false;
 

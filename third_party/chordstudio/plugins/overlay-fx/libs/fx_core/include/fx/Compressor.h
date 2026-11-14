@@ -54,6 +54,7 @@ namespace fx
 
             recomputeAttackRelease();
             updateScEq();
+            refreshConstants();
         }
 
         void reset() noexcept
@@ -120,9 +121,21 @@ namespace fx
 
             if (scEqChanged)
                 updateScEq();
+
+            refreshConstants();
         }
 
         float gainReductionDb() const noexcept { return grDb; }
+
+        // Constants that only change when the params change. process() used to
+        // recompute these with std::exp/std::pow on every sample, which on a
+        // 16-track session costs four transcendental calls per sample per
+        // channel strip and alone can exceed the audio budget on a slow CPU.
+        void refreshConstants() noexcept
+        {
+            scCoeff = std::exp (-2.0f * 3.14159265f * params.sidechainHpfHz / (float) sr);
+            constantMakeup = std::pow (10.0f, params.makeupDb / 20.0f);
+        }
 
         void process (float& l, float& r) noexcept
         {
@@ -136,7 +149,7 @@ namespace fx
             }
 
             // ---- detector (on the *undelayed* input so lookahead anticipates) ----
-            const auto scCoeff = std::exp (-2.0f * 3.14159265f * params.sidechainHpfHz / (float) sr);
+            const auto scCoeff = this->scCoeff;
             float scL = 0.0f, scR = 0.0f;
             {
                 const auto inL = l, inR = r;
@@ -247,7 +260,11 @@ namespace fx
             const auto appliedGr = grDb * std::max (0.0f, params.amount);
             const auto gain = std::pow (10.0f, -appliedGr / 20.0f);
             const auto autoMakeup = params.autoGain ? grAvgDb : 0.0f;
-            const auto makeup = std::pow (10.0f, (params.makeupDb + autoMakeup) / 20.0f);
+            // With autoGain off the makeup is constant; pow() per sample was a
+            // wasted transcendental call in the strip's per-sample path.
+            const auto makeup = params.autoGain
+                                    ? std::pow (10.0f, (params.makeupDb + autoMakeup) / 20.0f)
+                                    : constantMakeup;
             const auto wet = gain * makeup;
 
             l = dryL * (1.0f - params.mix) + dryL * wet * params.mix;
@@ -340,5 +357,7 @@ namespace fx
         float attackCoeff { 0.99f }, releaseCoeff { 0.999f };
         float rmsCoeff { 0.999f };
         float autoGainCoeff { 0.9999f };
+        float scCoeff { 0.9974f };      // sidechain HPF one-pole, from sidechainHpfHz
+        float constantMakeup { 1.0f };  // 10^(makeupDb/20), when autoGain is off
     };
 }

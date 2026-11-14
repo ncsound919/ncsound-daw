@@ -200,15 +200,31 @@ struct AuxBus::Impl
         return wet;
     }
 
-    float processOverlayDelay (int channel, float input)
+    // One frame of both channels, so the write cursor advances exactly once per
+    // frame. Advancing it per channel made the delay time slip a whole block
+    // between blocks and turned the return into a block-rate modulated copy.
+    void processOverlayDelay (float& left, float& right)
     {
-        auto& line = delay[static_cast<size_t> (channel)];
-        const auto delayed = line[static_cast<size_t> (delayWrite)];
-        auto& lowpass = feedbackLowpass[static_cast<size_t> (channel)];
-        lowpass += 0.25f * (delayed - lowpass);
-        line[static_cast<size_t> (delayWrite)] = input + lowpass * delayFeedback;
+        // Read one delay time behind the write, like the Temporal engine, so the
+        // echo lands on the documented 375 ms instead of the whole line length.
+        auto readIndex = delayWrite - delayBaseSamples;
+
+        if (readIndex < 0)
+            readIndex += delayLength;
+
+        const auto delayedLeft = delay[0][static_cast<size_t> (readIndex)];
+        const auto delayedRight = delay[1][static_cast<size_t> (readIndex)];
+
+        feedbackLowpass[0] += 0.25f * (delayedLeft - feedbackLowpass[0]);
+        feedbackLowpass[1] += 0.25f * (delayedRight - feedbackLowpass[1]);
+
+        delay[0][static_cast<size_t> (delayWrite)] = left + feedbackLowpass[0] * delayFeedback;
+        delay[1][static_cast<size_t> (delayWrite)] = right + feedbackLowpass[1] * delayFeedback;
+
         delayWrite = (delayWrite + 1) % delayLength;
-        return delayed;
+
+        left = delayedLeft;
+        right = delayedRight;
     }
 
     void processTemporalDelay (float& left, float& right, const double rate)
@@ -271,22 +287,56 @@ void AuxBus::prepare (double rate, int maxBlockSize, Engine engineToUse)
     maxBlock = juce::jmax (1, maxBlockSize);
     prepared = false;
 
-    impl->clearAll();
+    // prepare() runs while the device is stopped, so no callback holds the
+    // pointer. Retired implementations are safe to free here for the same
+    // reason, and a fresh object avoids clearing the one being published.
+    impl = std::make_unique<Impl>();
 
     if (isReverb (engine))
         impl->prepareReverb (sampleRate, engine);
     else
         impl->prepareDelay (sampleRate, engine);
 
+    live.store (impl.get(), std::memory_order_release);
+    retired.clear();
     prepared = true;
 }
 
-void AuxBus::setEngine (Engine newEngine)
+void AuxBus::setEngine (Engine newEngine, std::uint64_t currentBlock)
 {
     if (newEngine == engine)
         return;
 
-    prepare (sampleRate, maxBlock, newEngine);
+    engine = newEngine;
+
+    if (! prepared)
+    {
+        live.store (nullptr, std::memory_order_release);
+        return;
+    }
+
+    // Build the replacement completely before publishing it: process() must
+    // never see cleared combs or a resized delay line.
+    auto fresh = std::make_unique<Impl>();
+
+    if (isReverb (newEngine))
+        fresh->prepareReverb (sampleRate, newEngine);
+    else
+        fresh->prepareDelay (sampleRate, newEngine);
+
+    live.store (fresh.get(), std::memory_order_release);
+    retired.push_back ({ std::move (impl), currentBlock });
+    impl = std::move (fresh);
+}
+
+void AuxBus::collectRetired (std::uint64_t currentBlock)
+{
+    retired.erase (std::remove_if (retired.begin(), retired.end(),
+                                   [currentBlock] (const Retired& entry)
+                                   {
+                                       return entry.retiredAtBlock + 2 <= currentBlock;
+                                   }),
+                   retired.end());
 }
 
 void AuxBus::reset()
@@ -294,14 +344,18 @@ void AuxBus::reset()
     if (! prepared)
         return;
 
-    impl->clearAll();
+    if (auto* active = live.load (std::memory_order_acquire))
+        active->clearAll();
 }
 
 void AuxBus::process (juce::AudioBuffer<float>& buffer, int numSamples)
 {
-    if (! prepared || buffer.getNumChannels() == 0 || numSamples <= 0)
+    auto* active = live.load (std::memory_order_acquire);
+
+    if (! prepared || active == nullptr || buffer.getNumChannels() == 0 || numSamples <= 0)
         return;
 
+    auto& impl = *active;
     const auto channels = juce::jmin (buffer.getNumChannels(), 2);
 
     if (isReverb (engine))
@@ -312,7 +366,7 @@ void AuxBus::process (juce::AudioBuffer<float>& buffer, int numSamples)
 
             for (int i = 0; i < numSamples; ++i)
             {
-                const auto output = impl->processReverbFrame (channel, data[i]);
+                const auto output = impl.processReverbFrame (channel, data[i]);
                 data[i] = std::isfinite (output) ? output : 0.0f;
             }
         }
@@ -329,7 +383,7 @@ void AuxBus::process (juce::AudioBuffer<float>& buffer, int numSamples)
         {
             auto wetLeft = left[i];
             auto wetRight = right[i];
-            impl->processTemporalDelay (wetLeft, wetRight, sampleRate);
+            impl.processTemporalDelay (wetLeft, wetRight, sampleRate);
             left[i] = std::isfinite (wetLeft) ? wetLeft : 0.0f;
             right[i] = std::isfinite (wetRight) ? wetRight : 0.0f;
         }
@@ -337,15 +391,18 @@ void AuxBus::process (juce::AudioBuffer<float>& buffer, int numSamples)
         return;
     }
 
-    for (int channel = 0; channel < channels; ++channel)
-    {
-        auto* data = buffer.getWritePointer (channel);
+    auto* left = buffer.getWritePointer (0);
+    auto* right = channels > 1 ? buffer.getWritePointer (1) : nullptr;
 
-        for (int i = 0; i < numSamples; ++i)
-        {
-            const auto output = impl->processOverlayDelay (channel, data[i]);
-            data[i] = std::isfinite (output) ? output : 0.0f;
-        }
+    for (int i = 0; i < numSamples; ++i)
+    {
+        auto wetLeft = left[i];
+        auto wetRight = right != nullptr ? right[i] : wetLeft;
+        impl.processOverlayDelay (wetLeft, wetRight);
+        left[i] = std::isfinite (wetLeft) ? wetLeft : 0.0f;
+
+        if (right != nullptr)
+            right[i] = std::isfinite (wetRight) ? wetRight : 0.0f;
     }
 }
 } // namespace nc

@@ -124,7 +124,9 @@ inline void processLoFi (RenderView view, const LoFiParams& params) noexcept
         return; // exact passthrough
 
     const auto levels = std::pow (2.0f, std::clamp (params.bits, 1.0f, 16.0f) - 1.0f);
-    const auto hold = std::max (1, static_cast<int> (std::lround (std::max (1.0f, params.crush))));
+    // A hostile or automated parameter must not overflow the cast; the hold is
+    // bounded to a musically useful range instead.
+    const auto hold = static_cast<int> (std::lround (std::clamp (params.crush, 1.0f, 1024.0f)));
 
     float heldLeft = 0.0f;
     float heldRight = 0.0f;
@@ -273,7 +275,9 @@ inline void invert (RenderView view) noexcept
 
 inline void applyGain (RenderView view, float db) noexcept
 {
-    const auto gain = dbToGain (db);
+    // An unclamped dB value becomes inf and poisons every downstream stage, so
+    // the process clamps to a level a real operator could ask for.
+    const auto gain = dbToGain (std::clamp (db, -48.0f, 48.0f));
 
     for (int i = 0; i < view.frames; ++i)
     {

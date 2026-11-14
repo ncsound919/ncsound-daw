@@ -1,8 +1,11 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 
 namespace nc::engine
 {
@@ -65,8 +68,10 @@ struct CharacterSettings
     so the section does not ride the mix bus upward.
 
     Threading: setSettings may be called from the message thread while process*
-    runs on the audio thread; every field is read once per block into smoothing
-    state, so no tearing is possible. */
+    runs on the audio thread. Settings are published whole into a ring slot and
+    read once per block into smoothing state, so a knob move, a preset load and
+    an automation write landing in the same block cannot be observed
+    half-applied. */
 class AnalogCharacter
 {
 public:
@@ -100,9 +105,15 @@ public:
         settings.outputDb = std::clamp (settings.outputDb, -24.0f, 12.0f);
         settings.mix = std::clamp (settings.mix, 0.0f, 1.0f);
 
-        const auto tilt = settings.tone;
-        targetLow = dbToGain (-tilt * 6.0f);
-        targetHigh = dbToGain (tilt * 6.0f);
+        // Publish a complete snapshot into the next ring slot, then move the
+        // index. Ping-ponging two slots tore when three writes landed inside
+        // one block (preset load + UI write + automation): the slot the audio
+        // thread was copying came round again. Four slots leave the slot being
+        // copied untouched for up to three writes, and beginBlock() re-checks
+        // the index after its copy either way.
+        const auto next = writeIndex.load (std::memory_order_relaxed) + 1;
+        snapshots[static_cast<std::size_t> (next % snapshotSlots)] = settings;
+        writeIndex.store (next, std::memory_order_release);
     }
 
     const CharacterSettings& currentSettings() const noexcept { return settings; }
@@ -110,13 +121,39 @@ public:
     /** Starts a block: latches targets so per-sample work stays branch-free. */
     void beginBlock() noexcept
     {
-        targetDrive = settings.on ? driveGainFor (settings.driveDb) : 1.0f;
-        targetOutput = dbToGain (settings.outputDb);
+        // One copy per block: every per-sample read below uses this snapshot,
+        // never the message thread's copy. The index is read before and after
+        // the copy; if a publish landed in between, take the newer slot rather
+        // than a struct that may straddle two settings. The attempt bound stops
+        // a writer running at block rate from spinning the audio thread; even
+        // then the fallback is one whole slot, never a half-written one.
+        CharacterSettings snapshot {};
+        auto settled = false;
+
+        for (int attempt = 0; attempt < 4 && ! settled; ++attempt)
+        {
+            const auto index = writeIndex.load (std::memory_order_acquire);
+            snapshot = snapshots[static_cast<std::size_t> (index % snapshotSlots)];
+            settled = writeIndex.load (std::memory_order_acquire) == index;
+        }
+
+        if (! settled)
+            snapshot = snapshots[static_cast<std::size_t> (
+                writeIndex.load (std::memory_order_acquire) % snapshotSlots)];
+
+        block = snapshot;
+
+        targetDrive = block.on ? driveGainFor (block.driveDb) : 1.0f;
+        targetOutput = dbToGain (block.outputDb);
+
+        const auto tilt = block.tone;
+        targetLow = dbToGain (-tilt * 6.0f);
+        targetHigh = dbToGain (tilt * 6.0f);
     }
 
     void processSample (float& left, float& right) noexcept
     {
-        if (! settings.on)
+        if (! block.on)
         {
             const auto gain = smooth (smoothedOutput, targetOutput);
             left *= gain;
@@ -132,8 +169,8 @@ public:
         const auto dryL = left;
         const auto dryR = right;
 
-        auto wetL = shape (left * drive, settings);
-        auto wetR = shape (right * drive, settings);
+        auto wetL = shape (left * drive, block);
+        auto wetR = shape (right * drive, block);
 
         // The asymmetric stages leave an operating-point offset behind.
         const auto dcL = wetL - dcPreviousL + dcCoefficient * dcStateL;
@@ -155,7 +192,7 @@ public:
         wetL *= makeUp;
         wetR *= makeUp;
 
-        const auto mix = settings.mix;
+        const auto mix = block.mix;
         left = dryL + (wetL - dryL) * mix;
         right = dryR + (wetR - dryR) * mix;
 
@@ -171,7 +208,8 @@ public:
             processSample (left[i], right[i]);
     }
 
-    /** One mono sample, used by tests and by the mono voice path. */
+    /** One mono sample, used by tests and by the mono voice path. Like
+        processSample it expects beginBlock() to have latched the block. */
     float processMono (float input) noexcept
     {
         float l = input, r = input;
@@ -317,7 +355,15 @@ private:
     }
 
     double fs = 48000.0;
+    // Message-thread mirror for currentSettings()/serialisation.
     CharacterSettings settings {};
+    // Audio-thread view, published whole by setSettings() into a ring slot.
+    // Four slots: three writes inside one block (preset load, UI write,
+    // automation) still leave the slot the audio thread is copying alone.
+    static constexpr std::size_t snapshotSlots = 4;
+    std::array<CharacterSettings, snapshotSlots> snapshots {};
+    std::atomic<std::uint32_t> writeIndex { 0 };
+    CharacterSettings block {};
 
     float dcCoefficient = 0.996f;
     float tiltCoefficient = 0.09f;

@@ -3,7 +3,10 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_core/juce_core.h>
 
+#include <atomic>
+#include <cstdint>
 #include <memory>
+#include <vector>
 
 namespace nc
 {
@@ -18,8 +21,10 @@ namespace nc
     thread and the buffers are re-fitted there.
 
     Threading: prepare/reset/setEngine run on the message thread, process on the
-    audio thread, with the usual "no concurrent calls" rule of this codebase.
-    No allocation in process(). */
+    audio thread. A swapped engine is built in a fresh Impl and published by an
+    atomic pointer, so process() never observes a half-rebuilt delay line; the
+    replaced Impl is retired and freed by collectRetired() once the audio thread
+    has started later blocks. No allocation in process(). */
 class AuxBus
 {
 public:
@@ -44,8 +49,13 @@ public:
 
     void prepare (double sampleRate, int maxBlockSize, Engine engine);
 
-    /** Swaps the engine in place. Message thread; re-fits the delay lines. */
-    void setEngine (Engine newEngine);
+    /** Swaps the engine. Message thread; builds the replacement off to the
+        side and publishes it. `currentBlock` is the audio block counter at the
+        swap, used to delay freeing the old implementation. */
+    void setEngine (Engine newEngine, std::uint64_t currentBlock);
+
+    /** Frees implementations retired at least two blocks ago. Message thread. */
+    void collectRetired (std::uint64_t currentBlock);
 
     Engine currentEngine() const noexcept { return engine; }
     juce::String currentEngineName() const { return engineName (engine); }
@@ -57,7 +67,16 @@ public:
 
 private:
     struct Impl;
-    std::unique_ptr<Impl> impl;
+
+    struct Retired
+    {
+        std::unique_ptr<Impl> impl;
+        std::uint64_t retiredAtBlock = 0;
+    };
+
+    std::unique_ptr<Impl> impl;             // message-thread working copy
+    std::atomic<Impl*> live { nullptr };    // what process() reads
+    std::vector<Retired> retired;           // freed by collectRetired()
     Engine engine = Engine::overlayReverb;
     double sampleRate = 48000.0;
     int maxBlock = 512;

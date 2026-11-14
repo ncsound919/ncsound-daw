@@ -4,6 +4,7 @@
 #include <nc/engine/AudioSuite.hpp>
 
 #include <cmath>
+#include <limits>
 #include <vector>
 
 using namespace nc::engine::audiosuite;
@@ -65,6 +66,7 @@ TEST_CASE ("lofi at zero wet passes the source through untouched")
     REQUIRE (audio.right[3] == Approx (-0.9f));
 }
 
+
 TEST_CASE ("varifi at unity rate is identity and at double rate reads every other frame")
 {
     Stereo unity (5);
@@ -100,6 +102,22 @@ TEST_CASE ("varifi at unity rate is identity and at double rate reads every othe
 
     for (int i = 0; i < 4; ++i)
         REQUIRE (out.left[static_cast<size_t> (i)] == Approx (source.left[static_cast<size_t> (i * 2)]).margin (1.0e-5));
+}
+
+TEST_CASE ("lofi clamps an extreme crush to a bounded hold")
+{
+    Stereo audio (8, 0.25f);
+    auto view = audio.view();
+    LoFiParams params;
+    params.crush = std::numeric_limits<float>::max();
+
+    processLoFi (view, params);
+    applyGain (view, std::numeric_limits<float>::max());
+
+    for (const auto sample : audio.left)
+        REQUIRE (std::isfinite (sample));
+    for (const auto sample : audio.right)
+        REQUIRE (std::isfinite (sample));
 }
 
 TEST_CASE ("fast track chain is neutral at its default-neutral settings")

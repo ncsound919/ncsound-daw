@@ -146,6 +146,24 @@ TEST_CASE ("comp take cycles within the take count")
     REQUIRE (clips[0].compTake == 0);
 }
 
+TEST_CASE ("comp take cycling wraps within the clamped maximum lane count")
+{
+    std::vector<ClipState> clips { makeClip (1.0, 2.0) };
+    constexpr int count = static_cast<int> (comping::CompLane::maxTakes);
+    clips[0].compTake = count - 1;
+
+    REQUIRE (cycleCompTake (clips, 0, 1, count + 1));
+    REQUIRE (clips[0].compTake == 0);
+}
+
+TEST_CASE ("right trim growth is limited by the project bar ceiling")
+{
+    std::vector<ClipState> clips { makeClip (1.0, 4.0) };
+
+    REQUIRE (trimClipRight (clips, 0, -5000.0));
+    REQUIRE (clips[0].lengthBars == Approx (nc::limits::maxBars));
+}
+
 TEST_CASE ("splitting a MIDI clip divides notes instead of copying them")
 {
     ClipState midi = makeClip (1.0, 8.0);

@@ -205,7 +205,12 @@ inline bool trimClipRight (std::vector<ClipState>& clips, std::size_t index, dou
         return false;
 
     auto& clip = clips[index];
-    const auto delta = std::clamp (deltaBars, -(clip.lengthBars - 1.0e-6), clip.lengthBars - 1.0e-6);
+    // Growing the tail may not push the clip past the project ceiling that
+    // sanitize() enforces on load; shortening is bounded by the clip itself.
+    const auto room = std::max (0.0, static_cast<double> (nc::limits::maxBars) - clip.lengthBars);
+    // Negative delta grows the tail: cap the growth at the headroom left
+    // before the session ceiling. Positive delta shortens: never past zero.
+    const auto delta = std::clamp (deltaBars, -room, clip.lengthBars - 1.0e-6);
 
     if (delta == 0.0)
         return false;
@@ -260,7 +265,7 @@ inline bool cycleCompTake (std::vector<ClipState>& clips, std::size_t index, int
     const auto current = std::clamp (clips[index].compTake, 0, count - 1);
     auto next = (current + delta) % count;
     if (next < 0)
-        next += takeCount;
+        next += count;
 
     clips[index].compTake = next;
     return true;
