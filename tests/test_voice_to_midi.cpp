@@ -83,6 +83,8 @@ TEST_CASE ("steady A440 produces one A4 note", "[voicetomidi]")
     REQUIRE (notes.front().lengthBeats > 0.8);
     REQUIRE (notes.front().velocity > 0);
     REQUIRE (notes.front().velocity <= 127);
+    REQUIRE (notes.front().confidence > 0.0f);
+    REQUIRE (notes.front().confidence <= 1.0f);
 }
 
 TEST_CASE ("two separated pitches produce two notes in order", "[voicetomidi]")
@@ -182,5 +184,6 @@ TEST_CASE ("a zero analysis window is clamped instead of producing NaNs", "[voic
         REQUIRE (std::isfinite (note.startBeat));
         REQUIRE (std::isfinite (note.lengthBeats));
         REQUIRE (note.lengthBeats > 0.0);
+        REQUIRE (std::isfinite (note.confidence));
     }
 }

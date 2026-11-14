@@ -1,6 +1,7 @@
 #include <nc/engine/SlicePlanner.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -164,9 +165,9 @@ std::vector<std::int64_t> detectTransients (const float* const* channelData,
         return onsets;
 
     // Spectral flux is the useful part of the standard onset detector: a
-    // timbre change (new note, consonant, drum hit) raises many bins at once,
-    // while a level change alone does not. A small energy-flux term keeps
-    // quiet percussive hits from disappearing under a loud sustained pad.
+    // timbre change (new note, consonant, drum hit) raises many bands at once,
+    // while a level change alone does not. Log-spaced bands keep the analysis
+    // frequency-dependent behaviour under control.
     constexpr std::size_t analysisWindow = 1024;
     constexpr std::int64_t hop = 256;
 
@@ -176,12 +177,28 @@ std::vector<std::int64_t> detectTransients (const float* const* channelData,
 
     const auto fftSize = nextPowerOfTwo (analysisWindow);
     const auto bins = fftSize / 2;
+
+    // Log-spaced bands avoid the frequency-dependent behaviour of a fixed
+    // linear-bin max filter. Band edges are in FFT bins so the detector stays
+    // sample-rate agnostic: low bands cover the bass, high bands the attack.
+    constexpr std::size_t bandCount = 32;
+    std::vector<double> bandPosition (bins, 0.0);
+
+    for (std::size_t k = 1; k < bins; ++k)
+        bandPosition[k] = std::log (static_cast<double> (k))
+                           / std::log (static_cast<double> (bins - 1))
+                           * static_cast<double> (bandCount - 1);
+
     std::vector<double> mixed (analysisWindow, 0.0);
     std::vector<double> re (fftSize, 0.0), im (fftSize, 0.0);
-    std::vector<double> previous (bins, 0.0), current (bins, 0.0), smoothed (bins, 0.0);
+    std::vector<double> previous (bandCount, 0.0), current (bandCount, 0.0),
+                         smoothed (bandCount, 0.0), baseline (bandCount, 0.0),
+                         bandPower (bandCount, 0.0);
+    constexpr std::size_t baselineWindow = 31;
+    std::array<std::array<double, baselineWindow>, bandCount> bandHistory {};
+    std::array<std::size_t, bandCount> historyCount {};
+    std::array<std::size_t, bandCount> historyNext {};
     std::vector<double> spectralFlux (frameCount, 0.0);
-    std::vector<double> energyFlux (frameCount, 0.0);
-    std::vector<double> rms (frameCount, 0.0);
 
     std::size_t activeChannels = 0;
     for (int ch = 0; ch < numChannels; ++ch)
@@ -198,8 +215,6 @@ std::vector<std::int64_t> detectTransients (const float* const* channelData,
 
         std::fill (mixed.begin(), mixed.end(), 0.0);
 
-        double energy = 0.0;
-
         for (int ch = 0; ch < numChannels; ++ch)
         {
             const auto* channel = channelData[ch];
@@ -211,13 +226,10 @@ std::vector<std::int64_t> detectTransients (const float* const* channelData,
             {
                 const auto sample = static_cast<double> (channel[start + i]);
                 mixed[static_cast<std::size_t> (i)] += sample;
-                energy += sample * sample;
             }
         }
 
         const auto gain = 1.0 / static_cast<double> (activeChannels);
-        rms[f] = std::sqrt (energy / (static_cast<double> (std::max<std::int64_t> (1, count)) * activeChannels));
-
         for (std::size_t i = 0; i < analysisWindow; ++i)
         {
             const auto window = 0.5 - 0.5 * std::cos (2.0 * 3.14159265358979323846
@@ -229,58 +241,83 @@ std::vector<std::int64_t> detectTransients (const float* const* channelData,
 
         fft (re, im);
 
+        std::fill (bandPower.begin(), bandPower.end(), 0.0);
+
         for (std::size_t k = 1; k < bins; ++k)
         {
-            current[k] = std::log1p (std::sqrt (re[k] * re[k] + im[k] * im[k]));
+            const auto position = bandPosition[k];
+            const auto lower = static_cast<std::size_t> (std::floor (position));
+            const auto fraction = position - static_cast<double> (lower);
+            const auto power = re[k] * re[k] + im[k] * im[k];
+
+            if (lower < bandCount)
+                bandPower[lower] += power * (1.0 - fraction);
+
+            if (lower + 1 < bandCount)
+                bandPower[lower + 1] += power * fraction;
         }
 
+        for (std::size_t band = 0; band < bandCount; ++band)
+            current[band] = std::log1p (std::sqrt (bandPower[band]));
+
         // A narrow FM sideband (vibrato) should not look like a broadband
-        // attack. Smooth across neighbouring bins before taking the flux.
-        for (std::size_t k = 1; k + 1 < bins; ++k)
-            smoothed[k] = 0.25 * current[k - 1] + 0.5 * current[k] + 0.25 * current[k + 1];
+        // attack. Smooth across neighbouring bands before taking the flux.
+        for (std::size_t band = 0; band < bandCount; ++band)
+        {
+            const auto left = band == 0 ? current[band] : current[band - 1];
+            const auto right = band + 1 == bandCount ? current[band] : current[band + 1];
+            smoothed[band] = 0.25 * left + 0.5 * current[band] + 0.25 * right;
+        }
 
         double flux = 0.0;
 
-        for (std::size_t k = 1; k < bins; ++k)
+        for (std::size_t band = 0; band < bandCount; ++band)
         {
-            // Compare against the maximum of the neighbouring bins in the
-            // previous frame (SuperFlux trajectory tracking), not just the
-            // same bin. A vibrato or slow pitch glide then stops looking like
-            // a stream of new onsets.
-            double reference = previous[k];
+            // Compare against the previous frame's neighbouring bands and a
+            // slow per-band baseline. The baseline absorbs steady pads and
+            // sustained tones so they do not generate a stream of false hits.
+            double reference = previous[band];
 
-            for (int offset = -3; offset <= 3; ++offset)
-            {
-                const auto bin = static_cast<std::ptrdiff_t> (k) + offset;
+            if (band > 0)
+                reference = std::max (reference, previous[band - 1]);
 
-                if (bin >= 1 && bin < static_cast<std::ptrdiff_t> (bins))
-                    reference = std::max (reference, previous[static_cast<std::size_t> (bin)]);
-            }
+            if (band + 1 < bandCount)
+                reference = std::max (reference, previous[band + 1]);
 
-            const auto rise = smoothed[k] - reference;
+            reference = std::max (reference, baseline[band]);
+            const auto rise = smoothed[band] - reference;
 
             if (rise > 0.0)
                 flux += rise;
         }
 
-        spectralFlux[f] = flux / static_cast<double> (bins - 1);
-        energyFlux[f] = f > 0 ? std::max (0.0, rms[f] - rms[f - 1]) : 0.0;
+        spectralFlux[f] = flux / static_cast<double> (bandCount);
+
+        for (std::size_t band = 0; band < bandCount; ++band)
+        {
+            auto& history = bandHistory[band];
+            history[historyNext[band]] = smoothed[band];
+            historyNext[band] = (historyNext[band] + 1) % baselineWindow;
+            historyCount[band] = std::min (baselineWindow, historyCount[band] + 1);
+
+            auto values = history;
+            std::sort (values.begin(), values.begin() + static_cast<std::ptrdiff_t> (historyCount[band]));
+            baseline[band] = values[historyCount[band] / 2];
+        }
+
         std::swap (previous, smoothed);
     }
 
     const auto maxSpectral = *std::max_element (spectralFlux.begin(), spectralFlux.end());
-    const auto maxRms = *std::max_element (rms.begin(), rms.end());
 
-    if (maxSpectral <= 1e-9 && maxRms <= 1e-9)
+    if (maxSpectral <= 1e-9)
         return onsets;
 
-    const auto normalizedSpectral = maxSpectral > 1e-9 ? 1.0 / maxSpectral : 0.0;
+    const auto normalizedSpectral = 1.0 / maxSpectral;
     std::vector<double> novelty (frameCount, 0.0);
 
     for (std::size_t f = 0; f < frameCount; ++f)
-        novelty[f] = 0.7 * spectralFlux[f] * normalizedSpectral
-                     + 0.3 * (maxRms > 1e-9 ? std::min (1.0, energyFlux[f] / maxRms)
-                                            : 0.0);
+        novelty[f] = spectralFlux[f] * normalizedSpectral;
 
     const auto sensitivity01 = std::clamp (sensitivity, 0.0, 1.0);
     const auto previousOnsetGap = 4;

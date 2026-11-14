@@ -23,6 +23,7 @@ struct V2MNote
     double startBeat = 0.0;
     double lengthBeats = 0.25;
     int velocity = 100;
+    float confidence = 0.0f;
 };
 
 struct V2MConfig
@@ -392,13 +393,18 @@ inline std::vector<V2MNote> voiceToMidi (const float* mono, std::size_t frames, 
     }
 
     std::vector<double> selectedMidi (frameCount, -1.0);
+    std::vector<double> selectedConfidence (frameCount, 0.0);
 
     for (std::size_t f = 0; f < frameCount; ++f)
     {
         const auto s = path[f];
 
         if (s >= 0 && s < static_cast<int> (candidates[f].size()))
-            selectedMidi[f] = candidates[f][static_cast<std::size_t> (s)].midi;
+        {
+            const auto& candidate = candidates[f][static_cast<std::size_t> (s)];
+            selectedMidi[f] = candidate.midi;
+            selectedConfidence[f] = std::clamp (1.0 - candidate.cost, 0.0, 1.0);
+        }
     }
 
     // Three-frame median smoothing removes isolated pitch spikes while
@@ -429,6 +435,8 @@ inline std::vector<V2MNote> voiceToMidi (const float* mono, std::size_t frames, 
     int pendingNote = -1;
     int pendingCount = 0;
     double pendingStart = 0.0;
+    double confidenceSum = 0.0;
+    int confidenceCount = 0;
 
     const auto closeNote = [&] (double endSeconds)
     {
@@ -443,12 +451,14 @@ inline std::vector<V2MNote> voiceToMidi (const float* mono, std::size_t frames, 
             const auto velocity = std::clamp (static_cast<int> (std::lround (24.0 + 103.0
                                                                            * std::min (1.0, meanRms / 0.2))),
                                               1, 127);
+            const auto meanConfidence = confidenceCount > 0 ? confidenceSum / confidenceCount : 0.0;
 
             V2MNote note;
             note.midiNote = currentNote;
             note.startBeat = currentStart * bpm / 60.0;
             note.lengthBeats = std::max (0.05, duration * bpm / 60.0);
             note.velocity = velocity;
+            note.confidence = static_cast<float> (std::clamp (meanConfidence, 0.0, 1.0));
             out.push_back (note);
         }
 
@@ -457,6 +467,8 @@ inline std::vector<V2MNote> voiceToMidi (const float* mono, std::size_t frames, 
         pendingCount = 0;
         rmsSum = 0.0;
         rmsCount = 0;
+        confidenceSum = 0.0;
+        confidenceCount = 0;
         gapFrames = 0;
     };
 
@@ -475,6 +487,8 @@ inline std::vector<V2MNote> voiceToMidi (const float* mono, std::size_t frames, 
                 lastVoiced = times[f];
                 rmsSum = rms[f];
                 rmsCount = 1;
+                confidenceSum = selectedConfidence[f];
+                confidenceCount = 1;
                 gapFrames = 0;
                 continue;
             }
@@ -489,6 +503,8 @@ inline std::vector<V2MNote> voiceToMidi (const float* mono, std::size_t frames, 
                 lastVoiced = times[f];
                 rmsSum += rms[f];
                 ++rmsCount;
+                confidenceSum += selectedConfidence[f];
+                ++confidenceCount;
                 continue;
             }
 
@@ -510,6 +526,8 @@ inline std::vector<V2MNote> voiceToMidi (const float* mono, std::size_t frames, 
                 lastVoiced = times[f];
                 rmsSum = rms[f];
                 rmsCount = 1;
+                confidenceSum = selectedConfidence[f];
+                confidenceCount = 1;
                 gapFrames = 0;
             }
             else
@@ -518,6 +536,8 @@ inline std::vector<V2MNote> voiceToMidi (const float* mono, std::size_t frames, 
                 lastVoiced = times[f];
                 rmsSum += rms[f];
                 ++rmsCount;
+                confidenceSum += selectedConfidence[f];
+                ++confidenceCount;
             }
         }
         else

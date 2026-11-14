@@ -118,7 +118,7 @@ TEST_CASE ("vibrato does not become a stream of false onsets")
     REQUIRE (onsets.size() <= 1);
 }
 
-TEST_CASE ("higher sensitivity finds at least as many onsets")
+TEST_CASE ("higher sensitivity detects the quiet hit")
 {
     constexpr std::int64_t frames = 30000;
     std::vector<float> audio (static_cast<size_t> (frames), 0.0f);
@@ -129,14 +129,29 @@ TEST_CASE ("higher sensitivity finds at least as many onsets")
     // A deliberately quiet second hit: the low setting should reject it, the
     // high setting should keep it.
     for (std::int64_t i = 0; i < 64; ++i)
-        audio[static_cast<size_t> (20000 + i)] = 0.02f;
+        audio[static_cast<size_t> (20000 + i)] = 0.005f;
 
     const float* channels[] = { audio.data() };
     const auto low = nc::detectTransients (channels, 1, frames, 0.0);
     const auto high = nc::detectTransients (channels, 1, frames, 1.0);
 
+    const auto nearQuiet = [] (const std::vector<std::int64_t>& onsets)
+    {
+        return std::any_of (onsets.begin(), onsets.end(), [] (auto onset)
+                            { return std::llabs (onset - 20000) <= 512; });
+    };
+
+    const auto nearLoud = [] (const std::vector<std::int64_t>& onsets)
+    {
+        return std::any_of (onsets.begin(), onsets.end(), [] (auto onset)
+                            { return std::llabs (onset - 5000) <= 512; });
+    };
+
     CAPTURE (low.size(), high.size());
-    REQUIRE (high.size() > low.size());
+    REQUIRE (nearLoud (low));
+    REQUIRE (nearLoud (high));
+    REQUIRE_FALSE (nearQuiet (low));
+    REQUIRE (nearQuiet (high));
 }
 
 TEST_CASE ("a quiet hit after a loud one is still detected")
@@ -198,4 +213,23 @@ TEST_CASE ("planned slices cover the sample without tiny fragments")
         if (i + 1 < slices.size())
             REQUIRE (slices[i].end == slices[i + 1].start);
     }
+}
+
+TEST_CASE ("detected transients drive planned slice boundaries")
+{
+    constexpr std::int64_t frames = 44100;
+    std::vector<float> audio (static_cast<size_t> (frames), 0.0f);
+
+    for (const auto hit : { 10000, 20000, 30000 })
+        for (std::int64_t i = 0; i < 64; ++i)
+            audio[static_cast<size_t> (hit + i)] = 0.9f;
+
+    const float* channels[] = { audio.data() };
+    const auto transients = nc::detectTransients (channels, 1, frames, 0.45);
+    const auto slices = nc::planSlices (frames, transients, 4);
+
+    REQUIRE (slices.size() == 4);
+    REQUIRE (std::llabs (slices[1].start - 10000) <= 512);
+    REQUIRE (std::llabs (slices[2].start - 20000) <= 512);
+    REQUIRE (std::llabs (slices[3].start - 30000) <= 512);
 }
