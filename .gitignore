@@ -16,3 +16,15 @@ CMakeUserPresets.json
 reference/
 # fetched by tools/fetch-native-deps.ps1 (WebView2 SDK)
 deps/
+
+# --- added by android_audit_agent ---
+*.jks
+*.keystore
+local.properties
+keystore.properties
+.env
+
+# user audio captured while recording takes
+Recorded Takes/
+# coverage tooling output
+LastCoverageResults.log

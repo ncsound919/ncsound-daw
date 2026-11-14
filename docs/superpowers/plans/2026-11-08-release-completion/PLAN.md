@@ -464,3 +464,20 @@ them - `percussion/build-fix1/.../Percussion.vst3` and
 installed copies of both load. Editors were created but not visually inspected,
 because native windows cannot be captured here. `ctest` passes 160/160 in
 247.6 s on this source.
+
+### Status - 8 November 2026 (React workspace is the UI)
+
+The React workspace now opens by default over everything below the native
+header; the JUCE surfaces stay behind View > React Workspace. The channel view
+carries insert banks 1-4 / 5-8 and a STRIP/PARAMS toggle, the instrument can
+follow the track pitch stack, headers and transport are smaller, clips show a
+Pro Tools-style gain line only once their level changes, and the piano roll has
+key/scale lock, quantise and octave transpose. Eight insert slots are wired
+through `TrackInsertRack`, `ProjectState` and the bridge.
+
+Voice to MIDI now works from the timeline: the engine's existing YIN tracker
+(`nc::engine::voiceToMidi`, also used by `AudioEngine::voiceToMidiClip`) runs
+over the take an audio clip plays, via `AudioEngine::assetSamples` (streamed
+imports are refused), and the `transcribeClip` route writes the result as a MIDI
+clip on the same track, exposed as VOICE->MIDI in the piano roll for audio
+clips.

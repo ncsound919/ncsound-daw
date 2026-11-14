@@ -703,6 +703,84 @@ and destroyed.
 Verified on this source: `ctest --test-dir build -j 4` passes **160/160** in
 247.6 s, and `[catalog]` passes 9 cases with 52 assertions.
 
+## React workspace becomes the UI - 8 November 2026
+
+The React workspace (WebView2) is the app's UI now: it opens by default and
+covers everything below the native header, so its transport, arrangement, mixer
+and browser are what the user works in. View > React Workspace still toggles
+back to the JUCE surfaces, which no longer refresh while they are covered.
+
+**Surfaces.** The channel view has insert banks 1-4 / 5-8, a STRIP/PARAMS
+toggle that swaps the faceplate for a scrollable full parameter list, and an
+instrument pitch SYNC switch that mirrors the track's pitch stack onto the
+instrument. Track headers and the transport are smaller (56 px lanes, 54 px
+transport), so more timeline fits on screen. Clips draw a Pro Tools-style gain
+line once their level has been changed, or while their fader is open, and
+nothing at unity. Inserts are eight per track end to end: `slotsPerTrack`,
+`ProjectState`'s slot array, the state projection and the load route agree.
+The piano roll gained key and scale lock (out-of-scale rows dim), quantise, and
+octave transpose of the selection, or of every note when nothing is selected.
+
+**Voice to MIDI.** The engine already carried a monophonic YIN tracker
+(`nc::engine::voiceToMidi` in `VoiceToMidi.hpp`, ported from VoxStudio) and a
+file-level `AudioEngine::voiceToMidiClip`. What was missing was a way to
+convert a clip already on the timeline without exporting it first.
+`AudioEngine::assetSamples` copies the resident audio a clip plays; a streamed
+import has no resident take, so it is refused rather than half-analysed. The
+`transcribeClip` route runs `voiceToMidi` over that buffer with the session
+tempo and sample rate, places the result as a new MIDI clip on the same track,
+so the track's instrument plays the sung line, and the piano roll exposes it as
+VOICE->MIDI for audio clips. It reads one voice at a time by design.
+
+**Project-window pass.** Three surfaces were still reading like the old UI.
+The track headers are now 216 px wide (`.ws-arrange`'s grid) instead of 272 px,
+and the default lane height is 44 px instead of 56, so the timeline gets the
+room. The line that crossed every clip came from `.ws-clip-body::after`, which
+drew at 72 % unconditionally; that rule is gone, and the Pro Tools-style gain
+line now exists only when the clip's level differs from unity or its fader is
+open. The channel view is condensed rather than scrolled: insert slots are a
+2 x 4 grid, the explanatory note is hidden, the parameter list is a dense
+auto-fill grid with no scroll container, and the mixer strips no longer scroll
+either.
+
+**Audit pass.** Track headers now lead with the track name and carry `T{n}`
+beside gain, instead of repeating a generic "TRACK 1". The Record button is
+disabled until a host route exists: it used to flash ARMED while the engine did
+nothing. The clip volume button reads `V` rather than an empty box, and its
+fader popover is allowed out of the clip body while open instead of being
+clipped. The channel hint says eight slots in two banks; menus only tag native
+gaps, and disabled File items say "not wired to the bridge yet" instead of
+claiming they exist elsewhere in the desktop app. The default-height slider can
+now reach the 44 px default (its minimum was 60), the sample-rate list says
+88200 rather than 88000, and `dbLabel` lost an unreachable branch.
+
+**Wheel zoom.** The arrangement wheel was anchored with a guessed 216 px
+header offset and zoomed out by 1.11 instead of the reciprocal of 0.9, so each
+in/out pair moved the window slightly down the timeline. Zoom now anchors on
+the lane rectangle (the bar under the pointer stays put) through a tested
+`zoomWindow` helper whose out factor is exactly `1 / 0.9`. Tests: `zoom.test.ts`
+covers anchor stability, an exact in/out round trip and 20 repeated pairs
+without drift; `arrange.test.tsx` drives a real wheel event. Verified: UI
+49/49 tests, `tsc` exit 0, the dev page went 32 -> 29 BARS on wheel-in and back
+to 32 on wheel-out, and `build/_ncbuild_plugins.cmd` relinked
+`NCSound Music Hub.exe` at 23:25 after fixing a pre-existing
+`voiceToMidiClipAsync` lambda capture in `MainComponent.cpp`.
+
+**Desktop wheel check.** Drove the rebuilt `NCSound Music Hub.exe` through
+CDP (WebView2 remote-debugging port): three wheel-ins at a clip went
+32 -> 29 -> 26 -> 23 BARS, three wheel-outs returned 26 -> 29 -> 32 BARS,
+and the anchored clip edge stayed at x=495 throughout (ROUNDTRIP_OK).
+Screenshot: `verify-wheel-app.png` (agent workspace). App left running.
+
+**Finished the listed work (TDD, 2026-11-09).** All six items done with failing-first tests; full gates green.
+
+- Anchored +/- zoom: the arrangement buttons and -/+/= keys now pivot on the playhead through zoomWindow (clamped when the playhead is off-window), instead of scaling around bar 1. arrange.test.tsx pins the anchored values, the exact in/out round trip, and the off-window clamp.
+- Instrument sync: Workspace.test.tsx pins the mirror (pitch change mirrored while SYNC is on, untouched while off) and the Inspector toggle flip. No production change needed; behavior already correct.
+- Plugin integration: Workspace refuses an instrument picked from the master browser with an INSTRUMENTS LOAD ON TRACKS flash and no backend call; effects still load. Covered in Workspace.test.tsx.
+- Mixology: new native routes mixologyPresets and applyMixologyPreset (report text plus full state), regenerated routes (41 now), Mixer master-channel preset row with host report line, and all five presets in the Edit menu with a status flash. mixer.test.tsx and chrome.test.tsx cover it.
+- Import Audio: new native importAudio route driving the existing FileChooser plus ArrangeView.importAudioFile (cancel-safe, clip lands on the selected track at the playhead); the File menu entry is enabled only when the handler exists. Covered in chrome.test.tsx.
+- Verified: tsc exit 0, vitest 9 files / 62 tests pass, vite build exit 0, native wrapper build exit 0, ctest 160/160 pass (187.8 s), exe relinked 01:19. Desktop smoke on the relinked exe via CDP: 32 BARS readout, 5 Mixology buttons in the Mixer, 5 presets in the Edit menu, Import Audio enabled, screenshots verify-shipped.png and verify-mixer.png. First link attempt failed with LNK1104 because the earlier test instance still held the exe; closed it and relinked clean. Not verified: real audio import through the dialog, real preset audition on hardware, installer behavior.
+
 **Header size, channel cutoff, 8-track names (TDD, 2026-11-09).** Finished the
 follow-ups: the web header now mirrors the native menu sectors, the master
 strip no longer clips its tips box, and all eight arrange headers show full
@@ -743,3 +821,215 @@ names.
   next relink does not hit LNK1104.
 - Not verified: real FileChooser dialogs, real mixdown/stems output, prefs
   dialog contents beyond opening, hardware audition of anything audible.
+
+**Recording wired, inserts repaired, mode presets (2026-11-09).** The React transport's Record
+button was `disabled` for a real reason: the bridge had 48 routes and no recording route, even
+though `AudioEngine::startRecording/stopRecording` and `MainComponent::startRecording/
+finishRecording` did the whole job. Added `startRecording`/`stopRecording` (50 routes now),
+`transport.recording`, client methods, `WorkspaceProps.onRecord` and the App handler.
+
+- Inserts: two bugs. The bridge flagged every registry row `missing` whenever the startup scan had
+  not reached it, which disabled LOAD for the whole scan, and the engine accepted only slots 0-3
+  while the editor shows eight. `missing` now means "not installed"; slots 0-7 are valid; an async
+  load fires `onInsertInstalled` → `pushState()` so the slot stops reading "empty" after a
+  successful load. Verified live: slot 1 → Temporal Delay, faceplate opens.
+- Mixer: strips 138 → 112 px, 10 px body gap, master gets a seam (inset border + left shadow) so
+  it no longer reads as covering the last channel. 16 strips still scroll at 1280 px.
+- Channel view: cards tightened (padding/gaps, knob zoom 0.5, pitch 0.7, hint line removed) so the
+  column fits one screen — measured scrollHeight 538 == clientHeight 538.
+- Clips: the "V" volume badge is a container query now, hidden below 200 px of clip width.
+- Modes: PROD/REC/MIX chips after SNAP, persisted in localStorage, `data-mode` on the shell, and
+  tab selection syncs the mode so the console and the chips cannot disagree.
+- Verified: UI 81/81, tsc 0, vite build 0, native relink exit 0, ctest 160/160.
+- Build note: `build/_ncbuild_plugins.cmd` uses `>/dev/null`, which cmd.exe cannot honour; after a
+  runner restart the compiler lost its include paths (`vswhere.exe`, missing `<algorithm>`). Use
+  `build/_ncbuild_ok.cmd` (`>nul`) instead.
+
+**Deep audit, four real defects fixed (2026-11-10).** A full audit pass (engine, JUCE host, React
+UI, bridge contract) cross-checked every claim against the working tree; most findings were already
+fixed by earlier in-flight work, which left four real defects plus one broken earlier edit.
+
+- `ProjectJson`: `masterInsert.descriptionXml` was never written or read, so a saved project could
+  not restore the master-rack plugin from its description (the primary restore path per
+  ProjectState). Now round-trips exactly like track inserts.
+- `MidiSchedule`/`MidiScheduler`: a note longer than one block re-attacked on every contiguous
+  block (a 2-bar note re-triggered hundreds of times per pass). The sounding-at-start catch-up now
+  fires only on a seek/loop entry or the first block; the cursor tracks `lastBlockEndPpq` for
+  contiguity, and the stateless reference takes a `retriggerSustained` flag. Event offsets clamp to
+  `blockSize - 1` (was `blockSize`, one past the last sample). Regression tests cover both paths
+  and the parity test now drives the same contiguity.
+- `AudioEngine::voiceToMidiClip` compared `AudioFormatReader::read`'s **bool** return against the
+  requested frame count (MSVC C4804): every file longer than one frame reported "Could not read
+  the full audio file", so transcription always failed. New `VoiceToMidiTests.cpp` (sine 440 →
+  note 69, plus a missing-file path) pins the success path.
+- `AudioEngine::setMidiClips` did not cap the clip count while `renderBlock` indexes a fixed
+  `maxClips` cursor array — a 1025-clip snapshot read past the array on the audio thread. Capped
+  at the boundary and the consumer loop now clamps to the cursor array size.
+- `stopRecording` could free a writer while a callback already inside `captureInputBlock` was
+  mid-write: stop now waits for two later blocks (the same retiredAtBlock + 2 rule the snapshot
+  sweeps use, with a 500 ms wedged-driver escape) before touching the take list.
+- `MidiLearnManager` forwarded note-offs, so a toggle bound to a pad flipped on attack and back on
+  release (never engaged) and absolute bindings dropped to zero. Note-offs are ignored at the
+  source; `MainComponent` also pushes state after learned values apply so the React mixer sees
+  them.
+- `saveAudioSettings` deleted the saved device setup when `createStateXml()` returned null, so one
+  bad-device session permanently wiped the interface/rate/buffer config. It now keeps the last
+  good setup (restore already falls back to defaults on failure).
+- React: `Inspector.tsx` called a `useEffect` after the empty-track bail-out (rules-of-hooks) —
+  hooks and their deps moved above the return; `App.runWrite`'s error resync now gets the same
+  state-revision guard as write replies (a slow resync could roll back newer pushed state).
+- Housekeeping: deleted `fix-inserts.cjs` (a stale one-off string-slice patch of Arrangement.tsx
+  whose target no longer exists).
+- Verified: UI tsc 0, eslint 0 errors, vitest 81/81; native relink exit 0, ctest 165/165
+  (mix_rack excluded from the quick pass as a 5-minute suite; engine/audio/record/voice suites
+  green).
+
+**Audit close-out, DAW-01 to DAW-13 (2026-11-12).** `docs/AUDIT-2026-11-12.md` reviewed the tree and
+found nineteen issues; the first thirteen are fixed. The "ctest 165/165" entry above is superseded:
+that pass excluded `mix_rack`, which is the suite that exposed DAW-02 (exit `0xc0000409` at
+`VoiceToMidiTests.cpp:89`). Numbers below were re-run on the final tree:
+
+- `build\_ncbuild_ok.cmd` → exit 0 (`NCMixRackTests`, `NCSoundHub`, `NCScannerProbe`).
+- `ctest --test-dir build -C Release --output-on-failure` → **168/168**, 206–492 s depending on
+  machine load; `mix_rack` alone 192–476 s. CTest enumerates 168, not 165.
+
+  *Correction after DAW-14 (same day).* The build that fixed the resource provider also relinked
+  `nc_tests`, whose post-build discovery had been stale: CTest now enumerates **173**, not 168.
+  The new entries are the five `[studiofx]` cases from the then-untracked `test_studiofx_parity`
+  work. One of them was red in that first run (`C++ renderer matches the golden vectors`, NEVE_1073
+  sample 1012 off by 0.216 against a 2e-3 bound); it was fixed in the in-flight work, and the final
+  run is **173/173**.
+- UI: `vitest run` **81/81**, `tsc -b` clean, `vite build` clean.
+- `grep -a motter-corpus-condensed` on the built hub exe → no match (the font is gone, see DAW-12).
+
+What changed since the 2026-11-10 entry:
+
+- DAW-01: `StageStats::count` is an enumerator, not a static data member of a local class.
+- DAW-02: `analyzeVoiceFile` returns its empty MIDI clip on every error path, so a failed
+  transcription is a clip plus an error string instead of an abort.
+- DAW-03: one reusable `juce::MidiBuffer` per engine, `ensureSize`d at prepare and `clear()`ed per
+  track, instead of a per-track local that allocated in the callback.
+- DAW-04: clip peak envelopes are cached by `(asset, range, bins)` in a bounded map, with hit/miss
+  counters and `PeakEnvelopeCacheTests.cpp` pinning that a second state push does not rescan.
+- DAW-05: imports are capped by bytes as well as duration; `bad_alloc`/`length_error` report through
+  `AudioEngine::lastAssetError()` instead of unwinding a message-thread load.
+- DAW-06: the mixdown renders to a temporary float file while a streaming `LoudnessMeter` measures
+  it, then reads it back for gain/dither/write — RAM no longer scales with export length.
+- DAW-07: `webEditClip` finite-checks and clamps every numeric patch field before any cast.
+- DAW-08: voice-to-MIDI copies the clip on the worker via `runWithAssetSamples`, with one job in
+  flight at a time.
+- DAW-09: the React workspace's track ceiling is 64 (was 8), matching `nc::limits::maxTracks`.
+- DAW-10: insert processors retire by block counter (`retiredAtBlock + 2`), the same rule as the
+  snapshot lists, replacing the `audioInCallback` guard that was not a barrier.
+- DAW-11: `AnalogCharacter` publishes into a four-slot settings ring instead of ping-ponging two.
+- DAW-12: added `LICENSE` (GPL-3.0, the status of the statically linked ChordStudio build),
+  `README.md` and `THIRD-PARTY-NOTICES.md`; removed the two unlicensed Monotype faces and rebuilt
+  the UI bundle without them.
+- DAW-17: diagnostic code no longer ships in Release. Deleted the `StageStats` / `NC_STAGE_TIMER`
+  timer (the DAW-01 cause, and its `dump()` was dead) and the `TEMP DIAGNOSTIC` write of
+  `nc-restore-log.txt` on device restore; put the `NC_TEST_TONE_HZ` probe and the `NC_AUDIO_DUMP`
+  writer behind `#if JUCE_DEBUG` with a folded-away Release stand-in. The built hub contains none of
+  those strings.
+- DAW-16: `setTimelineClips` is all-or-nothing. It validates first, then reserves room for the
+  clear plus every add via the new `SpscQueue::spaceAvailable()`; when the rail cannot take the
+  batch it refuses the publish whole, keeps the engine's schedule and the mirror in agreement, and
+  says why through `lastTimelineError()` (surfaced by `ArrangeView`). Covered by the `[timeline]`
+  suite, which pins both the refusal and that it does not wedge the next publish.
+- DAW-15: `handleApplyMixology` applies the preset reply through `applyState` behind the same
+  `stateRevision` check `runWrite` uses, so a slow reply cannot roll the screen back over a newer
+  host push; the report is returned regardless.
+- DAW-14: the embedded-bundle provider matches whole relative paths instead of basenames. CMake
+  generates `WebResourcePaths.h` from the same sorted `ui/dist` list it hands to
+  `juce_add_binary_data`, `nc::web::findResourceIndex` matches the normalised path, only the root
+  serves `index.html`, and the resource index is cross-checked against `originalFilenames` before
+  any bytes are returned. Covered by the new `[webui]` suite.
+- DAW-13: documentation corrected — this entry and the roadmap now carry the real suite counts, and
+  `AudioEngine.h` / `ProjectState.hpp` say eight insert slots rather than four.
+
+## The Release build was never optimized - 14 November 2026
+
+**The distortion's root cause was the build, not the DSP.** The build cache carried
+`CMAKE_CXX_FLAGS_RELEASE` wiped to an empty string (the C variant had the normal `/O2 /Ob2 /DNDEBUG`,
+every C++ file had nothing). The actual compile line for `AudioEngine.cpp` in the shipped "Release"
+tree was `-std:c++20 -MD /utf-8 /EHsc /bigobj` — no `/O2`, no `/Ob2`. Every measurement taken on that
+binary (a 16-track render costing 10-15 ms against the 10 ms WASAPI shared-mode block) measured an
+unoptimized binary, which is why "Debug vs Release" made no difference and playback distorted under
+any load. The project CMake never touches those flags, so the cache entry was lost when the tree was
+first configured; nothing re-set it.
+
+Two-level fix:
+
+- `CMakeLists.txt` (root): a guard that fills `CMAKE_CXX_FLAGS_RELEASE` with `/O2 /Ob2 /DNDEBUG`
+  when it is empty under MSVC, so a clean configure on this machine cannot regress; an explicit
+  user override still wins.
+- The build tree was reconfigured with `-DCMAKE_CXX_FLAGS_RELEASE="/O2 /Ob2 /DNDEBUG"` explicitly
+  and everything rebuilt (283 files, exit 0). The cache now shows the flag set.
+
+**Measurements, before (unoptimized) → after (/O2), median of 2000 blocks by `QueryThreadCycleTime`
+so background load on the shared machine cannot inflate them:**
+
+- All modules off: 16.6M → **6.82M cycles (2.73 ms)** per 480-sample block.
+- All modules on (16 tracks, EQ + strip + limiter + loudness): ≈ 9.8M cycles ≈ **3.9 ms** against a
+  10 ms budget. The limiter alone fell from ~1 ms to 56 µs.
+- Live CDP poll on the real app (`--remote-debugging-port=9223`, `getState` telemetry): DSP load
+  1.0 → **0.53-0.63 steady state**; overrun blocks ~100% → **~0.2% steady state**. Remaining overrun
+  bursts correlate with ambient machine load (Chrome/external) reaching 0.8 — with a hard 480-sample
+  shared-mode block on this i5-7200U they are the environment, not the render.
+
+**Behavior-preserving hot-spot work that survived the flag fix** (all in the vendored lock):
+`Compressor.h` caches the sidechain-HPF coefficient and constant makeup in `refreshConstants()`
+instead of `exp`/`pow` per sample; the pan cos/sin pair is cached per track and recomputed only when
+the smoothed angle moves; the tone probe config is read once per block instead of per sample; pass 3
+snapshots `sendA/sendB/width/audible` per block (removing ~80 atomic loads per sample); the
+limiter's and loudness's innermost modulo indexing is replaced with a rolling index (endpoint-proven
+equivalent, and the mix_rack THD suite still passes bit-for-bit). After editing a vendored file the
+`lock.cmake` entry is refreshed: `Loudness.h → a7799d9b…de5f09` (Compressor/MasterLimiter entries
+already matched).
+
+**Bisect instrumentation and its bugs, all removed after the measurements.** The temporary
+`RenderStageStats` stage timer, the `NC_PASS3_BISECT`/`NC_P3_SKIP` pass-3 stubs, and the
+`RenderTimingTests.cpp` diagnostic file (which opened the real device and rewrote the user's audio
+settings) are gone; the `dspOverruns/dspBlocks/deviceSampleRate/deviceBufferSize` telemetry in
+`buildTransport()` stays. The audit that swept the temp code fixed real problems before deletion:
+per-block environment reads on the audio thread (two syscalls + two `juce::String` allocations every
+block, now function-local statics — moot after removal, but the pattern is recorded), a latent
+out-of-bounds in the timer (`mark()` could fill `t[count]`, letting the destructor write
+`t[count + 1]`), a dead duplicate `StageStats` struct, an ungated temp log file written on every app
+launch by `restoreAudioSettings()`, and a micro-benchmark that seeded only lane 0
+(`float arr[16] { -2.0f }`).
+
+Full native suite on the optimized build: **195/195**, including `mix_rack` (993 s) and the
+THD/limiter/loudness tests that pin the exact DSP math.
+
+## Denormals in the native feedback loops - 14 November 2026
+
+Playback still scratched at load ~0.6 with sporadic overrun bursts. Signal-path audit: `juce::ScopedNoDenormals`
+was present only on the hosted-plugin paths (`HostedInsert`, `PluginHost`); the entire native chain ran
+without flush-to-zero. Every feedback loop in it decays exponentially towards zero once its input stops:
+
+- aux reverb combs (x0.84 feedback per pass; Nexus x0.90), allpasses (x0.5) — denormal within ~1.5 s of
+  any reverb tail;
+- the aux delay's feedback lowpass (`x += 0.25 * (delayed - x)` — x0.75 per sample) — denormal within a
+  single block after an echo passes, then denormal arithmetic on ~17900 of every 18000 samples;
+- the master limiter's `grAvg *= grAvgCoef` and the compressor's sidechain IIR states — same trap.
+
+Denormal arithmetic costs the FPU an order of magnitude more per operation, so the audio thread slowed
+several-fold exactly while tails rang out — heard as crackle, measured as bursts of overruns at ambient
+load that the /O2 fix alone did not remove.
+
+Fix: one `juce::ScopedNoDenormals` at the top of `renderBlock`, covering strips, master rack, aux buses
+and every vendored fx_core object they call (the hosted wrappers keep their own scopes; nesting is
+harmless). No DSP math changes, so the golden-vector suites still pass untouched: ctest **195/195**
+on the FTZ build.
+
+Live CDP poll on the real app after the fix: DSP load 0.53-0.63 → **0.39-0.45 steady**, overrun blocks
+→ **0 over ~4100 playback blocks** (one cold-start stray). The remaining load is the render itself.
+
+Environment note, recorded because it polluted two builds and one measurement: a second agent session
+on this machine (codebuff/Freebuff desktop) repeatedly launched `NCMixRackTests.exe` directly from the
+build directory; each instance opens the real audio device and idles, holding the exe lock (spurious
+`LNK1104` at link) and competing for the shared-mode device. If builds link-fail with LNK1104 for no
+compile error, check for `NCMixRackTests.exe` processes not started by ctest before suspecting the
+toolchain.
+
+
