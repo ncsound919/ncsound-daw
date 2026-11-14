@@ -1,0 +1,11 @@
+digest: 0x1b5398dd4a9f297a
+digest-base-commit: 6804ac9
+AudioEngine.cpp: 5a6c975c31cc949623be98b330c17132ddd11f8b4cfbb4c2628ad3f344e519af
+ArrangeView.cpp: e0c71fe4824a0d5aea093f1417eb908563802671a071ebca1b7f0dabd3a0fb6f
+MainComponent.cpp: c6c1a2cb4d1133216e22686218860f4e06426c3cad7c2453b561f0b48b8dab40
+AudioEngine.h: 4fc06f2666568d454ff9b20c09ed3f5bb44887205cdcab3f1d0f8a87a17a657e
+native-tests: 195
+guard: 07-03 move --base <sha of the commit that lands 07-03>
+guard: 07-04 decompose --base <sha of the commit that lands 07-04> --preserve-order renderBlock
+guard: 07-06 move --base <sha of the commit that lands 07-06>
+guard: 07-07 move --base <sha of the commit that lands 07-07>

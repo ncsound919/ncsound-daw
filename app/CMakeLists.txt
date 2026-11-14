@@ -64,6 +64,9 @@ target_sources(NCMixRackTests PRIVATE
     Source/AuxBusTests.cpp
     Source/DemoContentTests.cpp
     Source/SignalIntegrityTests.cpp
+    # Pins the exact rendered output so the engine can be split into
+    # translation units without changing a sample.
+    Source/RenderDigestTests.cpp
     Source/AudioQualityTests.cpp
     Source/AudioSettingsTests.cpp
     Source/RecordingTests.cpp

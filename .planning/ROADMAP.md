@@ -58,7 +58,24 @@ save → quit → open → identical state.
 Soak the audio thread with the two suite VST3s for 30 min, keep pluginval strictness 5 in the gate,
 and produce an installer that drops the app plus the per-user VST3 folder.
 
+### Phase 7 — Monolith decomposition (OPEN, planned)
+Three files hold 10,421 lines: `AudioEngine.cpp` (4564), `ArrangeView.cpp` (3121) and
+`MainComponent.cpp` (2736). `renderBlock` alone is 741 lines across four passes, and
+`handleMenuResult` is an 86-case switch. Nothing here changes behaviour: the public API of all
+three classes is frozen, a render-digest test pins the DSP output before any line moves, and a
+move-only guard proves each body was relocated rather than edited.
+
+Exit criteria: no file over 1000 lines, `AudioEngine` reduced to a facade over `AssetLibrary` and
+`TransportClock`, digest unchanged, 195/195 native and 81/81 UI tests still green.
+
+See `.planning/phases/07-monolith-decomposition/07-CONTEXT.md`.
+
 ## Order
 
-1 → 2 → 3 → 4 → 5 → 6. Phase 1 first because a DAW that cannot record is not working; Phase 3
-next because it degrades every load path; Phase 4 is cosmetic and can ride along.
+0 → 1 → 2 → 3 → 4 → 5 → 6, with Phase 7 as a parallel track: it touches no feature behaviour, so
+it can run before, between or after the others. It goes first in the plan directory because every
+later phase edits these same three files, and Phase 2 (routing), Phase 3 (catalogue) and Phase 6
+(packaging) all get cheaper once the engine is split along the seams Phase 7 opens.
+
+Phase 1 first because a DAW that cannot record is not working; Phase 3 next because it degrades
+every load path; Phase 4 is cosmetic and can ride along.
