@@ -167,6 +167,19 @@ TEST_CASE ("pitch bends follow vibrato and return to centre", "[voicetomidi]")
     REQUIRE (bends.back().value == 8192);
 }
 
+TEST_CASE ("unchanged pitch bends are deduplicated", "[voicetomidi]")
+{
+    const auto notes = transcribe (tone (0.8, 440.0));
+
+    REQUIRE (notes.size() == 1);
+    const auto& bends = notes.front().bends;
+    REQUIRE (bends.size() < 12);
+    REQUIRE (std::adjacent_find (bends.begin(), bends.end(),
+                                 [] (const auto& a, const auto& b)
+                                 { return a.value == b.value; })
+             == bends.end());
+}
+
 TEST_CASE ("a short silent gap is bridged, a long one is not", "[voicetomidi]")
 {
     Signal shortGap (0.0);
