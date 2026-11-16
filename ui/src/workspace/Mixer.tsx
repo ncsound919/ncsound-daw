@@ -3,12 +3,15 @@ import type { InsertSlot, TrackInfo, TransportState } from "../types";
 import { INSERT_BANKS, dbLabel, meterPct, tintForTrack } from "./format";
 import { Knob } from "../console-ui/Knob";
 import { toNorm, toValue, type ParamSpec } from "../console-ui/param";
+import { densityFor, stripMinWidthPx } from "./mixerLayout";
 
 const PAN_SPEC: ParamSpec = { min: -1, max: 1, decimals: 2 };
 const SEND_SPEC: ParamSpec = { min: 0, max: 100, decimals: 0, unit: "%" };
 
 export interface MixerProps {
   tracks: TrackInfo[];
+  /** Viewport width in px. The app leaves it undefined; tests pin it. */
+  viewportWidth?: number;
   selectedTrack: number;
   transport?: TransportState;
   masterGainDb: number;
@@ -705,6 +708,7 @@ function ChannelStrip({
 
 export function Mixer({
   tracks,
+  viewportWidth,
   selectedTrack,
   transport,
   masterGainDb,
@@ -731,8 +735,16 @@ export function Mixer({
   const masterPeakDb =
     masterPeak > 0 ? 20 * Math.log10(Math.max(1e-6, masterPeak)) : Number.NEGATIVE_INFINITY;
 
+  const density = densityFor(tracks.length, viewportWidth ?? window.innerWidth);
+
   return (
-    <div className="ws-mixer" role="group" aria-label="Mixer">
+    <div
+      className="ws-mixer"
+      role="group"
+      aria-label="Mixer"
+      data-density={density}
+      style={{ "--strip-min": `${stripMinWidthPx(density)}px` } as CSSProperties}
+    >
       <div className="ws-mixbody">
         <div className="ws-strips">
           {tracks.map((track) => (

@@ -1266,7 +1266,7 @@
   min-height: 0;
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(112px, 1fr);
+  grid-auto-columns: minmax(var(--strip-min, 112px), 1fr);
   gap: 2px;
   align-items: stretch;
   overflow-x: auto;
@@ -3556,4 +3556,23 @@
 .ws-master-viz-modal-panel .ws-master-viz-canvas {
   flex: 1 1 auto;
   min-height: 0;
+}
+
+/* Compact density: 16 strips + the master fit 1280 px. Only spacing and
+   label sizes change; no control is removed. */
+.ws-mixer[data-density="compact"] .ws-strips {
+  grid-auto-columns: minmax(var(--strip-min, 72px), 1fr);
+  gap: 1px;
+}
+
+.ws-mixer[data-density="compact"] .ws-strip {
+  padding: 0 3px 4px;
+  gap: 2px;
+}
+
+.ws-mixer[data-density="compact"] .ws-strip-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

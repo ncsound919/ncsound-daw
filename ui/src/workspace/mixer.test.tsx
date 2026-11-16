@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { Mixer } from "./Mixer";
+import type { TrackInfo } from "../types";
 
 const PRESETS = ["VOCAL FOCUS", "808 WEIGHT", "VOCAL PRESENCE", "SUBTRACTIVE", "FULL CHAIN"];
 
@@ -44,5 +45,35 @@ describe("Mixer Mixology", () => {
   it("hides the Mixology section without presets", () => {
     render(<Mixer {...props()} />);
     expect(screen.queryByRole("group", { name: "Mixology presets" })).not.toBeInTheDocument();
+  });
+});
+
+function tracks(count: number): TrackInfo[] {
+  return Array.from({ length: count }, (_, index) => ({
+    index,
+    name: `Track ${index + 1}`,
+    instrumentName: "Synth",
+    gainDb: 0,
+    pan: 0,
+    muted: false,
+    soloed: false,
+  }));
+}
+
+describe("Mixer density", () => {
+  it("renders 16 tracks in compact density at 1280", () => {
+    render(<Mixer {...props({ tracks: tracks(16), viewportWidth: 1280 })} />);
+    expect(screen.getByRole("group", { name: "Mixer" })).toHaveAttribute(
+      "data-density",
+      "compact",
+    );
+  });
+
+  it("stays normal for 8 tracks at 1280", () => {
+    render(<Mixer {...props({ tracks: tracks(8), viewportWidth: 1280 })} />);
+    expect(screen.getByRole("group", { name: "Mixer" })).toHaveAttribute(
+      "data-density",
+      "normal",
+    );
   });
 });
