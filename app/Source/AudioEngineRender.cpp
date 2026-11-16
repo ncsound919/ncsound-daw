@@ -95,6 +95,45 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
     if (rate <= 0.0)
         return;
 
+    RenderContext ctx;
+    ctx.inputChannelData = inputChannelData;
+    ctx.numInputChannels = numInputChannels;
+    ctx.outputChannelData = outputChannelData;
+    ctx.numOutputChannels = numOutputChannels;
+    ctx.numSamples = numSamples;
+    ctx.rate = rate;
+    ctx.isPlaying = isPlaying;
+    ctx.clickOn = clickOn;
+
+    // Pass 1: render clips into one stereo lane per track.
+    renderClipsPass (ctx);
+    // Pass 2: instruments, inserts, PDC and the per-block automation snapshot.
+    renderInstrumentInsertPass (ctx);
+    // Pass 3: native strip, fader/pan, click and master gain.
+    renderStripPass (ctx);
+    // Pass 4: aux returns, master rack, monitor, soft limit and metering.
+    renderMasterPass (ctx);
+
+    positionSamples.store (ctx.position);
+
+    for (int trackIndex = 0; trackIndex < trackCount; ++trackIndex)
+        tracks[static_cast<size_t> (trackIndex)].peak.store (ctx.blockPeaks[trackIndex]);
+
+    masterPeakValue.store (ctx.masterPeak);
+    masterPeakLeftValue.store (ctx.masterPeakLeft);
+    masterPeakRightValue.store (ctx.masterPeakRight);
+}
+
+void AudioEngine::renderClipsPass (RenderContext& ctx)
+{
+    const auto numSamples = ctx.numSamples;
+    const auto rate = ctx.rate;
+    const auto isPlaying = ctx.isPlaying;
+    const auto* const* inputChannelData = ctx.inputChannelData;
+    const auto numInputChannels = ctx.numInputChannels;
+    auto& trackLeftScratch = ctx.trackLeftScratch;
+    auto& trackRightScratch = ctx.trackRightScratch;
+
     // Tempo map (Task 2): the live snapshot drives clip placement, loop
     // points, automation PPQ and MIDI scheduling. `tempo` is the BPM in
     // force at the block start, for the click and transport block.
@@ -168,10 +207,6 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
     if (recording.load (std::memory_order_acquire))
         captureInputBlock (inputChannelData, numInputChannels, numSamples, position);
 
-    float blockPeaks[trackCount] {};
-    float masterPeak = 0.0f;
-    float masterPeakLeft = 0.0f;
-    float masterPeakRight = 0.0f;
 
     // The master rack and the optional external insert both need a block
     // buffer. mixBuffer is allocated once in audioDeviceAboutToStart().
@@ -190,9 +225,19 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
     if (trackBufferReady)
         trackBlock.clear (0, numSamples);
 
-    // Per-sample track sums live in the callback frame, not the sample loop.
-    std::array<float, trackCount> trackLeftScratch {};
-    std::array<float, trackCount> trackRightScratch {};
+    ctx.tempo = tempo;
+    ctx.tempoMap = &tempoMap;
+    ctx.beatSamples = beatSamples;
+    ctx.loop = loop;
+    ctx.loopStart = loopStart;
+    ctx.loopEnd = loopEnd;
+    ctx.anySolo = anySolo;
+    ctx.blockStartSamples = blockStartSamples;
+    ctx.blockStartPpq = blockStartPpq;
+    ctx.bufferReady = bufferReady;
+    ctx.mixLeft = mixLeft;
+    ctx.mixRight = mixRight;
+    ctx.trackBufferReady = trackBufferReady;
 
     // Pass 1: render clips into one stereo lane per track. Inserts run after
     // the whole block is rendered, so no plugin is called once per sample.
@@ -274,6 +319,27 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
             clickBeat = 0;
         }
     }
+
+    ctx.position = position;
+}
+
+void AudioEngine::renderInstrumentInsertPass (RenderContext& ctx)
+{
+    const auto numSamples = ctx.numSamples;
+    const auto rate = ctx.rate;
+    const auto isPlaying = ctx.isPlaying;
+    const bool loop = ctx.loop;
+    const auto loopStart = ctx.loopStart;
+    const auto loopEnd = ctx.loopEnd;
+    const auto blockStartSamples = ctx.blockStartSamples;
+    const auto blockStartPpq = ctx.blockStartPpq;
+    const auto trackBufferReady = ctx.trackBufferReady;
+    const auto tempo = ctx.tempo;
+    const auto& tempoMap = *ctx.tempoMap;
+    const auto* const* inputChannelData = ctx.inputChannelData;
+    const auto numInputChannels = ctx.numInputChannels;
+    auto& automatedGain = ctx.automatedGain;
+    auto& automatedPan = ctx.automatedPan;
 
     // Pass 2: instruments, inserts and PDC happen once per block, before
     // the native strip. MIDI is scheduled per track from the live clip
@@ -423,8 +489,6 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
 
     // Automation is evaluated once per block, like Ardour's per-cycle faders,
     // and the existing per-sample smoothing turns each step into a ramp.
-    float automatedGain[trackCount];
-    float automatedPan[trackCount];
     const auto blockBeat = engine::ppqAtSamplesWithMap (tempoMap, blockStartSamples, rate);
 
     for (int trackIndex = 0; trackIndex < trackCount; ++trackIndex)
@@ -451,6 +515,31 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
     auto* auxARight = auxABuffer.getNumSamples() >= numSamples ? auxABuffer.getWritePointer (1) : nullptr;
     auto* auxBLeft = auxBBuffer.getNumSamples() >= numSamples ? auxBBuffer.getWritePointer (0) : nullptr;
     auto* auxBRight = auxBBuffer.getNumSamples() >= numSamples ? auxBBuffer.getWritePointer (1) : nullptr;
+
+    ctx.auxALeft = auxALeft;
+    ctx.auxARight = auxARight;
+    ctx.auxBLeft = auxBLeft;
+    ctx.auxBRight = auxBRight;
+}
+
+void AudioEngine::renderStripPass (RenderContext& ctx)
+{
+    const auto numSamples = ctx.numSamples;
+    const auto rate = ctx.rate;
+    const auto isPlaying = ctx.isPlaying;
+    const auto anySolo = ctx.anySolo;
+    const auto trackBufferReady = ctx.trackBufferReady;
+    const auto numOutputChannels = ctx.numOutputChannels;
+    auto* const* const outputChannelData = ctx.outputChannelData;
+    auto* const mixLeft = ctx.mixLeft;
+    auto* const mixRight = ctx.mixRight;
+    auto& automatedGain = ctx.automatedGain;
+    auto& automatedPan = ctx.automatedPan;
+    auto& blockPeaks = ctx.blockPeaks;
+    auto* auxALeft = ctx.auxALeft;
+    auto* auxARight = ctx.auxARight;
+    auto* auxBLeft = ctx.auxBLeft;
+    auto* auxBRight = ctx.auxBRight;
 
     // Pass 3: native strip, fader/pan, click and master gain.
     // Loop-invariant: the probe config is read once per block, not per sample.
@@ -596,23 +685,7 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
                                                      juce::jmax (std::abs (trackLeft), std::abs (trackRight)));
             }
 
-            if (clickPhase >= beatSamples)
-            {
-                clickPhase -= beatSamples;
-                clickEnvelope = 0.85;
-                clickOscillator = 0.0;
-                ++clickBeat;
-            }
-
-            clickPhase += 1.0;
-
-            if (clickOn && ! probe.mute && clickEnvelope > 0.0001)
-            {
-                const auto frequency = clickBeat % 4 == 0 ? 1600.0 : 1000.0;
-                clickOscillator += twoPi * frequency / rate;
-                click = static_cast<float> (std::sin (clickOscillator) * clickEnvelope * 0.3);
-                clickEnvelope *= 0.9994;
-            }
+            click = renderClickSample (ctx, probe.mute);
         }
 
         smoothedMaster += (masterGainValue.load() - smoothedMaster) * smoothingCoefficient;
@@ -641,6 +714,55 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
                 outputChannelData[1][sample] = juce::jlimit (-1.0f, 1.0f, right);
         }
     }
+}
+
+float AudioEngine::renderClickSample (RenderContext& ctx, bool probeMute)
+{
+    const auto rate = ctx.rate;
+    const auto clickOn = ctx.clickOn;
+    const auto beatSamples = ctx.beatSamples;
+    float click = 0.0f;
+
+            if (clickPhase >= beatSamples)
+            {
+                clickPhase -= beatSamples;
+                clickEnvelope = 0.85;
+                clickOscillator = 0.0;
+                ++clickBeat;
+            }
+
+            clickPhase += 1.0;
+
+            if (clickOn && ! probeMute && clickEnvelope > 0.0001)
+            {
+                const auto frequency = clickBeat % 4 == 0 ? 1600.0 : 1000.0;
+                clickOscillator += twoPi * frequency / rate;
+                click = static_cast<float> (std::sin (clickOscillator) * clickEnvelope * 0.3);
+                clickEnvelope *= 0.9994;
+            }
+
+    return click;
+}
+
+void AudioEngine::renderMasterPass (RenderContext& ctx)
+{
+    const auto numSamples = ctx.numSamples;
+    const auto rate = ctx.rate;
+    const auto isPlaying = ctx.isPlaying;
+    const bool loop = ctx.loop;
+    const auto loopStart = ctx.loopStart;
+    const auto loopEnd = ctx.loopEnd;
+    const auto blockStartSamples = ctx.blockStartSamples;
+    const auto tempo = ctx.tempo;
+    const auto numOutputChannels = ctx.numOutputChannels;
+    auto* const* const outputChannelData = ctx.outputChannelData;
+    auto* const mixLeft = ctx.mixLeft;
+    auto* const mixRight = ctx.mixRight;
+    const auto* auxALeft = ctx.auxALeft;
+    const auto* auxBLeft = ctx.auxBLeft;
+    auto& masterPeak = ctx.masterPeak;
+    auto& masterPeakLeft = ctx.masterPeakLeft;
+    auto& masterPeakRight = ctx.masterPeakRight;
 
     {
         const auto auxReady = auxALeft != nullptr && auxBLeft != nullptr
@@ -744,17 +866,8 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
 
         masterPeak = juce::jmax (masterPeakLeft, masterPeakRight);
     }
-
-    positionSamples.store (position);
-
-    for (int trackIndex = 0; trackIndex < trackCount; ++trackIndex)
-        tracks[static_cast<size_t> (trackIndex)].peak.store (blockPeaks[trackIndex]);
-
-    masterPeakValue.store (masterPeak);
-    masterPeakLeftValue.store (masterPeakLeft);
-    masterPeakRightValue.store (masterPeakRight);
-
 }
+
 
 float AudioEngine::sampleAt (const AudioAsset& asset, int64_t frame, int channel) const
 {

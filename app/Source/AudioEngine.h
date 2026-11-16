@@ -663,6 +663,62 @@ private:
     bool pushCommand (const Command& command);
     void processCommands();
 
+    /** Shared per-block state handed to each render pass. Constructed once at
+        the top of renderBlock; the passes read and write it instead of the
+        block's locals, so no pass needs the whole argument list. */
+    struct RenderContext
+    {
+        const float* const* inputChannelData = nullptr;
+        int numInputChannels = 0;
+        float* const* outputChannelData = nullptr;
+        int numOutputChannels = 0;
+        int numSamples = 0;
+
+        double rate = 48000.0;
+        bool isPlaying = false;
+        bool clickOn = false;
+        bool anySolo = false;
+
+        double tempo = 120.0;
+        double beatSamples = 0.0;
+        const engine::TempoMap* tempoMap = nullptr;
+
+        bool loop = false;
+        int64_t loopStart = 0;
+        int64_t loopEnd = 0;
+        int64_t blockStartSamples = 0;
+        double blockStartPpq = 0.0;
+        int64_t position = 0;
+
+        bool bufferReady = false;
+        float* mixLeft = nullptr;
+        float* mixRight = nullptr;
+        bool trackBufferReady = false;
+
+        float* auxALeft = nullptr;
+        float* auxARight = nullptr;
+        float* auxBLeft = nullptr;
+        float* auxBRight = nullptr;
+
+        std::array<float, trackCount> trackLeftScratch {};
+        std::array<float, trackCount> trackRightScratch {};
+        std::array<float, trackCount> automatedGain {};
+        std::array<float, trackCount> automatedPan {};
+        std::array<float, trackCount> blockPeaks {};
+
+        float masterPeak = 0.0f;
+        float masterPeakLeft = 0.0f;
+        float masterPeakRight = 0.0f;
+    };
+
+    void renderClipsPass (RenderContext& ctx);
+    void renderInstrumentInsertPass (RenderContext& ctx);
+    void renderStripPass (RenderContext& ctx);
+    void renderMasterPass (RenderContext& ctx);
+
+    /** Click/metronome stage of the strip pass, one sample per call. */
+    float renderClickSample (RenderContext& ctx, bool probeMute);
+
     /** The one mix block, shared by the device callback and renderToWav(). */
     void renderBlock (const float* const* inputChannelData, int numInputChannels,
                       float* const* outputChannelData, int numOutputChannels, int numSamples);
