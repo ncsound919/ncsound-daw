@@ -24,37 +24,75 @@ that roadmap only where a task below closes them.
 
 ## Where the score stands
 
-Scored 2026-11-16 from the tree at `0c6ae39` (195 native tests, 118 cases, 81 UI tests, 52 routes).
+Re-scored 2026-11-16 from the tree at `acad814` (195 native tests, 118 cases + 1 new automation
+case, 110 UI tests, 58 routes). The baseline column is the original scoring at `0c6ae39`.
 Weights are the share of a shippable DAW each department carries.
 
-| Department | Weight | Now | Target | Plan |
-| --- | --- | --- | --- | --- |
-| Core engine / DSP | 15 | 95 | 95 | — (done) |
-| Recording | 10 | 85 | 95 | hardware gate only, no code plan |
-| Arrangement / editing | 15 | 85 | 95 | 01, Task 5 (AUTO read) |
-| Mixing / routing | 12 | 60 | 95 | **01** |
-| Plugin hosting / catalogue | 12 | 65 | 95 | **02** |
-| Session / export | 10 | 70 | 95 | **03** |
-| Usability / layout | 12 | 80 | 95 | **04** |
-| Performance / stability | 8 | 75 | 95 | **05** Tasks 1-2 |
-| Distribution | 6 | 35 | 95 | **05** Tasks 3-5 |
+| Department | Weight | Baseline | Now | Target | Plan |
+| --- | --- | --- | --- | --- | --- |
+| Core engine / DSP | 15 | 95 | 95 | 95 | — (done) |
+| Recording | 10 | 85 | 85 | 95 | hardware gate only, no code plan |
+| Arrangement / editing | 15 | 85 | 88 | 95 | 01 (AUTO landed); rest needs plan 03 |
+| Mixing / routing | 12 | 60 | 92 | 95 | **01 — done** |
+| Plugin hosting / catalogue | 12 | 65 | 65 | 95 | **02** |
+| Session / export | 10 | 70 | 70 | 95 | **03** |
+| Usability / layout | 12 | 80 | 90 | 95 | **04 — done** |
+| Performance / stability | 8 | 75 | 75 | 95 | **05** Tasks 1-2 |
+| Distribution | 6 | 35 | 35 | 95 | **05** Tasks 3-5 |
 
-Projected overall once all five land: **≈95.4**.
+Weighted overall: **75.2 → 80.7**. Projected once the remaining plans land: **≈95.4**.
+
+Why the two finished departments stop short of 95 rather than jumping straight there:
+
+- **Mixing / routing 92, not 95.** Bypass, drag-reorder, the hosted editor and master A/B are all
+  reachable and tested, but nothing has been exercised by hand in the running app, and an
+  occupied-slot drop is refused rather than swapped, so the chain cannot be reordered by swapping.
+  The last three points are interactive verification plus that swap path, if it is wanted.
+- **Usability 90, not 95.** Strip density and the fit toggle are unit-tested and typechecked, but the
+  16-track layout has not been looked at on a real window at any width.
+- **Arrangement 88, not 95.** Plan 01 only carried the AUTO read toggle; lane editing, comping and
+  clip-level polish are outside it. Plan 03's save/export proof is what moves this department next.
 
 ## The plans
 
-| File | Department | Tasks | Depends on |
-| --- | --- | --- | --- |
-| `01-insert-routing.md` | Mixing / routing, insert UX | 5 | — |
-| `02-plugin-catalogue.md` | Catalogue reliability | 5 | — |
-| `03-session-export.md` | Session + export proof | 5 | — |
-| `04-mixer-density.md` | 16-track mixer fit | 3 | — |
-| `05-packaging-performance.md` | Soak, packaging, legal | 5 | 01-04 for the soak build |
+| File | Department | Tasks | Status | Depends on |
+| --- | --- | --- | --- | --- |
+| `01-insert-routing.md` | Mixing / routing, insert UX | 5 | **done** (`721f35c`, `c7f2299`, `acad814`) | — |
+| `02-plugin-catalogue.md` | Catalogue reliability | 5 | next | — |
+| `03-session-export.md` | Session + export proof | 5 | queued | — |
+| `04-mixer-density.md` | 16-track mixer fit | 3 | **done** (`016c75a`, `b7761fb`, `1841a33`) | — |
+| `05-packaging-performance.md` | Soak, packaging, legal | 5 | queued (2 need hardware / `makensis`) | 01-04 for the soak build |
 
-Run order: **04 → 01 → 02 → 03 → 05**. 04 is self-contained layout work and gets a quick win on
-the board; 01 and 02 both add routes, so doing them back to back means one `gen:routes` cycle and
-one app relink rather than two; 03 needs the app to be trustworthy first; 05 documents the result and
-soaks the finished build.
+Run order: **04 → 01 → 02 → 03 → 05**. 04 and 01 are landed. 02 comes next because it is the same
+kind of work as 01 — catalogue engine changes plus a few routes and browser UI — and doing it now
+keeps one `gen:routes` cycle and one app relink in flight; 03 needs the app to be trustworthy first;
+05 documents the result and soaks the finished build.
+
+## Next steps
+
+1. **Plan 02, task 1 — per-bundle scan progress.** `ScannerSuperprocess` already kills timed-out
+   workers and `PluginCatalog` already exposes `scanProgress` / `isScanning` / `cancelScan`; the gap
+   is that progress only advances between bundles. Make it advance per bundle and pin it with a test.
+2. **Plan 02, task 2 — persistent index keyed by size and mtime.** Cache the scan so a cold start
+   does not re-walk every VST3 folder.
+3. **Plan 02, task 3 — cold start uses the index**, falling back to a full scan only when the index
+   is absent or stale.
+4. **Plan 02, task 4 — no permanently-`Missing` rows.** A rescan must clear a row whose plug-in
+   reappeared.
+5. **Plan 02, task 5 — show scan progress in the browser** so the user sees what the scanner is
+   doing and can cancel. Closes catalogue at ≈95.
+6. **Plan 03, tasks 1-5 — session and export proof.** Project file round-trip, a failed save leaving
+   the original intact, mixdown to a real WAV, one stem per track, and the UI reporting each
+   outcome. `renderToWav` / `exportStems` are fully implemented and untested — the work is proof,
+   not implementation. Closes session/export at ≈95.
+7. **Plan 05, tasks 1-2 — soak harness and a recorded 30-minute run.** Needs a quiet machine; the
+   suite already timed out once under load, so run it when the box is not also building.
+8. **Plan 05, tasks 3-5 — packaging, notices, human gates.** Task 3 needs `makensis` and task 5
+   records the gates that only a human with hardware can sign off (recording 85 → 95).
+
+Interactive verification is outstanding for both finished plans: nothing has been clicked through in
+the running app — bypass, drag-reorder, the editor window, master A/B recall, AUTO, and the 16-track
+strip layout are covered by unit tests and compiled route tables only.
 
 ## Definition of done for the set
 
