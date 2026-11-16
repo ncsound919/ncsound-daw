@@ -37,8 +37,11 @@ struct CatalogEntry
 class PluginCatalog final : private juce::Thread
 {
 public:
+    /** `indexFile` is the persistent scan cache. Empty disables it, which is
+        what unit tests want; the app passes pluginindex::defaultIndexFile(). */
     explicit PluginCatalog (std::vector<PluginInfo> registryEntries = {},
-                            std::unique_ptr<ScannerBackend> scannerToUse = {});
+                            std::unique_ptr<ScannerBackend> scannerToUse = {},
+                            juce::File indexFile = {});
     ~PluginCatalog() override;
 
     std::vector<CatalogEntry> snapshot() const;
@@ -96,6 +99,9 @@ private:
         std::vector<juce::PluginDescription> descriptions;
         juce::String error;
         int failedFiles = 0;
+        /** True when the descriptions came from the persistent index, so no
+            worker was started and the status should say "cached". */
+        bool cached = false;
     };
 
     ScanResult scanAll();
@@ -105,6 +111,7 @@ private:
     std::vector<juce::File> scanLocationsFor (juce::AudioPluginFormat&) const;
 
     std::vector<PluginInfo> registryEntries;
+    juce::File indexFile;
     std::vector<juce::File> extraRoots;
     mutable juce::CriticalSection rootsLock;
     std::vector<juce::PluginDescription> scannedDescriptions;

@@ -1,14 +1,18 @@
 #include "PluginCatalog.h"
 
+#include "PluginIndexCache.h"
+
 #include <algorithm>
 #include <set>
 
 namespace nc
 {
 PluginCatalog::PluginCatalog (std::vector<PluginInfo> registryToUse,
-                              std::unique_ptr<ScannerBackend> scannerToUse)
+                              std::unique_ptr<ScannerBackend> scannerToUse,
+                              juce::File indexFileToUse)
     : juce::Thread ("NCSound plugin scanner"),
       registryEntries (std::move (registryToUse)),
+      indexFile (std::move (indexFileToUse)),
       scanner (std::move (scannerToUse)),
       alive (std::make_shared<std::atomic<bool>> (true))
 {
@@ -109,8 +113,11 @@ int PluginCatalog::scanSync()
 
     {
         const juce::ScopedLock lock (statusLock);
-        statusText = result.error.isNotEmpty() ? result.error
-                                               : juce::String (static_cast<int> (entries.size())) + " plug-ins indexed";
+        statusText = result.cached
+                         ? "cached (" + juce::String (static_cast<int> (entries.size())) + " plug-ins)"
+                         : (result.error.isNotEmpty()
+                                ? result.error
+                                : juce::String (static_cast<int> (entries.size())) + " plug-ins indexed");
     }
 
     return static_cast<int> (entries.size());
@@ -206,10 +213,15 @@ void PluginCatalog::run()
 
         {
             const juce::ScopedLock lock (statusLock);
-            statusText = cancelled ? "Scan cancelled"
-                                   : (result.error.isNotEmpty()
-                                          ? result.error
-                                          : juce::String (static_cast<int> (entries.size())) + " plug-ins indexed");
+            statusText = cancelled
+                             ? "Scan cancelled"
+                             : (result.cached
+                                    ? "cached (" + juce::String (static_cast<int> (entries.size()))
+                                          + " plug-ins)"
+                                    : (result.error.isNotEmpty()
+                                           ? result.error
+                                           : juce::String (static_cast<int> (entries.size()))
+                                                 + " plug-ins indexed"));
         }
 
         if (callback)
@@ -222,6 +234,25 @@ void PluginCatalog::run()
 PluginCatalog::ScanResult PluginCatalog::scanAll()
 {
     ScanResult result;
+
+    // A warm index that still matches every bundle on disk means no worker is
+    // launched at all: that is the whole point of the cache, so it is tried
+    // before anything touches a bundle.
+    if (indexFile != juce::File() && scanner->injectedBundles().empty())
+    {
+        auto cached = nc::pluginindex::loadDescriptions (indexFile);
+
+        if (! cached.empty())
+        {
+            result.descriptions = std::move (cached);
+            result.cached = true;
+            progress.store (1.0f, std::memory_order_relaxed);
+
+            std::sort (result.descriptions.begin(), result.descriptions.end(),
+                       [] (const auto& a, const auto& b) { return a.name.compareIgnoreCase (b.name) < 0; });
+            return result;
+        }
+    }
     juce::AudioPluginFormatManager scanFormats;
     juce::addDefaultFormatsToManager (scanFormats);
 
@@ -317,6 +348,11 @@ PluginCatalog::ScanResult PluginCatalog::scanAll()
 
     std::sort (result.descriptions.begin(), result.descriptions.end(),
                [] (const auto& a, const auto& b) { return a.name.compareIgnoreCase (b.name) < 0; });
+
+    // Only a complete scan is worth caching: a cancelled scan holds a partial
+    // list, and writing it would make the next start trust a truncated index.
+    if (indexFile != juce::File() && ! cancelRequested.load (std::memory_order_acquire))
+        nc::pluginindex::save (indexFile, result.descriptions);
 
     return result;
 }

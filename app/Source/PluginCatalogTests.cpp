@@ -611,3 +611,99 @@ TEST_CASE ("the index skips a description whose bundle is gone", "[index]")
 
     dir.deleteRecursively();
 }
+
+TEST_CASE ("a warm index skips the worker entirely", "[catalog]")
+{
+    const auto dir = freshIndexDir();
+    const auto bundle = dir.getChildFile ("warm.vst3");
+    REQUIRE (bundle.replaceWithText ("one"));
+    const auto index = dir.getChildFile ("plugin-index.json");
+
+    // First run: a real scan that reports one plug-in and writes the index.
+    nc::ScannerReply reply;
+    reply.ok = true;
+    reply.descriptionsXml = descriptionsXml ({ makeDescription ("Warm", bundle.getFullPathName(), 501) });
+
+    auto firstBackend = std::make_unique<FakeScannerBackend> (reply);
+    firstBackend->bundles = { bundle.getFullPathName() };
+
+    nc::PluginCatalog warm ({}, std::move (firstBackend), index);
+    warm.scanSync();
+    REQUIRE (warm.snapshot().size() == 1);
+    REQUIRE (index.existsAsFile());
+
+    // Second run: same index, a backend that must never be asked to scan.
+    auto secondBackend = std::make_unique<FakeScannerBackend> (nc::ScannerReply {});
+    auto* raw = secondBackend.get();
+
+    nc::PluginCatalog cold ({}, std::move (secondBackend), index);
+    cold.scanSync();
+
+    CHECK (raw->scans == 0);
+    CHECK (cold.snapshot().size() == 1);
+    CHECK (cold.scanProgress() == 1.0f);
+    CHECK (cold.lastScanStatus().containsIgnoreCase ("cached"));
+
+    dir.deleteRecursively();
+}
+
+TEST_CASE ("a stale index falls back to a real scan", "[catalog]")
+{
+    const auto dir = freshIndexDir();
+    const auto bundle = dir.getChildFile ("stale.vst3");
+    REQUIRE (bundle.replaceWithText ("one"));
+    const auto index = dir.getChildFile ("plugin-index.json");
+
+    const auto description = makeDescription ("Stale", bundle.getFullPathName(), 502);
+    REQUIRE (nc::pluginindex::save (index, { description }));
+
+    // The bundle changed on disk after the index was written.
+    REQUIRE (bundle.replaceWithText ("one, but upgraded"));
+
+    nc::ScannerReply reply;
+    reply.ok = true;
+    reply.descriptionsXml = descriptionsXml ({ makeDescription ("Stale", bundle.getFullPathName(), 502) });
+
+    auto backend = std::make_unique<FakeScannerBackend> (reply);
+    auto* raw = backend.get();
+    backend->bundles = { bundle.getFullPathName() };
+
+    nc::PluginCatalog catalog ({}, std::move (backend), index);
+    catalog.scanSync();
+
+    CHECK (raw->scans == 1);
+    CHECK_FALSE (catalog.lastScanStatus().containsIgnoreCase ("cached"));
+
+    dir.deleteRecursively();
+}
+
+TEST_CASE ("a cancelled scan never writes a truncated index", "[catalog]")
+{
+    const auto dir = freshIndexDir();
+    const auto index = dir.getChildFile ("plugin-index.json");
+
+    nc::PluginCatalog* catalogPtr = nullptr;
+
+    auto backend = std::make_unique<FakeScannerBackend> (nc::ScannerReply {});
+    backend->bundles = { "a.vst3", "b.vst3", "c.vst3" };
+    auto* raw = backend.get();
+    backend->onScan = [&] (int)
+    {
+        // Cancel from inside the scan, so the loop stops with bundles left over.
+        if (catalogPtr != nullptr)
+            catalogPtr->cancelScan();
+
+        return nc::ScannerReply {};
+    };
+
+    nc::PluginCatalog catalog ({}, std::move (backend), index);
+    catalogPtr = &catalog;
+    catalog.scanSync();
+
+    // Two bundles were never scanned, so the list is partial and must not be
+    // cached: a truncated index would be trusted by the next start.
+    CHECK (raw->scans == 1);
+    CHECK_FALSE (index.existsAsFile());
+
+    dir.deleteRecursively();
+}

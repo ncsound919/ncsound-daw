@@ -1,5 +1,6 @@
 #include "AudioEngine.h"
 
+#include "PluginIndexCache.h"
 #include "Session.h"
 
 #include <nc/engine/VoiceToMidi.hpp>
@@ -11,6 +12,7 @@
 namespace nc
 {
 AudioEngine::AudioEngine()
+    : catalog ({}, {}, nc::pluginindex::defaultIndexFile())
 {
     engineAlive = std::make_shared<std::atomic<bool>> (true);
     formats.registerBasicFormats();
