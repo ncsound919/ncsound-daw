@@ -77,3 +77,23 @@ describe("Mixer density", () => {
     );
   });
 });
+
+describe("Mixer fit control", () => {
+  it("keeps the user's manual density until the window changes", () => {
+    const { rerender } = render(
+      <Mixer {...props({ tracks: tracks(16), viewportWidth: 1280 })} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Fit strips" }));
+    expect(screen.getByRole("group", { name: "Mixer" })).toHaveAttribute(
+      "data-density",
+      "normal",
+    );
+
+    rerender(<Mixer {...props({ tracks: tracks(16), viewportWidth: 1300 })} />);
+    expect(screen.getByRole("group", { name: "Mixer" })).toHaveAttribute(
+      "data-density",
+      "compact",
+    );
+  });
+});

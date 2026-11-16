@@ -3576,3 +3576,10 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.ws-mixer-tools {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 4px 10px 0;
+}

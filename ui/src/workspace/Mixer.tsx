@@ -735,7 +735,16 @@ export function Mixer({
   const masterPeakDb =
     masterPeak > 0 ? 20 * Math.log10(Math.max(1e-6, masterPeak)) : Number.NEGATIVE_INFINITY;
 
-  const density = densityFor(tracks.length, viewportWidth ?? window.innerWidth);
+  const [densityChoice, setDensityChoice] = useState<"auto" | "normal" | "compact">("auto");
+
+  // A manual choice wins until the window changes; then the automatic decision takes
+  // over again, so a resize cannot leave 16 strips stuck at the wide width.
+  useEffect(() => {
+    setDensityChoice("auto");
+  }, [viewportWidth]);
+
+  const autoDensity = densityFor(tracks.length, viewportWidth ?? window.innerWidth);
+  const density = densityChoice === "auto" ? autoDensity : densityChoice;
 
   return (
     <div
@@ -745,6 +754,17 @@ export function Mixer({
       data-density={density}
       style={{ "--strip-min": `${stripMinWidthPx(density)}px` } as CSSProperties}
     >
+      <div className="ws-mixer-tools">
+        <button
+          type="button"
+          className="ws-mini-btn"
+          aria-pressed={densityChoice !== "auto"}
+          onClick={() => setDensityChoice(densityChoice === "auto" ? "normal" : "auto")}
+        >
+          Fit strips
+        </button>
+      </div>
+
       <div className="ws-mixbody">
         <div className="ws-strips">
           {tracks.map((track) => (
