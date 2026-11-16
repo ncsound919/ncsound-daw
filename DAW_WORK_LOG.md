@@ -1096,3 +1096,33 @@ Verified: `tsc -b --noEmit` exit 0, full UI suite 105/105, mixrack `EXIT=0`, app
 
 Not verified: no interactive check in the running app — neither the drag nor a real editor window was
 opened by hand; both paths are covered by unit tests plus the compiled route table.
+
+### Plan 01 tasks 4+5 — master A/B and the AUTO switch
+
+Task 4 — master A/B snapshot:
+- Routes `captureMasterAb` / `recallMasterAb`. The snapshot (`masterAbIdentifier`,
+  `masterAbState`) lives on `MainComponent`, so the UI holds no state and a reload cannot show a
+  snapshot the engine no longer has.
+- Capture refuses when no master plugin is loaded. Recall refuses when the snapshot is empty
+  ("no master snapshot captured") and reports "stored plugin is missing" instead of restoring an
+  empty rack — `AudioEngine::restoreMasterPlugin` already leaves the rack alone on failure.
+- EDIT → "Capture Master A/B" / "Recall Master A/B"; capture is disabled until a master plugin
+  exists, and both entries hide when the host has no routes.
+
+Task 5 — per-track automation read (AUTO):
+- `AudioEngine::setAutomationRead / automationRead`, backed by
+  `std::array<std::atomic<bool>, trackCount> automationReadEnabled`. The array is filled `true` in
+  the constructor: a value-initialised `atomic<bool>` starts false, which would have silently
+  disconnected every lane in every session. That is the one trap this task could have shipped.
+- `automationValue` returns 0 for a parked track, and the render block's two lane loads are gated on
+  the same flag, so a parked track plays its static fader exactly like a track with no lane. The lane
+  itself is kept, and re-enabling restores the performance (pinned by the new native test).
+- `buildState` now publishes `automationRead` per track; route `setAutomationRead`; strip `A` button
+  (`aria-pressed` = reading) hidden from no one — it is a safe no-op when the host route is absent.
+
+Verified: `tsc -b --noEmit` exit 0; full UI suite 110/110; `NCMixRackTests.exe "[automation]"` →
+586 assertions in 9 cases, all passed; mixrack `EXIT=0`; app `EXIT=0` (`no work to do` on re-run);
+`ctest -C Release` 195/195 `CTEST_EXIT=0` (render digest unchanged). Route table: 58 routes.
+
+Not verified: no interactive check of the A/B recall or the AUTO button in the running app, and no
+test loads a real master plug-in to exercise the restore path end to end.

@@ -34,6 +34,11 @@ export interface HeaderBarProps {
   /** Master-insert hook; the remove entry stays disabled without it. */
   onRemoveMasterPlugin?: () => void;
   canRemoveMasterPlugin?: boolean;
+  /** Master A/B hooks; the entries hide without them. Capture stays disabled
+      until a master plugin is loaded; recall is refused natively when empty. */
+  onCaptureMasterAb?: () => void;
+  onRecallMasterAb?: () => void;
+  canCaptureMasterAb?: boolean;
   onUndo?: () => void;
   onRedo?: () => void;
   undoDepth?: number;
@@ -83,6 +88,9 @@ export function HeaderBar({
   onCollectMedia,
   onRemoveMasterPlugin,
   canRemoveMasterPlugin = false,
+  onCaptureMasterAb,
+  onRecallMasterAb,
+  canCaptureMasterAb = false,
   onUndo,
   onRedo,
   undoDepth = 0,
@@ -308,6 +316,20 @@ export function HeaderBar({
                 ? "Not wired to the bridge yet"
                 : "No master plugin loaded",
             },
+        ...(onCaptureMasterAb
+          ? ([
+              {
+                label: "Capture Master A/B",
+                run: onCaptureMasterAb,
+                ...(canCaptureMasterAb
+                  ? {}
+                  : { disabled: true, hint: "No master plugin loaded" }),
+              },
+            ] as Entry[])
+          : []),
+        ...(onRecallMasterAb
+          ? ([{ label: "Recall Master A/B", run: onRecallMasterAb }] as Entry[])
+          : []),
         "separator",
         { heading: "MASTER RACK" },
         { label: "Automix Snapshot", disabled: true, hint: "Desktop app EDIT → Master Rack" },

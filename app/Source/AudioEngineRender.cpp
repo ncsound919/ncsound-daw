@@ -564,12 +564,16 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
         automatedGain[trackIndex] = tracks[static_cast<size_t> (trackIndex)].gain.load();
         automatedPan[trackIndex] = tracks[static_cast<size_t> (trackIndex)].pan.load();
 
+        // A track with AUTO off keeps its lane but plays the static fader, the
+        // same branch an empty lane already takes.
+        const auto reading = automationRead (trackIndex);
+
         if (const auto* lane = volumeAutomation[static_cast<size_t> (trackIndex)].live.load (std::memory_order_acquire);
-            lane != nullptr && ! lane->empty())
+            reading && lane != nullptr && ! lane->empty())
             automatedGain[trackIndex] = lane->valueAt (blockBeat);
 
         if (const auto* lane = panAutomation[static_cast<size_t> (trackIndex)].live.load (std::memory_order_acquire);
-            lane != nullptr && ! lane->empty())
+            reading && lane != nullptr && ! lane->empty())
             automatedPan[trackIndex] = lane->valueAt (blockBeat);
     }
 

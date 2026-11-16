@@ -339,6 +339,7 @@ juce::var MainComponent::buildState() const
         t->setProperty ("sendA", (double) engine.trackSendA (i));
         t->setProperty ("sendB", (double) engine.trackSendB (i));
         t->setProperty ("armed", engine.isRecordArmed (i));
+        t->setProperty ("automationRead", engine.automationRead (i));
 
         // Insert rack: the four user slots only. Slot 0 is the baked native
         // strip, which the console reports separately as the track's channel.
@@ -1010,6 +1011,55 @@ juce::WebBrowserComponent::Options MainComponent::buildWebOptions()
               }
 
               done (juce::var (reply));
+          } },
+        { "captureMasterAb", [this] (const Args&, Completion done)
+          {
+              if (! engine.hasMasterPlugin())
+              {
+                  setStatus ("MASTER A/B / no master plugin to capture", true);
+              }
+              else
+              {
+                  const auto state = engine.masterInsertState();
+                  masterAbIdentifier = juce::String (state.identifier);
+                  masterAbState = juce::String (state.stateBase64);
+                  setStatus ("MASTER A/B / captured " + engine.masterPluginName());
+              }
+
+              done (buildState());
+          } },
+        { "recallMasterAb", [this] (const Args&, Completion done)
+          {
+              // The rack is untouched unless the stored snapshot restores: a
+              // missing plug-in reports and leaves the current chain alone.
+              if (masterAbIdentifier.isEmpty() || masterAbState.isEmpty())
+              {
+                  setStatus ("MASTER A/B / no master snapshot captured", true);
+              }
+              else if (engine.restoreMasterPlugin (masterAbIdentifier, masterAbState))
+              {
+                  setStatus ("MASTER A/B / recalled");
+                  pushState();
+              }
+              else
+              {
+                  setStatus ("MASTER A/B / stored plugin is missing", true);
+              }
+
+              done (buildState());
+          } },
+        { "setAutomationRead", [this] (const Args& a, Completion done)
+          {
+              const auto track = a.size() > 0 ? (int) a[0] : -1;
+              const auto on    = a.size() > 1 ? (bool) a[1] : true;
+
+              if (track >= 0 && track < engine.getActiveTrackCount())
+              {
+                  engine.setAutomationRead (track, on);
+                  setStatus (on ? "AUTOMATION / read on" : "AUTOMATION / read off");
+              }
+
+              done (buildState());
           } },
         { "scanPlugins", [this] (const Args&, Completion done)
           {

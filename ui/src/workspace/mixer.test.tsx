@@ -196,3 +196,24 @@ describe("Mixer plugin editor", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("no plugin in slot");
   });
 });
+
+describe("Mixer automation read", () => {
+  it("toggles AUTO off for the strip's track", () => {
+    const onAutomationRead = vi.fn();
+    render(<Mixer {...props({ tracks: tracks(3), onAutomationRead })} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "AUTO Track 2" }));
+    expect(onAutomationRead).toHaveBeenCalledWith(1, false);
+  });
+
+  it("reflects the parked state from the host", () => {
+    const list = tracks(1);
+    list[0] = { ...list[0], automationRead: false };
+    render(<Mixer {...props({ tracks: list, onAutomationRead: vi.fn() })} />);
+
+    expect(screen.getByRole("button", { name: "AUTO Track 1" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+});

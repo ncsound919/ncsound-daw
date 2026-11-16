@@ -149,6 +149,11 @@ public:
     void clearTrackAutomation (int track, AutomationParam param);
     AutomationLane trackAutomation (int track, AutomationParam param) const;
     float automationValue (int track, AutomationParam param, double beats) const;
+
+    /** Per-track AUTO switch. Off hands the fader back to its static value and
+        keeps the lanes intact, so re-enabling restores the performance. */
+    void setAutomationRead (int track, bool enabled);
+    bool automationRead (int track) const;
     float trackPan (int track) const;
     void setTrackMuted (int track, bool muted);
     bool trackMuted (int track) const;
@@ -710,6 +715,10 @@ private:
 
     std::array<AutomationSlot, trackCount> volumeAutomation;
     std::array<AutomationSlot, trackCount> panAutomation;
+    /** Defaults to true; the constructor fills it, since a value-initialised
+        atomic<bool> would otherwise start at false and silently mute every
+        lane in the session. */
+    std::array<std::atomic<bool>, trackCount> automationReadEnabled {};
     std::vector<RetiredSnapshot<AutomationLane>> automationRetired;
 
     struct TempoSlot

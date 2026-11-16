@@ -239,6 +239,24 @@ export default function App() {
     return backend.openPluginEditor(track, slot);
   }, []);
 
+  const handleAutomationRead = useCallback(
+    (track: number, enabled: boolean) => {
+      if (!backend.embedded) return;
+      runWrite(() => backend.setAutomationRead(track, enabled));
+    },
+    [runWrite],
+  );
+
+  const handleCaptureMasterAb = useCallback(() => {
+    if (!backend.embedded) return;
+    runWrite(() => backend.captureMasterAb());
+  }, [runWrite]);
+
+  const handleRecallMasterAb = useCallback(() => {
+    if (!backend.embedded) return;
+    runWrite(() => backend.recallMasterAb());
+  }, [runWrite]);
+
   const handleInsertBypassed = useCallback(
     (track: number, slot: number, bypassed: boolean) => {
       if (!backend.embedded) return;
@@ -542,6 +560,9 @@ export default function App() {
           onInsertBypassed={handleInsertBypassed}
           onInsertMove={handleInsertMove}
           onOpenPluginEditor={handleOpenPluginEditor}
+          onAutomationRead={handleAutomationRead}
+          onCaptureMasterAb={handleCaptureMasterAb}
+          onRecallMasterAb={handleRecallMasterAb}
           onMasterPluginLoad={handleMasterPluginLoad}
           onScan={handleScan}
           mixologyPresets={mixologyPresets}

@@ -82,6 +82,11 @@ export interface WorkspaceProps {
   onInsertMove?: (track: number, from: number, to: number) => void;
   /** Double-click an insert slot to open the hosted plug-in editor. */
   onOpenPluginEditor?: (track: number, slot: number) => Promise<{ ok: boolean; error?: string }>;
+  /** Master A/B hooks; the menu entries hide without them. */
+  onCaptureMasterAb?: () => void;
+  onRecallMasterAb?: () => void;
+  /** Per-track AUTO switch; the strip button hides without it. */
+  onAutomationRead?: (track: number, enabled: boolean) => void;
   onMasterPluginLoad?: (plugin: PluginInfo) => void;
   onScan?: () => void;
   /** Mixology preset names from the host; the entries hide without them. */
@@ -127,6 +132,9 @@ export function Workspace({
   onInsertBypassed,
   onInsertMove,
   onOpenPluginEditor,
+  onCaptureMasterAb,
+  onRecallMasterAb,
+  onAutomationRead,
   onMasterPluginLoad,
   onScan,
   mixologyPresets,
@@ -481,6 +489,9 @@ export function Workspace({
         onRemoveMasterPlugin={onRemoveMasterPlugin}
         canRemoveMasterPlugin={Boolean(state.hasMasterPlugin)}
         onLoadMasterPlugin={openMasterBrowser}
+        onCaptureMasterAb={onCaptureMasterAb}
+        onRecallMasterAb={onRecallMasterAb}
+        canCaptureMasterAb={Boolean(state.hasMasterPlugin)}
         mixologyPresets={mixologyPresets}
         onApplyMixology={
           actions.applyMixology
@@ -610,6 +621,7 @@ export function Workspace({
             onRack={() => setView("inspector")}
             onInsert={openBrowser}
             onBypass={onInsertBypassed}
+            onAutomationRead={onAutomationRead}
             onMove={onInsertMove}
             onOpenEditor={onOpenPluginEditor}
             onMasterRack={() => setView("inspector")}

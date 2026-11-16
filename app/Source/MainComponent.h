@@ -108,6 +108,11 @@ private:
         so owning it would double-free when the user closes the window. A
         user-closed window simply nulls this pointer. */
     juce::Component::SafePointer<PluginEditorWindow> shellEditor;
+
+    /** Master A/B snapshot, held natively so the UI stays stateless. Both are
+        empty until a capture; recall refuses loudly while they are empty. */
+    juce::String masterAbIdentifier;
+    juce::String masterAbState;
     bool pitchOpen = true;
 
     HardwareButton newButton { HardwareButton::Icon::plus, "NEW" };

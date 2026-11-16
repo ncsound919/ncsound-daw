@@ -452,11 +452,29 @@ float AudioEngine::automationValue (int track, AutomationParam param, double bea
     if (track < 0 || track >= trackCount)
         return 0.0f;
 
+    if (! automationRead (track))
+        return 0.0f;
+
     const auto& slot = (param == AutomationParam::Pan ? panAutomation : volumeAutomation)
                            [static_cast<size_t> (track)];
 
     const auto* lane = slot.live.load (std::memory_order_acquire);
     return lane != nullptr ? lane->valueAt (beats) : 0.0f;
+}
+
+void AudioEngine::setAutomationRead (int track, bool enabled)
+{
+    if (track < 0 || track >= trackCount)
+        return;
+
+    automationReadEnabled[static_cast<size_t> (track)].store (enabled, std::memory_order_release);
+}
+
+bool AudioEngine::automationRead (int track) const
+{
+    return track >= 0 && track < trackCount
+               ? automationReadEnabled[static_cast<size_t> (track)].load (std::memory_order_acquire)
+               : true;
 }
 
 } // namespace nc

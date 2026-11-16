@@ -21,6 +21,11 @@ AudioEngine::AudioEngine()
     std::fill_n (cachedPanLeft, trackCount, 0.7071f);
     std::fill_n (cachedPanRight, trackCount, 0.7071f);
 
+    // Automation reads by default. The AUTO switch is an opt-out, so a fresh
+    // engine must not start with every lane disconnected.
+    for (auto& flag : automationReadEnabled)
+        flag.store (true, std::memory_order_relaxed);
+
     // Input monitoring is off until a track is armed for recording. A monitored
     // track sums its input into the mix, so with every track monitoring by
     // default a room with a microphone and speakers fed back into a drone the

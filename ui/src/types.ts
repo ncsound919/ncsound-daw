@@ -30,6 +30,8 @@ export interface TrackInfo {
   /** Stereo width, percent (100 = unchanged). */
   width?: number;
   armed?: boolean;
+  /** AUTO: whether the lanes drive the fader, or it keeps its static value. */
+  automationRead?: boolean;
   inserts?: InsertSlot[];
 }
 

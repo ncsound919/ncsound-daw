@@ -168,3 +168,29 @@ TEST_CASE ("republishing a lane leaves the previous value readable", "[automatio
     REQUIRE (std::abs (engine.automationValue (0, AutomationParam::Volume, 0.0) - 0.9f) < 1.0e-6f);
 }
 
+
+TEST_CASE ("automation read off pins the fader to its static value", "[automation]")
+{
+    nc::AudioEngine engine;
+    engine.setActiveTrackCount (2);
+
+    nc::AutomationLane lane;
+    lane.addPoint (0.0, 0.0f);
+    lane.addPoint (4.0, 1.0f);
+    engine.setTrackAutomation (0, nc::AutomationParam::Volume, lane);
+
+    CHECK (engine.automationValue (0, nc::AutomationParam::Volume, 4.0) > 0.9f);
+    CHECK (engine.automationRead (0));
+
+    engine.setAutomationRead (0, false);
+    CHECK_FALSE (engine.automationRead (0));
+    CHECK (engine.automationValue (0, nc::AutomationParam::Volume, 4.0) == 0.0f);
+
+    // The lane survives the switch: turning AUTO back on restores the value.
+    engine.setAutomationRead (0, true);
+    CHECK (engine.automationValue (0, nc::AutomationParam::Volume, 4.0) > 0.9f);
+
+    // Another track is unaffected.
+    engine.setAutomationRead (1, false);
+    CHECK (engine.automationRead (0));
+}

@@ -36,6 +36,8 @@ export interface MixerProps {
   onOpenEditor?: (track: number, slot: number) => Promise<{ ok: boolean; error?: string }>;
   onMasterRack?: () => void;
   onMasterInsert?: () => void;
+  /** Per-track AUTO switch; the button hides when the host has no route. */
+  onAutomationRead?: (track: number, enabled: boolean) => void;
   /** Mixology technique presets; the section hides when the host has no route. */
   mixologyPresets?: string[];
   onApplyMixology?: (index: number) => Promise<string>;
@@ -612,6 +614,7 @@ function ChannelStrip({
   onBypass,
   onMove,
   onOpenEditor,
+  onAutomationRead,
 }: {
   track: TrackInfo;
   selected: boolean;
@@ -632,6 +635,7 @@ function ChannelStrip({
   onMove?: (track: number, from: number, to: number) => void;
   /** Double-click a slot to open the hosted plug-in editor. */
   onOpenEditor?: (track: number, slot: number) => Promise<{ ok: boolean; error?: string }>;
+  onAutomationRead?: (track: number, enabled: boolean) => void;
 }) {
   const tint = tintForTrack(track.index);
   const inserts = track.inserts ?? [];
@@ -745,6 +749,22 @@ function ChannelStrip({
           M
         </button>
         <button
+          className="ws-chan-btn is-auto"
+          aria-pressed={track.automationRead ?? true}
+          aria-label={`AUTO ${track.name}`}
+          title={
+            (track.automationRead ?? true)
+              ? `Automation follows the lanes on ${track.name}`
+              : `Automation parked; the fader drives ${track.name}`
+          }
+          onClick={(event) => {
+            event.stopPropagation();
+            onAutomationRead?.(track.index, !(track.automationRead ?? true));
+          }}
+        >
+          A
+        </button>
+        <button
           className="ws-chan-btn is-solo"
           aria-pressed={track.soloed}
           aria-label={`Solo ${track.name}`}
@@ -810,6 +830,7 @@ export function Mixer({
   onBypass,
   onMove,
   onOpenEditor,
+  onAutomationRead,
   onMasterRack,
   onMasterInsert,
   mixologyPresets,
@@ -870,6 +891,7 @@ export function Mixer({
               onInsert={onInsert}
               onBypass={onBypass}
               onMove={onMove}
+              onAutomationRead={onAutomationRead}
               onOpenEditor={onOpenEditor}
             />
           ))}

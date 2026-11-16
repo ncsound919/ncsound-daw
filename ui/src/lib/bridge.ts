@@ -199,6 +199,21 @@ export const backend = {
     return call<{ ok: boolean; error?: string }>("openPluginEditor", track, slot);
   },
 
+  /** Turns a track's automation read on or off; the lanes are kept. */
+  setAutomationRead(track: number, enabled: boolean): Promise<AppState> {
+    return call<AppState>("setAutomationRead", track, enabled);
+  },
+
+  /** Captures the master insert as the natively held A/B snapshot. */
+  captureMasterAb(): Promise<AppState> {
+    return call<AppState>("captureMasterAb");
+  },
+
+  /** Recalls the captured master snapshot; refuses when empty or missing. */
+  recallMasterAb(): Promise<AppState> {
+    return call<AppState>("recallMasterAb");
+  },
+
   /** Writes one baked MixRack parameter by its Overlay id (e.g. `lowGain`). */
   setChannelParam(track: number, param: string, value: number): Promise<AppState> {
     return call<AppState>("setChannelParam", track, param, value);
