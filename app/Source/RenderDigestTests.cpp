@@ -22,6 +22,7 @@
 #include "AudioEngine.h"
 
 #include <bit>
+#include <cmath>
 #include <cstdint>
 #include <utility>
 #include <vector>
@@ -114,4 +115,63 @@ TEST_CASE ("engine render digest is stable", "[digest]")
     INFO ("render digest: "
           << juce::String::formatted ("0x%016llx", static_cast<unsigned long long> (digest)));
     REQUIRE (digest == 0x1b5398dd4a9f297aull);
+}
+
+/*  The split into four passes made the block's early exits and its
+    oversized-block fallback invisible to the digest: the digest session is
+    well-formed, so none of those paths run there. These are the paths where a
+    pass that reads a stale or unset context field shows up as a crash rather
+    than a different sample, and where a lost position write-back would leave
+    the transport standing still.  */
+TEST_CASE ("renderBlock guards and the oversized-block fallback", "[renderblock]")
+{
+    nc::AudioEngine engine;
+
+    juce::Thread::sleep (300);
+    engine.suspendAudioCallbackForTesting();
+    engine.setMetronome (false);
+    engine.setLoopEnabled (false);
+
+    const float* inputs[2] { nullptr, nullptr };
+
+    constexpr int bigBlock = 20000;
+    std::vector<float> left (bigBlock, 0.0f);
+    std::vector<float> right (bigBlock, 0.0f);
+    float* outputs[2] { left.data(), right.data() };
+
+    // No output channels: the block is a no-op, not a crash.
+    float* noOutputs[1] { nullptr };
+    engine.processBlockForTesting (inputs, 2, noOutputs, 0, 512);
+
+    // Zero samples likewise.
+    engine.processBlockForTesting (inputs, 2, outputs, 2, 0);
+
+    engine.resetPosition();
+    engine.setPlaying (true);
+
+    const auto rate = engine.currentSampleRate();
+    REQUIRE (rate > 0.0);
+
+    const auto before = engine.positionSeconds();
+
+    // Larger than the prepared mix buffer, so the render path falls back to
+    // writing the device buffers directly.
+    engine.processBlockForTesting (inputs, 2, outputs, 2, bigBlock);
+
+    const auto after = engine.positionSeconds();
+
+    // The transport advanced by exactly this block: the clips pass both
+    // advanced the position and handed it back.
+    REQUIRE (std::abs ((after - before) - static_cast<double> (bigBlock) / rate) < 1.0e-6);
+
+    for (int i = 0; i < bigBlock; ++i)
+    {
+        const auto l = left[static_cast<size_t> (i)];
+        const auto r = right[static_cast<size_t> (i)];
+
+        REQUIRE (std::isfinite (l));
+        REQUIRE (std::isfinite (r));
+        REQUIRE (std::abs (l) <= 1.0f);
+        REQUIRE (std::abs (r) <= 1.0f);
+    }
 }

@@ -188,7 +188,8 @@ void AudioEngine::renderClipsPass (RenderContext& ctx)
         engine::ppqToSeconds (tempoMap, engine::clipStartBeat (loopEndBar.load())) * rate));
     const auto loop = loopEnabled.load() && loopEnd > loopStart;
 
-    auto position = positionSamples.load();
+    auto& position = ctx.position;
+    position = positionSamples.load();
 
     if (isPlaying && loop && position >= loopEnd)
     {
@@ -234,7 +235,6 @@ void AudioEngine::renderClipsPass (RenderContext& ctx)
     ctx.anySolo = anySolo;
     ctx.blockStartSamples = blockStartSamples;
     ctx.blockStartPpq = blockStartPpq;
-    ctx.bufferReady = bufferReady;
     ctx.mixLeft = mixLeft;
     ctx.mixRight = mixRight;
     ctx.trackBufferReady = trackBufferReady;
@@ -320,7 +320,6 @@ void AudioEngine::renderClipsPass (RenderContext& ctx)
         }
     }
 
-    ctx.position = position;
 }
 
 void AudioEngine::renderInstrumentInsertPass (RenderContext& ctx)
@@ -335,7 +334,7 @@ void AudioEngine::renderInstrumentInsertPass (RenderContext& ctx)
     const auto blockStartPpq = ctx.blockStartPpq;
     const auto trackBufferReady = ctx.trackBufferReady;
     const auto tempo = ctx.tempo;
-    const auto& tempoMap = *ctx.tempoMap;
+    const auto& tempoMap = ctx.tempoMap != nullptr ? *ctx.tempoMap : fallbackTempo;
     const auto* const* inputChannelData = ctx.inputChannelData;
     const auto numInputChannels = ctx.numInputChannels;
     auto& automatedGain = ctx.automatedGain;
@@ -511,15 +510,15 @@ void AudioEngine::renderInstrumentInsertPass (RenderContext& ctx)
 
     auxABuffer.clear (0, juce::jmin (numSamples, auxABuffer.getNumSamples()));
     auxBBuffer.clear (0, juce::jmin (numSamples, auxBBuffer.getNumSamples()));
-    auto* auxALeft = auxABuffer.getNumSamples() >= numSamples ? auxABuffer.getWritePointer (0) : nullptr;
-    auto* auxARight = auxABuffer.getNumSamples() >= numSamples ? auxABuffer.getWritePointer (1) : nullptr;
-    auto* auxBLeft = auxBBuffer.getNumSamples() >= numSamples ? auxBBuffer.getWritePointer (0) : nullptr;
-    auto* auxBRight = auxBBuffer.getNumSamples() >= numSamples ? auxBBuffer.getWritePointer (1) : nullptr;
+    auto*& auxALeft = ctx.auxALeft;
+    auto*& auxARight = ctx.auxARight;
+    auto*& auxBLeft = ctx.auxBLeft;
+    auto*& auxBRight = ctx.auxBRight;
 
-    ctx.auxALeft = auxALeft;
-    ctx.auxARight = auxARight;
-    ctx.auxBLeft = auxBLeft;
-    ctx.auxBRight = auxBRight;
+    auxALeft = auxABuffer.getNumSamples() >= numSamples ? auxABuffer.getWritePointer (0) : nullptr;
+    auxARight = auxABuffer.getNumSamples() >= numSamples ? auxABuffer.getWritePointer (1) : nullptr;
+    auxBLeft = auxBBuffer.getNumSamples() >= numSamples ? auxBBuffer.getWritePointer (0) : nullptr;
+    auxBRight = auxBBuffer.getNumSamples() >= numSamples ? auxBBuffer.getWritePointer (1) : nullptr;
 }
 
 void AudioEngine::renderStripPass (RenderContext& ctx)
@@ -527,6 +526,8 @@ void AudioEngine::renderStripPass (RenderContext& ctx)
     const auto numSamples = ctx.numSamples;
     const auto rate = ctx.rate;
     const auto isPlaying = ctx.isPlaying;
+    const auto clickOn = ctx.clickOn;
+    const auto beatSamples = ctx.beatSamples;
     const auto anySolo = ctx.anySolo;
     const auto trackBufferReady = ctx.trackBufferReady;
     const auto numOutputChannels = ctx.numOutputChannels;
@@ -685,7 +686,23 @@ void AudioEngine::renderStripPass (RenderContext& ctx)
                                                      juce::jmax (std::abs (trackLeft), std::abs (trackRight)));
             }
 
-            click = renderClickSample (ctx, probe.mute);
+            if (clickPhase >= beatSamples)
+            {
+                clickPhase -= beatSamples;
+                clickEnvelope = 0.85;
+                clickOscillator = 0.0;
+                ++clickBeat;
+            }
+
+            clickPhase += 1.0;
+
+            if (clickOn && ! probe.mute && clickEnvelope > 0.0001)
+            {
+                const auto frequency = clickBeat % 4 == 0 ? 1600.0 : 1000.0;
+                clickOscillator += twoPi * frequency / rate;
+                click = static_cast<float> (std::sin (clickOscillator) * clickEnvelope * 0.3);
+                clickEnvelope *= 0.9994;
+            }
         }
 
         smoothedMaster += (masterGainValue.load() - smoothedMaster) * smoothingCoefficient;
@@ -714,34 +731,6 @@ void AudioEngine::renderStripPass (RenderContext& ctx)
                 outputChannelData[1][sample] = juce::jlimit (-1.0f, 1.0f, right);
         }
     }
-}
-
-float AudioEngine::renderClickSample (RenderContext& ctx, bool probeMute)
-{
-    const auto rate = ctx.rate;
-    const auto clickOn = ctx.clickOn;
-    const auto beatSamples = ctx.beatSamples;
-    float click = 0.0f;
-
-            if (clickPhase >= beatSamples)
-            {
-                clickPhase -= beatSamples;
-                clickEnvelope = 0.85;
-                clickOscillator = 0.0;
-                ++clickBeat;
-            }
-
-            clickPhase += 1.0;
-
-            if (clickOn && ! probeMute && clickEnvelope > 0.0001)
-            {
-                const auto frequency = clickBeat % 4 == 0 ? 1600.0 : 1000.0;
-                clickOscillator += twoPi * frequency / rate;
-                click = static_cast<float> (std::sin (clickOscillator) * clickEnvelope * 0.3);
-                clickEnvelope *= 0.9994;
-            }
-
-    return click;
 }
 
 void AudioEngine::renderMasterPass (RenderContext& ctx)

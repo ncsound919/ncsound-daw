@@ -690,7 +690,6 @@ private:
         double blockStartPpq = 0.0;
         int64_t position = 0;
 
-        bool bufferReady = false;
         float* mixLeft = nullptr;
         float* mixRight = nullptr;
         bool trackBufferReady = false;
@@ -715,9 +714,6 @@ private:
     void renderInstrumentInsertPass (RenderContext& ctx);
     void renderStripPass (RenderContext& ctx);
     void renderMasterPass (RenderContext& ctx);
-
-    /** Click/metronome stage of the strip pass, one sample per call. */
-    float renderClickSample (RenderContext& ctx, bool probeMute);
 
     /** The one mix block, shared by the device callback and renderToWav(). */
     void renderBlock (const float* const* inputChannelData, int numInputChannels,
