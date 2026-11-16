@@ -7,7 +7,6 @@
 
 namespace nc
 {
-
 void AudioEngine::createDemoAssets()
 {
     constexpr double demoRate = 24000.0;

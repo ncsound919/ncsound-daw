@@ -1,19 +1,10 @@
 #include "AudioEngine.h"
 
-#include "AudioEngineInternal.h"
-
-#include "BuiltinStudioFx.h"
-#include "BuiltinSynth.h"
 #include "Session.h"
 
-#include <nc/engine/ClipTimeline.hpp>
-#include <nc/engine/MidiSchedule.hpp>
-#include <nc/engine/ProjectLimits.hpp>
-#include <nc/engine/StreamWindow.hpp>
 #include <nc/engine/VoiceToMidi.hpp>
 
 #include <algorithm>
-#include <cmath>
 #include <thread>
 #include <utility>
 

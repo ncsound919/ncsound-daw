@@ -2,7 +2,6 @@
 // Split out of AudioEngine.cpp (plan 07-03); bodies moved verbatim.
 
 #include "AudioEngine.h"
-#include "AudioEngineInternal.h"
 #include <nc/engine/MidiSchedule.hpp>
 #include <nc/engine/TempoMap.hpp>
 #include <algorithm>
@@ -10,7 +9,6 @@
 
 namespace nc
 {
-
 void AudioEngine::setPlaying (bool shouldPlay)    { playing.store (shouldPlay); }
 
 void AudioEngine::setMetronome (bool on)          { metronome.store (on); }

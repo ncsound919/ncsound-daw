@@ -6,7 +6,6 @@
 
 namespace nc
 {
-
 void AudioEngine::saveAudioSettings()
 {
     juce::ApplicationProperties props;

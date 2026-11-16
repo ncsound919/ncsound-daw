@@ -2,14 +2,11 @@
 // Split out of AudioEngine.cpp (plan 07-03); bodies moved verbatim.
 
 #include "AudioEngine.h"
-#include "AudioEngineInternal.h"
 #include "Session.h"
 #include <nc/engine/Export.hpp>
-#include <thread>
 
 namespace nc
 {
-
 //==============================================================================
 void AudioEngine::prepareForRender (double rate, int maxBlock)
 {

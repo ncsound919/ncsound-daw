@@ -2,13 +2,10 @@
 // Split out of AudioEngine.cpp (plan 07-03); bodies moved verbatim.
 
 #include "AudioEngine.h"
-#include "AudioEngineInternal.h"
 #include <nc/engine/StreamWindow.hpp>
-#include <thread>
 
 namespace nc
 {
-
 //==============================================================================
 void AudioEngine::RecordBuffer::prepare (int64_t capacityFrames)
 {

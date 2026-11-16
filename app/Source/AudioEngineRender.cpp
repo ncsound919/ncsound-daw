@@ -10,7 +10,6 @@
 
 namespace nc
 {
-
 void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
 {
     sampleRate.store (device != nullptr ? device->getCurrentSampleRate() : 48000.0);

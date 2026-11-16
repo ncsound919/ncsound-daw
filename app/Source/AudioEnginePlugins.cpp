@@ -2,7 +2,6 @@
 // Split out of AudioEngine.cpp (plan 07-03); bodies moved verbatim.
 
 #include "AudioEngine.h"
-#include "AudioEngineInternal.h"
 #include "BuiltinStudioFx.h"
 #include "BuiltinSynth.h"
 #include <nc/engine/ProjectState.hpp>
@@ -10,7 +9,6 @@
 
 namespace nc
 {
-
 int AudioEngine::pollMidiLearnChanges()
 {
     struct Range { float low, high; bool logarithmic = false; bool boolean = false; };

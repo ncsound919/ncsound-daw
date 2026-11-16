@@ -2,17 +2,14 @@
 // Split out of AudioEngine.cpp (plan 07-03); bodies moved verbatim.
 
 #include "AudioEngine.h"
-#include "AudioEngineInternal.h"
 #include <nc/engine/AudioSuite.hpp>
 #include <nc/engine/Resample.hpp>
 #include <nc/engine/StreamWindow.hpp>
 #include <algorithm>
 #include <cmath>
-#include <thread>
 
 namespace nc
 {
-
 //==============================================================================
 int AudioEngine::loadAudioFile (const juce::File& file)
 {

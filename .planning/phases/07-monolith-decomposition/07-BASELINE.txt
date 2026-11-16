@@ -5,7 +5,10 @@ ArrangeView.cpp: e0c71fe4824a0d5aea093f1417eb908563802671a071ebca1b7f0dabd3a0fb6
 MainComponent.cpp: c6c1a2cb4d1133216e22686218860f4e06426c3cad7c2453b561f0b48b8dab40
 AudioEngine.h: 4fc06f2666568d454ff9b20c09ed3f5bb44887205cdcab3f1d0f8a87a17a657e
 native-tests: 195
-guard: 07-03 move --base <sha of the commit that lands 07-03>
+guard: 07-03 move --base b6e6132
 guard: 07-04 decompose --base <sha of the commit that lands 07-04> --preserve-order renderBlock
 guard: 07-06 move --base <sha of the commit that lands 07-06>
 guard: 07-07 move --base <sha of the commit that lands 07-07>
+mix_rack: 447 s on the split build (b6e6132) vs 457 s on the pre-split fb2154d worktree
+mix_rack-measured: 2026-11-15, same machine, same suite (118 cases, 55670 assertions), back to back
+mix_rack-note: 210 s was the pre-split figure taken earlier the same day; it does not reproduce on this machine now, and the unmodified pre-split code alone needs 457 s. The 2.1x was machine state, not the decomposition.
