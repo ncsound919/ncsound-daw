@@ -102,8 +102,10 @@ int PluginCatalog::scanSync()
     progress.store (0.0f, std::memory_order_relaxed);
     auto result = scanAll();
     mergeScannedDescriptions (std::move (result.descriptions));
-    scanning.store (false, std::memory_order_release);
+    // Progress first: isScanning() is what a poller watches, so the final
+    // reading must already be visible when it turns false.
     progress.store (1.0f, std::memory_order_relaxed);
+    scanning.store (false, std::memory_order_release);
 
     {
         const juce::ScopedLock lock (statusLock);
@@ -199,8 +201,8 @@ void PluginCatalog::run()
 
         const auto cancelled = cancelRequested.load (std::memory_order_acquire);
         mergeScannedDescriptions (std::move (result.descriptions));
-        scanning.store (false, std::memory_order_release);
         progress.store (1.0f, std::memory_order_relaxed);
+        scanning.store (false, std::memory_order_release);
 
         {
             const juce::ScopedLock lock (statusLock);
@@ -223,57 +225,91 @@ PluginCatalog::ScanResult PluginCatalog::scanAll()
     juce::AudioPluginFormatManager scanFormats;
     juce::addDefaultFormatsToManager (scanFormats);
 
-    std::set<juce::String> seen;
-    int foundCount = 0;
-
-    for (auto* format : scanFormats.getFormats())
+    // Two passes: enumerate first, scan second. The enumeration is what makes
+    // progress mean something -- a percentage of bundles *found*, not of
+    // plug-ins discovered, so a folder of three bundles that yields one plug-in
+    // still reports 33%, 66%, 100% instead of a bar stuck near zero.
+    struct Candidate
     {
-        if (cancelRequested.load (std::memory_order_acquire))
-            break;
+        juce::String formatName;
+        juce::String path;
+    };
 
-        const auto locations = scanLocationsFor (*format);
+    std::vector<Candidate> candidates;
 
-        for (int directoryIndex = 0; directoryIndex < static_cast<int> (locations.size()); ++directoryIndex)
+    const auto injected = scanner->injectedBundles();
+
+    if (! injected.empty())
+    {
+        for (const auto& path : injected)
+            candidates.push_back ({ "VST3", path });
+    }
+    else
+    {
+        std::set<juce::String> seen;
+
+        for (auto* format : scanFormats.getFormats())
         {
             if (cancelRequested.load (std::memory_order_acquire))
                 break;
 
-            const auto directory = locations[static_cast<size_t> (directoryIndex)];
+            const auto locations = scanLocationsFor (*format);
 
-            if (! directory.isDirectory())
-                continue;
-
-            for (const auto& entry : juce::RangedDirectoryIterator (directory, true, "*",
-                                                                     juce::File::findFiles))
+            for (int directoryIndex = 0; directoryIndex < static_cast<int> (locations.size()); ++directoryIndex)
             {
                 if (cancelRequested.load (std::memory_order_acquire))
                     break;
 
-                const auto file = entry.getFile();
+                const auto directory = locations[static_cast<size_t> (directoryIndex)];
 
-                if (! format->fileMightContainThisPluginType (file.getFullPathName()))
+                if (! directory.isDirectory())
                     continue;
 
-                if (! seen.insert (file.getFullPathName()).second)
-                    continue;
-
-                const auto reply = scanner->scan (format->getName(), file.getFullPathName());
-                juce::String replyError;
-
-                if (! PluginCatalog::appendDescriptionsFromReply (reply, result.descriptions, replyError))
+                for (const auto& entry : juce::RangedDirectoryIterator (directory, true, "*",
+                                                                         juce::File::findFiles))
                 {
-                    ++result.failedFiles;
-                    result.error = replyError;
+                    if (cancelRequested.load (std::memory_order_acquire))
+                        break;
+
+                    const auto file = entry.getFile();
+
+                    if (! format->fileMightContainThisPluginType (file.getFullPathName()))
+                        continue;
+
+                    if (! seen.insert (file.getFullPathName()).second)
+                        continue;
+
+                    candidates.push_back ({ format->getName(), file.getFullPathName() });
+
+                    if (static_cast<int> (candidates.size()) >= 512)
+                        break;
                 }
-
-                foundCount = static_cast<int> (result.descriptions.size());
-                progress.store (juce::jlimit (0.0f, 0.95f, static_cast<float> (foundCount) / 64.0f),
-                                std::memory_order_relaxed);
-
-                if (foundCount >= 512)
-                    break;
             }
         }
+    }
+
+    const auto total = std::max (1, static_cast<int> (candidates.size()));
+    progress.store (0.0f, std::memory_order_relaxed);
+
+    for (int index = 0; index < static_cast<int> (candidates.size()); ++index)
+    {
+        if (cancelRequested.load (std::memory_order_acquire))
+            break;
+
+        const auto& candidate = candidates[static_cast<size_t> (index)];
+        const auto reply = scanner->scan (candidate.formatName, candidate.path);
+        juce::String replyError;
+
+        if (! PluginCatalog::appendDescriptionsFromReply (reply, result.descriptions, replyError))
+        {
+            ++result.failedFiles;
+            result.error = replyError;
+        }
+
+        // A timed-out or failed bundle still consumed its slot: the bar keeps
+        // moving so one broken plug-in cannot freeze the scan at its percent.
+        progress.store (juce::jmin (1.0f, static_cast<float> (index + 1) / static_cast<float> (total)),
+                        std::memory_order_relaxed);
     }
 
     if (result.failedFiles > 0 && result.descriptions.empty())

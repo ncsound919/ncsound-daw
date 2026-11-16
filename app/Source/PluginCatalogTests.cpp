@@ -6,7 +6,10 @@
 #include "TestPaths.h"
 
 #include <algorithm>
+#include <functional>
+#include <atomic>
 #include <memory>
+#include <thread>
 #include <vector>
 
 namespace
@@ -18,8 +21,22 @@ class FakeScannerBackend final : public nc::ScannerBackend
 public:
     explicit FakeScannerBackend (nc::ScannerReply cannedReply) : reply (std::move (cannedReply)) {}
 
-    nc::ScannerReply scan (const juce::String&, const juce::String&) override { return reply; }
+    nc::ScannerReply scan (const juce::String& formatName, const juce::String& file) override
+    {
+        const auto index = scans++;
+        lastFormat = formatName;
+        lastFile = file;
+        return onScan ? onScan (index) : reply;
+    }
+
     void cancel() override {}
+    std::vector<juce::String> injectedBundles() const override { return bundles; }
+
+    std::vector<juce::String> bundles;
+    std::function<nc::ScannerReply (int)> onScan;
+    int scans = 0;
+    juce::String lastFormat;
+    juce::String lastFile;
 
 private:
     nc::ScannerReply reply;
@@ -440,4 +457,55 @@ TEST_CASE ("an additional search root resolves a bundle outside the default loca
     REQUIRE (missing.containsIgnoreCase ("not installed"));
 
     root.deleteRecursively();
+}
+
+TEST_CASE ("scan progress advances once per bundle", "[catalog]")
+{
+    auto backend = std::make_unique<FakeScannerBackend> (nc::ScannerReply {});
+    backend->bundles = { "a.vst3", "b.vst3", "c.vst3" };
+    backend->onScan = [] (int)
+    {
+        juce::Thread::sleep (40);
+        return nc::ScannerReply {};
+    };
+
+    nc::PluginCatalog catalog ({}, std::move (backend));
+
+    // scanSync on a worker thread, not scanAsync: the async path publishes its
+    // final state through MessageManager::callAsync, which never runs in a
+    // console test, so the progress polling below would wait forever.
+    std::atomic<bool> finished { false };
+    std::thread worker ([&]
+    {
+        catalog.scanSync();
+        finished.store (true, std::memory_order_release);
+    });
+
+    std::vector<float> seen;
+
+    while (! finished.load (std::memory_order_acquire))
+    {
+        seen.push_back (catalog.scanProgress());
+        juce::Thread::sleep (5);
+    }
+
+    worker.join();
+
+    REQUIRE (seen.size() > 3);
+    CHECK (seen.front() < 0.5f);
+    CHECK (std::is_sorted (seen.begin(), seen.end()));
+    CHECK (catalog.scanProgress() == 1.0f);
+}
+
+TEST_CASE ("a finished scan reports every bundle it consumed", "[catalog]")
+{
+    auto backend = std::make_unique<FakeScannerBackend> (nc::ScannerReply {});
+    backend->bundles = { "a.vst3", "b.vst3" };
+    auto* raw = backend.get();
+
+    nc::PluginCatalog catalog ({}, std::move (backend));
+    catalog.scanSync();
+
+    CHECK (raw->scans == 2);
+    CHECK (catalog.scanProgress() == 1.0f);
 }

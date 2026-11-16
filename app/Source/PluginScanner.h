@@ -5,6 +5,7 @@
 
 #include <chrono>
 #include <memory>
+#include <vector>
 
 namespace nc
 {
@@ -29,6 +30,12 @@ public:
     virtual ScannerReply scan (const juce::String& formatName,
                                const juce::String& fileOrIdentifier) = 0;
     virtual void cancel() = 0;
+
+    /** Test seam: a non-empty list makes the catalog scan exactly these paths
+        instead of discovering bundles on disk, so scan-order tests stay
+        hermetic and never touch the user's installed plug-ins. Production
+        returns {} and discovery runs as normal. */
+    virtual std::vector<juce::String> injectedBundles() const { return {}; }
 };
 
 /** Coordinator-side scanner. It launches the current executable in worker mode,
