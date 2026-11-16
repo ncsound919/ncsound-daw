@@ -356,9 +356,7 @@ float AudioEngine::trackPeak (int track) const
 
 int AudioEngine::demoAssetId (int track) const
 {
-    return juce::isPositiveAndBelow (track, trackCount)
-               ? demoAssets[static_cast<size_t> (track)]
-               : -1;
+    return assetLibrary.demoAssetId (track);
 }
 
 

@@ -62,6 +62,7 @@ target_sources(NCMixRackTests PRIVATE
     Source/AudioEngineDevice.cpp
     Source/AudioEngineExport.cpp
     Source/AudioEngineAssets.cpp
+    Source/AssetLibrary.cpp
     Source/AudioEngineDemo.cpp
     Source/AudioEngineTransport.cpp
     Source/AudioEnginePlugins.cpp
@@ -194,6 +195,7 @@ target_sources(NCSoundHub PRIVATE
     Source/AudioEngineDevice.cpp
     Source/AudioEngineExport.cpp
     Source/AudioEngineAssets.cpp
+    Source/AssetLibrary.cpp
     Source/AudioEngineDemo.cpp
     Source/AudioEngineTransport.cpp
     Source/AudioEnginePlugins.cpp

@@ -9,6 +9,7 @@
 #include "MidiRecorder.h"
 #include "PluginCatalog.h"
 #include "TrackInsertRack.h"
+#include "AssetLibrary.h"
 #include "Automation.h"
 
 #include <nc/engine/AudioSuite.hpp>
@@ -555,33 +556,7 @@ private:
     void audioDeviceAboutToStart (juce::AudioIODevice*) override;
     void audioDeviceStopped() override;
 
-    struct AudioAsset
-    {
-        juce::AudioBuffer<float> buffer;
-        double sampleRate = 48000.0;
-        juce::String name;
-        juce::File file;   // empty for generated demo assets
-
-        // Long imports stream: the reader stays open and only a bounded
-        // read-ahead window is resident, so a long take costs seconds of RAM.
-        // The window is published with an atomic slot flip; the callback never
-        // reads the disk and never waits on the message thread.
-        bool streamed = false;
-        int64_t totalFrames = 0;
-
-        // Kernels for playing this asset at a session rate of its own. Built on
-        // the message thread when the asset is added and whenever the session
-        // rate changes; a clip whose rate already matches reads frames directly
-        // and never touches this.
-        nc::engine::resample::Bank resample;
-        int64_t cacheFrames = 0;
-        std::unique_ptr<juce::AudioFormatReader> reader;
-        std::array<std::vector<float>, 2> cacheA;
-        std::array<std::vector<float>, 2> cacheB;
-        std::array<std::atomic<int64_t>, 2> slotStart {};
-        std::array<std::atomic<int64_t>, 2> slotLength {};
-        std::atomic<int> activeCache { 0 };
-    };
+    using AudioAsset = AssetLibrary::Asset;
 
     struct PlaybackClip
     {
@@ -646,18 +621,8 @@ private:
     static_assert (commandCapacity >= maxClips + 16,
                    "command rail must fit clear plus a full timeline");
 
-    int addAsset (std::unique_ptr<AudioAsset> asset);
-    int64_t assetFrameCount (const AudioAsset& asset) const;
-    float sampleAt (const AudioAsset& asset, int64_t frame, int channel) const;
-
-    /** One source frame at a fractional position, band-limited when the asset's
-        rate differs from the output rate (nullptr window when it matches). */
-    float readSourceSample (const AudioAsset& asset, double sourceFrame, double outputRate,
-                            int channel) const;
-    float readBandLimited (const AudioAsset& asset, double sourceFrame, int channel) const;
-
-    /** Rebuilds the resampling kernels of every asset for the current output
-        rate. Message thread only. */
+    /** Rebuilds the resampling kernels of every asset for the output rate.
+        Message thread only; forwards to AssetLibrary. */
     void refreshResampleBanks();
     void createDemoAssets();
     bool pushCommand (const Command& command);
@@ -885,8 +850,7 @@ private:
     juce::String deviceInfo;
     MidiLearnManager midiLearn;
 
-    std::vector<std::unique_ptr<AudioAsset>> assets;
-    std::array<int, trackCount> demoAssets { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+    AssetLibrary assetLibrary;
 
     // SPSC command rail: message thread writes, audio callback drains.
     // Shared nc::engine::SpscQueue (Task 1), not an ad-hoc array.

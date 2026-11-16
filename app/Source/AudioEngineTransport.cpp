@@ -323,7 +323,9 @@ int AudioEngine::setTimelineClips (std::vector<TimelineClip> newClips)
         if (accepted >= cap)
             break;
 
-        if (clip.assetId < 0 || clip.assetId >= static_cast<int> (assets.size()))
+        const auto* asset = assetLibrary.find (clip.assetId);
+
+        if (asset == nullptr)
             continue;
 
         if (! juce::isPositiveAndBelow (clip.track, trackCount))
@@ -331,7 +333,7 @@ int AudioEngine::setTimelineClips (std::vector<TimelineClip> newClips)
 
         Command add;
         add.type = CommandType::add;
-        add.clip.asset = assets[static_cast<size_t> (clip.assetId)].get();
+        add.clip.asset = asset;
         add.clip.track = clip.track;
         add.clip.startBar = juce::jmax (1.0, clip.startBar);
         add.clip.lengthBars = juce::jmax (0.0, clip.lengthBars);

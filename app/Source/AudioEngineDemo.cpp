@@ -239,7 +239,8 @@ void AudioEngine::createDemoAssets()
             for (int frame = 0; frame < frames; ++frame)
                 data[frame] = data[frame] / peak * trackPeaks[track];
 
-        demoAssets[static_cast<size_t> (track)] = addAsset (std::move (asset));
+        const auto demoId = assetLibrary.add (std::move (asset), sampleRate.load());
+        assetLibrary.setDemoAssetId (track, demoId);
     }
 }
 
