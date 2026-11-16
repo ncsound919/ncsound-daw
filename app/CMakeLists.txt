@@ -127,6 +127,8 @@ target_sources(NCScannerProbe PRIVATE
     Source/PluginScanner.h
     Source/PluginCatalog.cpp
     Source/PluginCatalog.h
+    Source/PluginIndexCache.cpp
+    Source/PluginIndexCache.h
     Source/PluginRegistry.cpp
     Source/PluginRegistry.h)
 
