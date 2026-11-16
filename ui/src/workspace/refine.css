@@ -3583,3 +3583,10 @@
   gap: 6px;
   padding: 4px 10px 0;
 }
+
+.ws-slot-error {
+  margin: 2px 0 0;
+  color: #f2a3a3;
+  font-size: 11px;
+  line-height: 1.3;
+}

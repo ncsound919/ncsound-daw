@@ -51,6 +51,8 @@ export const NATIVE_ROUTES = [
   "removeMasterPlugin",
   "setChannelParam",
   "setInsertBypassed",
+  "moveInsert",
+  "openPluginEditor",
   "scanPlugins",
   "getAudioState",
   "applyAudioSettings",

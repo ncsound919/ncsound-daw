@@ -130,3 +130,69 @@ describe("Mixer insert bypass", () => {
     expect(onBypass).not.toHaveBeenCalled();
   });
 });
+
+function makeDragData() {
+  const store = new Map<string, string>();
+  return {
+    setData: (type: string, value: string) => {
+      store.set(type, value);
+    },
+    getData: (type: string) => store.get(type) ?? "",
+    clearData: () => {
+      store.clear();
+    },
+  };
+}
+
+function twoInserts(): TrackInfo[] {
+  const list = tracks(1);
+  list[0] = {
+    ...list[0],
+    inserts: Array.from({ length: 8 }, (_, index) => ({
+      name: index === 0 ? "Pro-Q" : index === 1 ? "Pro-C" : "",
+      missing: false,
+      bypassed: false,
+    })),
+  };
+  return list;
+}
+
+describe("Mixer insert reorder", () => {
+  it("drops slot 0 onto empty slot 2 and calls moveInsert", () => {
+    const onMove = vi.fn();
+    render(<Mixer {...props({ tracks: twoInserts(), onMove })} />);
+    const dt = makeDragData() as unknown as DataTransfer;
+
+    fireEvent.dragStart(screen.getByLabelText("Insert 1 Pro-Q"), { dataTransfer: dt });
+    fireEvent.drop(screen.getByLabelText("Insert 3 Insert 3 is empty"), { dataTransfer: dt });
+    expect(onMove).toHaveBeenCalledWith(0, 0, 2);
+  });
+
+  it("refuses to drop onto a slot that already holds a plugin", () => {
+    const onMove = vi.fn();
+    render(<Mixer {...props({ tracks: twoInserts(), onMove })} />);
+    const dt = makeDragData() as unknown as DataTransfer;
+
+    fireEvent.dragStart(screen.getByLabelText("Insert 1 Pro-Q"), { dataTransfer: dt });
+    fireEvent.drop(screen.getByLabelText("Insert 2 Pro-C"), { dataTransfer: dt });
+    expect(onMove).not.toHaveBeenCalled();
+  });
+});
+
+describe("Mixer plugin editor", () => {
+  it("opens the editor for a loaded slot", async () => {
+    const onOpenEditor = vi.fn().mockResolvedValue({ ok: true });
+    render(<Mixer {...props({ tracks: tracksWithInsert(0, 0), onOpenEditor })} />);
+
+    fireEvent.doubleClick(screen.getByLabelText("Insert 1 Pro-Q"));
+    expect(onOpenEditor).toHaveBeenCalledWith(0, 0);
+  });
+
+  it("surfaces the error when the slot has no plugin", async () => {
+    const onOpenEditor = vi.fn().mockResolvedValue({ ok: false, error: "no plugin in slot" });
+    render(<Mixer {...props({ tracks: tracksWithInsert(0, 0), onOpenEditor })} />);
+
+    fireEvent.doubleClick(screen.getByLabelText("Insert 1 Pro-Q"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("no plugin in slot");
+  });
+});

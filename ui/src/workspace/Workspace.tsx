@@ -78,6 +78,10 @@ export interface WorkspaceProps {
   onPluginLoad?: (plugin: PluginInfo, track: number, slot: number) => void;
   /** Alt-click on an insert slot bypasses it without unloading the plug-in. */
   onInsertBypassed?: (track: number, slot: number, bypassed: boolean) => void;
+  /** Drag a loaded insert onto an empty slot to reorder the chain. */
+  onInsertMove?: (track: number, from: number, to: number) => void;
+  /** Double-click an insert slot to open the hosted plug-in editor. */
+  onOpenPluginEditor?: (track: number, slot: number) => Promise<{ ok: boolean; error?: string }>;
   onMasterPluginLoad?: (plugin: PluginInfo) => void;
   onScan?: () => void;
   /** Mixology preset names from the host; the entries hide without them. */
@@ -121,6 +125,8 @@ export function Workspace({
   onMidiLearn,
   onPluginLoad,
   onInsertBypassed,
+  onInsertMove,
+  onOpenPluginEditor,
   onMasterPluginLoad,
   onScan,
   mixologyPresets,
@@ -604,6 +610,8 @@ export function Workspace({
             onRack={() => setView("inspector")}
             onInsert={openBrowser}
             onBypass={onInsertBypassed}
+            onMove={onInsertMove}
+            onOpenEditor={onOpenPluginEditor}
             onMasterRack={() => setView("inspector")}
             onMasterInsert={openMasterBrowser}
             mixologyPresets={mixologyPresets}

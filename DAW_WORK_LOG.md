@@ -1069,3 +1069,30 @@ Verified: mixrack build `EXIT=0`, app build `EXIT=0`, `ctest --test-dir build -C
 
 Not verified: no interactive check in the running app — the alt-click path is covered by unit tests and
 compiles against the real route table, but I did not click a live slot.
+
+### Plan 01 tasks 2+3 — insert reorder and hosted editor open
+
+Task 2 — drag-reorder inserts (`moveInsert` route):
+- `WebViewBridge` answers `moveInsert(track, from, to)` with `buildState()`. The route only
+  moves onto an *empty* slot and refuses an occupied target loudly; the swap semantics of
+  `AudioEngine::moveTrackInsert` can therefore never silently overwrite a loaded plug-in.
+- `bridge.moveInsert`, `Mixer` `onMove` (SlotRow draggable + drop, refused before any round trip),
+  threaded `Workspace onInsertMove` → `App handleInsertMove` → `runWrite`.
+
+Task 3 — open a hosted plug-in editor from the strip (`openPluginEditor` route):
+- New `MainComponent::shellEditor`: a `juce::Component::SafePointer<PluginEditorWindow>`, deliberately
+  not a `unique_ptr` — the window deletes itself in its private `closeButtonPressed()`, so owning it
+  would double-free when the user closes the window. Opening a second editor deletes the first;
+  a user-closed window simply nulls the pointer. (Deviates from the plan's `unique_ptr` sketch.)
+- The route maps slot `-1` = instrument, `-2` = master, `0..7` = inserts; answers `{ ok: false,
+  error: "no plugin in slot" }` for an empty slot or a plug-in with no editor, and creates no window.
+- Double-clicking a slot calls `bridge.openPluginEditor`; a refused open surfaces in a `role="alert"`
+  strip error. An editor-only slot stays enabled — a disabled button swallows the double-click React
+  never receives (caught by the failing test, not by inspection).
+- Route table regenerated: 55 routes.
+
+Verified: `tsc -b --noEmit` exit 0, full UI suite 105/105, mixrack `EXIT=0`, app `EXIT=0`,
+`ctest -C Release` 195/195 `CTEST_EXIT=0` (includes the render-digest assertion, unchanged).
+
+Not verified: no interactive check in the running app — neither the drag nor a real editor window was
+opened by hand; both paths are covered by unit tests plus the compiled route table.

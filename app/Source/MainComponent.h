@@ -102,6 +102,12 @@ private:
     MixerPanel mixer;
     BrowserOverlay browser;
     std::unique_ptr<juce::WebBrowserComponent> webView;
+
+    /** The single shell-opened plug-in editor. A SafePointer, not a unique_ptr:
+        PluginEditorWindow deletes itself in its (private) closeButtonPressed,
+        so owning it would double-free when the user closes the window. A
+        user-closed window simply nulls this pointer. */
+    juce::Component::SafePointer<PluginEditorWindow> shellEditor;
     bool pitchOpen = true;
 
     HardwareButton newButton { HardwareButton::Icon::plus, "NEW" };

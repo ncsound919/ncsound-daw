@@ -941,6 +941,76 @@ juce::WebBrowserComponent::Options MainComponent::buildWebOptions()
 
               done (buildState());
           } },
+        { "moveInsert", [this] (const Args& a, Completion done)
+          {
+              // The engine swap moves state, so this route only ever moves
+              // onto an *empty* slot. Moving onto an occupied slot is refused
+              // loudly instead of overwriting an irreplaceable plugin state.
+              const auto track = a.size() > 0 ? (int) a[0] : -1;
+              const auto from  = a.size() > 1 ? (int) a[1] : -1;
+              const auto to    = a.size() > 2 ? (int) a[2] : -1;
+
+              if (track >= 0 && track < engine.getActiveTrackCount()
+                  && from >= 0 && from < 8 && to >= 0 && to < 8 && from != to)
+              {
+                  if (engine.trackInsertName (track, to).isNotEmpty())
+                      setStatus ("INSERT / slot " + juce::String (to + 1) + " is occupied", true);
+                  else if (engine.moveTrackInsert (track, from, to))
+                      setStatus ("INSERT / moved to slot " + juce::String (to + 1));
+                  else
+                      setStatus ("INSERT / move refused", true);
+              }
+
+              done (buildState());
+          } },
+        { "openPluginEditor", [this] (const Args& a, Completion done)
+          {
+              // Slot map mirrors the shell: -1 = instrument lane, -2 = master
+              // insert, 0..7 = effect slots. The window is self-deleting, so
+              // the shell keeps only a SafePointer: opening a second editor
+              // deletes the first, and a user-closed window nulls the pointer.
+              const auto track = a.size() > 0 ? (int) a[0] : -1;
+              const auto slot  = a.size() > 1 ? (int) a[1] : -1;
+
+              juce::AudioPluginInstance* instance = nullptr;
+              juce::String name;
+
+              if (slot == -2)
+              {
+                  instance = engine.masterInsertInstance();
+                  name = engine.masterPluginName();
+              }
+              else if (track >= 0 && track < engine.getActiveTrackCount())
+              {
+                  if (slot == -1)
+                  {
+                      instance = engine.trackInstrumentInstance (track);
+                      name = engine.trackInstrumentName (track);
+                  }
+                  else if (slot >= 0 && slot < 8)
+                  {
+                      instance = engine.trackInsertInstance (track, slot);
+                      name = engine.trackInsertName (track, slot);
+                  }
+              }
+
+              auto* reply = new juce::DynamicObject();
+
+              if (instance == nullptr || ! instance->hasEditor())
+              {
+                  setStatus ("EDITOR / no plugin in slot", true);
+                  reply->setProperty ("ok", false);
+                  reply->setProperty ("error", "no plugin in slot");
+              }
+              else
+              {
+                  delete shellEditor.getComponent();
+                  shellEditor = new PluginEditorWindow (name, instance);
+                  reply->setProperty ("ok", true);
+              }
+
+              done (juce::var (reply));
+          } },
         { "scanPlugins", [this] (const Args&, Completion done)
           {
               // Start the folder scan and answer immediately; the worker pushes

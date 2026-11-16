@@ -30,6 +30,10 @@ export interface MixerProps {
   onInsert?: (track: number, slot: number) => void;
   /** Alt-click a slot to bypass it without unloading the plug-in. */
   onBypass?: (track: number, slot: number, bypassed: boolean) => void;
+  /** Drag a loaded slot onto an empty slot to reorder the chain. */
+  onMove?: (track: number, from: number, to: number) => void;
+  /** Double-click a slot to open the hosted plug-in editor. */
+  onOpenEditor?: (track: number, slot: number) => Promise<{ ok: boolean; error?: string }>;
   onMasterRack?: () => void;
   onMasterInsert?: () => void;
   /** Mixology technique presets; the section hides when the host has no route. */
@@ -240,6 +244,8 @@ function SlotRow({
   track,
   onInsert,
   onBypass,
+  onMove,
+  onOpenEditor,
 }: {
   insert?: InsertSlot;
   slot: number;
@@ -247,6 +253,10 @@ function SlotRow({
   onInsert?: (track: number, slot: number) => void;
   /** Alt-click a slot to bypass it without unloading the plug-in. */
   onBypass?: (track: number, slot: number, bypassed: boolean) => void;
+  /** Drag a loaded slot onto an empty slot to reorder the chain. */
+  onMove?: (track: number, from: number, to: number) => void;
+  /** Double-click a slot to open the hosted plug-in editor. */
+  onOpenEditor?: (track: number, slot: number) => void;
 }) {
   const filled = Boolean(insert?.name);
   const className = [
@@ -270,7 +280,32 @@ function SlotRow({
       title={onInsert ? `${title} — click to load${hint}` : title}
       aria-label={`Insert ${slot + 1} ${title}`}
       aria-pressed={insert?.bypassed ? false : undefined}
-      disabled={!onInsert && !onBypass}
+      disabled={!onInsert && !onBypass && !onOpenEditor}
+      draggable={filled && Boolean(onMove)}
+      onDoubleClick={(event) => {
+        event.stopPropagation();
+        onOpenEditor?.(track, slot);
+      }}
+      onDragStart={(event) => {
+        if (filled && onMove)
+          event.dataTransfer.setData("application/x-nc-insert", `${track}:${slot}`);
+      }}
+      onDragOver={(event) => {
+        if (onMove) event.preventDefault();
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        if (!onMove) return;
+        const raw = event.dataTransfer.getData("application/x-nc-insert").split(":");
+        if (raw.length !== 2) return;
+        const fromTrack = Number(raw[0]);
+        const fromSlot = Number(raw[1]);
+        if (fromTrack !== track || fromSlot === slot) return;
+        // Never overwrite a loaded slot: the native route refuses too, but the
+        // refusal the user sees has to happen before any round trip.
+        if (filled) return;
+        onMove(track, fromSlot, slot);
+      }}
       onClick={(event) => {
         event.stopPropagation();
 
@@ -575,6 +610,8 @@ function ChannelStrip({
   onRack,
   onInsert,
   onBypass,
+  onMove,
+  onOpenEditor,
 }: {
   track: TrackInfo;
   selected: boolean;
@@ -591,10 +628,15 @@ function ChannelStrip({
   onInsert?: (track: number, slot: number) => void;
   /** Alt-click a slot to bypass it without unloading the plug-in. */
   onBypass?: (track: number, slot: number, bypassed: boolean) => void;
+  /** Drag a loaded slot onto an empty slot to reorder the chain. */
+  onMove?: (track: number, from: number, to: number) => void;
+  /** Double-click a slot to open the hosted plug-in editor. */
+  onOpenEditor?: (track: number, slot: number) => Promise<{ ok: boolean; error?: string }>;
 }) {
   const tint = tintForTrack(track.index);
   const inserts = track.inserts ?? [];
   const [bank, setBank] = useState(0);
+  const [editorError, setEditorError] = useState<string | null>(null);
   const peakDb = peak > 0 ? 20 * Math.log10(Math.max(1e-6, peak)) : Number.NEGATIVE_INFINITY;
 
   return (
@@ -641,9 +683,26 @@ function ChannelStrip({
               track={track.index}
               onInsert={onInsert}
               onBypass={onBypass}
+              onMove={onMove}
+              onOpenEditor={
+                onOpenEditor
+                  ? (slotTrack: number, slotIndex: number) => {
+                      onOpenEditor(slotTrack, slotIndex).then(
+                        (result) =>
+                          setEditorError(result.ok ? null : (result.error ?? "Editor unavailable")),
+                        () => setEditorError("Editor unavailable"),
+                      );
+                    }
+                  : undefined
+              }
             />
           ))}
         </div>
+        {editorError && (
+          <p className="ws-slot-error" role="alert">
+            {editorError}
+          </p>
+        )}
       </div>
 
       <MixKnobs track={track} onPan={onPan} onSendA={onSendA} onSendB={onSendB} />
@@ -749,6 +808,8 @@ export function Mixer({
   onRack,
   onInsert,
   onBypass,
+  onMove,
+  onOpenEditor,
   onMasterRack,
   onMasterInsert,
   mixologyPresets,
@@ -808,6 +869,8 @@ export function Mixer({
               onRack={() => onRack(track.index)}
               onInsert={onInsert}
               onBypass={onBypass}
+              onMove={onMove}
+              onOpenEditor={onOpenEditor}
             />
           ))}
         </div>

@@ -189,6 +189,16 @@ export const backend = {
     return call<AppState>("setInsertBypassed", track, slot, bypassed);
   },
 
+  /** Moves an insert onto an *empty* slot; occupied targets are refused. */
+  moveInsert(track: number, from: number, to: number): Promise<AppState> {
+    return call<AppState>("moveInsert", track, from, to);
+  },
+
+  /** Opens the hosted plug-in editor for an insert, instrument (-1) or master (-2) slot. */
+  openPluginEditor(track: number, slot: number): Promise<{ ok: boolean; error?: string }> {
+    return call<{ ok: boolean; error?: string }>("openPluginEditor", track, slot);
+  },
+
   /** Writes one baked MixRack parameter by its Overlay id (e.g. `lowGain`). */
   setChannelParam(track: number, param: string, value: number): Promise<AppState> {
     return call<AppState>("setChannelParam", track, param, value);

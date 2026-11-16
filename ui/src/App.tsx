@@ -225,6 +225,20 @@ export default function App() {
     runWrite(() => backend.loadPlugin(track, slot, plugin.id));
   }, []);
 
+  const handleInsertMove = useCallback(
+    (track: number, from: number, to: number) => {
+      if (!backend.embedded) return;
+      runWrite(() => backend.moveInsert(track, from, to));
+    },
+    [runWrite],
+  );
+
+  const handleOpenPluginEditor = useCallback((track: number, slot: number) => {
+    if (!backend.embedded)
+      return Promise.resolve({ ok: false, error: "Plug-in editors need the desktop shell." });
+    return backend.openPluginEditor(track, slot);
+  }, []);
+
   const handleInsertBypassed = useCallback(
     (track: number, slot: number, bypassed: boolean) => {
       if (!backend.embedded) return;
@@ -526,6 +540,8 @@ export default function App() {
           onMidiLearn={(target) => runWrite(() => backend.midiLearn(target))}
           onPluginLoad={handlePluginLoad}
           onInsertBypassed={handleInsertBypassed}
+          onInsertMove={handleInsertMove}
+          onOpenPluginEditor={handleOpenPluginEditor}
           onMasterPluginLoad={handleMasterPluginLoad}
           onScan={handleScan}
           mixologyPresets={mixologyPresets}
