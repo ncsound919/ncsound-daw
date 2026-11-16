@@ -54,6 +54,7 @@ target_sources(NCMixRackTests PRIVATE
     Source/Automation.cpp
     Source/MixPlan.cpp
     Source/PluginCatalog.cpp
+    Source/PluginIndexCache.cpp
     Source/PluginScanner.cpp
     Source/PluginRegistry.cpp
     # The engine itself, so the mixdown export is covered end to end.
@@ -210,6 +211,8 @@ target_sources(NCSoundHub PRIVATE
     Source/PluginHost.cpp
     Source/PluginCatalog.cpp
     Source/PluginCatalog.h
+    Source/PluginIndexCache.cpp
+    Source/PluginIndexCache.h
     Source/PluginScanner.cpp
     Source/PluginScanner.h
     Source/HostedInsert.cpp

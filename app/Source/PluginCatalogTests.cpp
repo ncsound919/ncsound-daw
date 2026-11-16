@@ -2,6 +2,7 @@
 
 #include "HostedInsert.h"
 #include "PluginCatalog.h"
+#include "PluginIndexCache.h"
 
 #include "TestPaths.h"
 
@@ -508,4 +509,105 @@ TEST_CASE ("a finished scan reports every bundle it consumed", "[catalog]")
 
     CHECK (raw->scans == 2);
     CHECK (catalog.scanProgress() == 1.0f);
+}
+
+namespace
+{
+juce::File freshIndexDir()
+{
+    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                         .getChildFile ("nc-index-"
+                                        + juce::String::toHexString (juce::Random::getSystemRandom().nextInt64()));
+    dir.createDirectory();
+    return dir;
+}
+} // namespace
+
+TEST_CASE ("the index round-trips and drops a bundle whose size changed", "[index]")
+{
+    const auto dir = freshIndexDir();
+    const auto bundle = dir.getChildFile ("x.vst3");
+    REQUIRE (bundle.replaceWithText ("one"));
+    const auto index = dir.getChildFile ("plugin-index.json");
+
+    juce::PluginDescription description;
+    description.name = "X";
+    description.fileOrIdentifier = bundle.getFullPathName();
+
+    REQUIRE (nc::pluginindex::save (index, { description }));
+
+    const auto loaded = nc::pluginindex::loadValid (index);
+    REQUIRE (loaded.size() == 1);
+    CHECK (loaded.front().path == bundle.getFullPathName());
+    CHECK (loaded.front().size == bundle.getSize());
+
+    // The description survives the round trip, not just the path.
+    const auto descriptions = nc::pluginindex::loadDescriptions (index);
+    REQUIRE (descriptions.size() == 1);
+    CHECK (descriptions.front().name == "X");
+
+    // A bigger bundle is stale even though the path and the folder are unchanged.
+    REQUIRE (bundle.replaceWithText ("one and a lot more"));
+    CHECK (nc::pluginindex::loadValid (index).empty());
+
+    dir.deleteRecursively();
+}
+
+TEST_CASE ("a rewritten index ignores an older schema wholesale", "[index]")
+{
+    const auto dir = freshIndexDir();
+    const auto bundle = dir.getChildFile ("y.vst3");
+    REQUIRE (bundle.replaceWithText ("one"));
+    const auto index = dir.getChildFile ("plugin-index.json");
+
+    juce::PluginDescription description;
+    description.name = "Y";
+    description.fileOrIdentifier = bundle.getFullPathName();
+    REQUIRE (nc::pluginindex::save (index, { description }));
+    REQUIRE (nc::pluginindex::loadValid (index).size() == 1);
+
+    // Edit the parsed tree rather than the text: the writer's spacing is its
+    // own business, and a text match would silently stop testing anything.
+    auto parsed = juce::JSON::parse (index.loadFileAsString());
+    auto* root = parsed.getDynamicObject();
+    REQUIRE (root != nullptr);
+    root->setProperty ("version", 0);
+    REQUIRE (index.replaceWithText (juce::JSON::toString (parsed, false)));
+
+    // Not "the valid subset": an unrecognised version means the cache is not
+    // trusted at all, so nothing is reused and a full scan follows.
+    CHECK (nc::pluginindex::loadValid (index).empty());
+
+    dir.deleteRecursively();
+}
+
+TEST_CASE ("a corrupt index is ignored, not half-read", "[index]")
+{
+    const auto dir = freshIndexDir();
+    const auto index = dir.getChildFile ("plugin-index.json");
+    REQUIRE (index.replaceWithText ("{ this is not json"));
+
+    CHECK (nc::pluginindex::loadValid (index).empty());
+    CHECK (nc::pluginindex::loadDescriptions (index).empty());
+    CHECK (nc::pluginindex::loadValid (dir.getChildFile ("absent.json")).empty());
+
+    dir.deleteRecursively();
+}
+
+TEST_CASE ("the index skips a description whose bundle is gone", "[index]")
+{
+    const auto dir = freshIndexDir();
+    const auto bundle = dir.getChildFile ("gone.vst3");
+    REQUIRE (bundle.replaceWithText ("one"));
+    const auto index = dir.getChildFile ("plugin-index.json");
+
+    juce::PluginDescription description;
+    description.name = "Gone";
+    description.fileOrIdentifier = bundle.getFullPathName();
+    REQUIRE (nc::pluginindex::save (index, { description }));
+
+    bundle.deleteFile();
+    CHECK (nc::pluginindex::loadValid (index).empty());
+
+    dir.deleteRecursively();
 }
