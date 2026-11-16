@@ -16,7 +16,7 @@ void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
     captureAvailable.store (device != nullptr
                             && device->getActiveInputChannels().countNumberOfSetBits() > 0);
     smoothingPrimed = false;
-    resetRequested.store (true);
+    clock.requestReset();
 
     mixBuffer.setSize (2, juce::jmax (bufferSize.load(), 4096), false, true, false);
     instrumentBlock.setSize (2, juce::jmax (bufferSize.load(), 4096), false, true, false);
@@ -53,7 +53,7 @@ void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
 void AudioEngine::audioDeviceStopped()
 {
     automationRetired.clear();
-    tempoRetired.clear();
+    clock.reclaimAll();
     midiRetired.clear();
     deviceOpen.store (false);
     bufferSize.store (0);
@@ -80,7 +80,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
 {
     // One tick per callback. Retired snapshots are stamped with this value at
     // the swap and freed only after a later callback has started.
-    audioBlockCount.fetch_add (1, std::memory_order_acq_rel);
+    clock.countBlock();
     // An offline mixdown owns the engine. Render silence rather than run a
     // second pass into the device, and touch no shared state while doing it.
     if (offlineRender.load (std::memory_order_acquire))

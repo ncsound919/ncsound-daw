@@ -5,6 +5,7 @@
 
 #include "AuxBus.h"
 #include "MixRack.h"
+#include "TransportClock.h"
 #include "MidiLearnManager.h"
 #include "MidiRecorder.h"
 #include "PluginCatalog.h"
@@ -68,13 +69,13 @@ public:
     ~AudioEngine() override;
 
     void setPlaying (bool shouldPlay);
-    bool isPlaying() const { return playing.load(); }
+    bool isPlaying() const { return clock.isPlaying(); }
 
     void setMetronome (bool on);
-    bool isMetronomeOn() const { return metronome.load(); }
+    bool isMetronomeOn() const { return clock.isMetronomeOn(); }
 
     void setBpm (double newBpm);
-    double getBpm() const { return bpm.load(); }
+    double getBpm() const { return clock.bpm(); }
 
     //==========================================================================
     // Tempo map + markers (Task 2) and MIDI clips (Task 4). Snapshots are
@@ -85,7 +86,7 @@ public:
     void setTempoMap (nc::engine::TempoMap map);
     nc::engine::TempoMap tempoMap() const;
     void setMarkers (std::vector<nc::engine::Marker> markers);
-    const std::vector<nc::engine::Marker>& markers() const { return markers_; }
+    const std::vector<nc::engine::Marker>& markers() const { return clock.markers(); }
 
     struct MidiTimelineClip
     {
@@ -263,7 +264,7 @@ public:
     /** Diagnostics and tests: how many replaced snapshots are still retained. */
     int retainedSnapshotCount() const noexcept
     {
-        return static_cast<int> (automationRetired.size() + tempoRetired.size()
+        return static_cast<int> (automationRetired.size() + clock.retainedTempoCount()
                                  + midiRetired.size());
     }
 
@@ -415,10 +416,10 @@ public:
     void serviceStreaming();
 
     void setLoopEnabled (bool on);
-    bool isLoopEnabled() const { return loopEnabled.load(); }
+    bool isLoopEnabled() const { return clock.isLoopEnabled(); }
     void setLoopBars (double startBar, double endBar);
-    double getLoopStartBar() const { return loopStartBar.load(); }
-    double getLoopEndBar() const { return loopEndBar.load(); }
+    double getLoopStartBar() const { return clock.loopStartBar(); }
+    double getLoopEndBar() const { return clock.loopEndBar(); }
 
     /** Last bar any timeline clip reaches, so an export can cover the session
         without guessing. Message thread. */
@@ -711,25 +712,6 @@ private:
         std::atomic<const AutomationLane*> live { nullptr };
     };
 
-    /** A replaced snapshot, stamped with the audio-block counter at the moment
-        it stopped being live. reclaimRetiredSnapshots() frees it once no
-        callback can still be reading it. */
-    template <typename T>
-    struct RetiredSnapshot
-    {
-        std::unique_ptr<T> owned;
-        uint64_t retiredAtBlock = 0;
-    };
-
-    template <typename T>
-    static void retireSnapshot (std::vector<RetiredSnapshot<T>>& list,
-                                std::unique_ptr<T>& owned,
-                                uint64_t blockNow)
-    {
-        if (owned != nullptr)
-            list.push_back ({ std::move (owned), blockNow });
-    }
-
     std::array<AutomationSlot, trackCount> volumeAutomation;
     std::array<AutomationSlot, trackCount> panAutomation;
     /** Defaults to true; the constructor fills it, since a value-initialised
@@ -738,19 +720,12 @@ private:
     std::array<std::atomic<bool>, trackCount> automationReadEnabled {};
     std::vector<RetiredSnapshot<AutomationLane>> automationRetired;
 
-    struct TempoSlot
-    {
-        std::unique_ptr<nc::engine::TempoMap> owned;
-        std::atomic<const nc::engine::TempoMap*> live { nullptr };
-    };
-
     struct MidiSlot
     {
         std::unique_ptr<std::vector<MidiTimelineClip>> owned;
         std::atomic<const std::vector<MidiTimelineClip>*> live { nullptr };
     };
 
-    TempoSlot tempoSlot;
     MidiSlot midiSlot;
     // Audio-thread scratch for MIDI scheduling: reserved once in
     // audioDeviceAboutToStart so renderBlock never allocates.
@@ -760,10 +735,7 @@ private:
     // Reset whenever the snapshot pointer changes (setMidiClips).
     std::vector<nc::engine::MidiCursor> midiCursors;
     const std::vector<MidiTimelineClip>* midiCursorsFor = nullptr;
-    std::vector<RetiredSnapshot<nc::engine::TempoMap>> tempoRetired;
     std::vector<RetiredSnapshot<std::vector<MidiTimelineClip>>> midiRetired;
-    nc::engine::TempoMap fallbackTempo = nc::engine::constantTempoMap (120.0);
-    std::vector<nc::engine::Marker> markers_;
 
     std::atomic<bool> captureAvailable { false };
     std::array<RecordBuffer, trackCount> recordBuffers;
@@ -793,7 +765,6 @@ private:
     int64_t recordFramesWritten = 0;
 
     std::array<Track, trackCount> tracks;
-    std::atomic<bool> playing { false };
 
     /** True while renderToWav() owns the engine: the device callback renders
         silence instead of a second, interleaved pass. */
@@ -802,12 +773,7 @@ private:
     // parked, so renderToFile() can wait for callbacks to stand down instead
     // of sleeping for a guessed number of block durations.
     juce::WaitableEvent offlineBlockDone { false };
-    std::atomic<bool> metronome { false };
-    std::atomic<bool> resetRequested { false };
-    std::atomic<bool> seekRequested { false };
-    std::atomic<double> bpm { 120.0 };
     std::atomic<double> sampleRate { 48000.0 };
-    std::atomic<int64_t> positionSamples { 0 };
     std::atomic<float> masterGainValue { 0.8f };
     std::atomic<int> globalTranspose { 0 };
     std::atomic<float> globalPitchCents { 0.0f };
@@ -820,7 +786,6 @@ private:
     std::atomic<int> activeTrackCount { nc::limits::defaultActiveTracks };
     std::atomic<int> bufferSize { 0 };
     std::atomic<bool> deviceOpen { false };
-    std::atomic<uint64_t> audioBlockCount { 0 };
     std::atomic<float> dspLoadValue { 0.0f };
     // Callbacks that ran longer than the device budget (elapsed > blockSize /
     // rate). Every one is a guaranteed audible dropout: the device had already
@@ -841,9 +806,6 @@ private:
     std::atomic<double> contentEnd { 1.0 };
     std::vector<TimelineClip> timelineMirror;
     nc::engine::export_::LoudnessResult lastLoudness;
-    std::atomic<bool> loopEnabled { true };
-    std::atomic<double> loopStartBar { 1.0 };
-    std::atomic<double> loopEndBar { 17.0 };
 
     juce::AudioDeviceManager deviceManager;
     juce::AudioFormatManager formats;
@@ -851,6 +813,7 @@ private:
     MidiLearnManager midiLearn;
 
     AssetLibrary assetLibrary;
+    TransportClock clock;
 
     // SPSC command rail: message thread writes, audio callback drains.
     // Shared nc::engine::SpscQueue (Task 1), not an ad-hoc array.

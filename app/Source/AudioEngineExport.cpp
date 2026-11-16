@@ -14,8 +14,7 @@ void AudioEngine::prepareForRender (double rate, int maxBlock)
 
     sampleRate.store (rate);
     smoothingPrimed = false;
-    resetRequested.store (false);
-    seekRequested.store (false);
+    clock.clearRequests();
 
     // Sized exactly as audioDeviceAboutToStart() does, so renderBlock() never
     // sees a block larger than the scratch it was promised.
@@ -119,10 +118,10 @@ bool AudioEngine::renderToFile (const juce::File& destination,
     offlineBlockDone.reset();
     offlineRender.store (true, std::memory_order_release);
 
-    const auto previousPosition = positionSamples.load();
-    const auto previousPlaying = playing.load();
-    const auto previousLoop = loopEnabled.load();
-    const auto previousMetronome = metronome.load();
+    const auto previousPosition = clock.positionSamples();
+    const auto previousPlaying = clock.isPlaying();
+    const auto previousLoop = clock.isLoopEnabled();
+    const auto previousMetronome = clock.isMetronomeOn();
     const auto previousRate = sampleRate.load();
     const auto previousBufferSize = juce::jmax (1, bufferSize.load());
 
@@ -140,16 +139,15 @@ bool AudioEngine::renderToFile (const juce::File& destination,
     restoreSession.restore = [this, previousPosition, previousPlaying, previousLoop,
                               previousMetronome, previousRate, previousBufferSize]
     {
-        playing.store (previousPlaying);
-        loopEnabled.store (previousLoop);
-        metronome.store (previousMetronome);
+        clock.setPlaying (previousPlaying);
+        clock.setLoopEnabled (previousLoop);
+        clock.setMetronome (previousMetronome);
 
         // prepareForRender() replaced the device rate with the export rate;
         // re-prepare the racks and scratch at the rate the device runs at.
         prepareForRender (previousRate > 0.0 ? previousRate : 48000.0, previousBufferSize);
-        resetRequested.store (false);
-        seekRequested.store (false);
-        positionSamples.store (previousPosition);
+        clock.clearRequests();
+        clock.storePosition (previousPosition);
         offlineRender.store (false, std::memory_order_release);
     };
 
@@ -173,10 +171,10 @@ bool AudioEngine::renderToFile (const juce::File& destination,
 
     const auto startFrame = static_cast<int64_t> (std::llround (startSeconds * rate));
 
-    positionSamples.store (startFrame - plan.prerollFrames);
-    playing.store (true);
-    loopEnabled.store (false);
-    metronome.store (false);
+    clock.storePosition (startFrame - plan.prerollFrames);
+    clock.setPlaying (true);
+    clock.setLoopEnabled (false);
+    clock.setMetronome (false);
 
     juce::AudioBuffer<float> block (2, blockSize);
     float* channels[2] { block.getWritePointer (0), block.getWritePointer (1) };

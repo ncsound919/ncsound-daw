@@ -170,7 +170,7 @@ bool AudioEngine::startMidiRecording (int track, juce::String& error)
 
     const auto map = tempoMap();
     const auto rate = juce::jmax (1.0, sampleRate.load());
-    const auto ppq = engine::ppqAtSamplesWithMap (map, positionSamples.load(), rate);
+    const auto ppq = engine::ppqAtSamplesWithMap (map, clock.positionSamples(), rate);
     midiRecorder.startRecording (track, ppq, map);
     return true;
 }
@@ -258,7 +258,7 @@ bool AudioEngine::startRecording (juce::String& error)
     }
 
     recordFramesWritten = 0;
-    recordStartFrame.store (positionSamples.load(), std::memory_order_release);
+    recordStartFrame.store (clock.positionSamples(), std::memory_order_release);
     recording.store (true, std::memory_order_release);
     error.clear();
     return true;
@@ -346,10 +346,10 @@ std::vector<AudioEngine::RecordedTake> AudioEngine::stopRecording (const juce::F
     // sweeps apply. Without this, stop could free a writer mid-write.
     if (deviceOpen.load (std::memory_order_acquire))
     {
-        const auto started = audioBlockCount.load (std::memory_order_acquire);
+        const auto started = clock.blockCount();
         const auto deadline = juce::Time::getMillisecondCounterHiRes() + 500.0;
 
-        while (audioBlockCount.load (std::memory_order_acquire) < started + 2)
+        while (clock.blockCount() < started + 2)
         {
             if (juce::Time::getMillisecondCounterHiRes() > deadline)
                 break; // a wedged driver must not hang the UI

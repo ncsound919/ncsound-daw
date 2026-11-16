@@ -9,44 +9,28 @@
 
 namespace nc
 {
-void AudioEngine::setPlaying (bool shouldPlay)    { playing.store (shouldPlay); }
+void AudioEngine::setPlaying (bool shouldPlay)    { clock.setPlaying (shouldPlay); }
 
-void AudioEngine::setMetronome (bool on)          { metronome.store (on); }
+void AudioEngine::setMetronome (bool on)          { clock.setMetronome (on); }
 
 void AudioEngine::setBpm (double newBpm)
 {
-    const auto clamped = nc::limits::clampBpm (newBpm);
-    bpm.store (clamped);
-    setTempoMap (nc::engine::constantTempoMap (clamped));
+    clock.setBpm (newBpm);
 }
 
 void AudioEngine::setTempoMap (nc::engine::TempoMap map)
 {
-    nc::engine::sanitizeTempoMap (map);
-    auto fresh = std::make_unique<nc::engine::TempoMap> (std::move (map));
-
-    retireSnapshot (tempoRetired, tempoSlot.owned,
-                    audioBlockCount.load (std::memory_order_acquire));
-
-    tempoSlot.owned = std::move (fresh);
-    tempoSlot.live.store (tempoSlot.owned.get(), std::memory_order_release);
-    bpm.store (tempoSlot.owned->points.front().bpm);
+    clock.setTempoMap (std::move (map));
 }
 
 nc::engine::TempoMap AudioEngine::tempoMap() const
 {
-    if (const auto* live = tempoSlot.live.load (std::memory_order_acquire))
-        return *live;
-
-    return fallbackTempo;
+    return clock.tempoMap();
 }
 
 void AudioEngine::setMarkers (std::vector<nc::engine::Marker> markers)
 {
-    // Project files can contain any JSON; the engine is the last boundary that
-    // can reject non-finite PPQ, oversized names and absurd counts.
-    nc::engine::sanitizeMarkers (markers);
-    markers_ = std::move (markers);
+    clock.setMarkers (std::move (markers));
 }
 
 void AudioEngine::setMidiClips (std::vector<MidiTimelineClip> clips)
@@ -71,7 +55,7 @@ void AudioEngine::setMidiClips (std::vector<MidiTimelineClip> clips)
     auto fresh = std::make_unique<std::vector<MidiTimelineClip>> (std::move (clips));
 
     retireSnapshot (midiRetired, midiSlot.owned,
-                    audioBlockCount.load (std::memory_order_acquire));
+                    clock.blockCount());
 
     midiSlot.owned = std::move (fresh);
     midiSlot.live.store (midiSlot.owned.get(), std::memory_order_release);
@@ -204,7 +188,7 @@ bool AudioEngine::exportMidiFile (const juce::File& file, int track) const
 
     sequence.addEvent (juce::MidiMessage::timeSignatureMetaEvent (4, 4), 0.0);
 
-    for (const auto& marker : markers_)
+    for (const auto& marker : clock.markers())
     {
         if (! marker.name.empty())
             sequence.addEvent (juce::MidiMessage::textMetaEvent (6, juce::String (marker.name)),
@@ -254,48 +238,32 @@ bool AudioEngine::exportMidiFile (const juce::File& file, int track) const
 
 nc::engine::TransportBlock AudioEngine::transportBlock (int blockSize) const
 {
-    const auto rate = juce::jmax (1.0, sampleRate.load());
-    const auto map = tempoMap();
-    const auto ppq = engine::ppqAtSamplesWithMap (map, positionSamples.load(), rate);
-    const auto tempo = juce::jmax (1.0, engine::bpmAt (map, ppq));
-    const auto loopStart = static_cast<int64_t> (std::llround (engine::ppqToSeconds (map, engine::clipStartBeat (loopStartBar.load())) * rate));
-    const auto loopEnd = static_cast<int64_t> (std::llround (engine::ppqToSeconds (map, engine::clipStartBeat (loopEndBar.load())) * rate));
-
-    return engine::blockContext (positionSamples.load(), blockSize, tempo, rate,
-                                 playing.load(), loopEnabled.load(), loopStart, loopEnd);
+    return clock.block (sampleRate.load(), blockSize);
 }
 
 double AudioEngine::positionSeconds() const
 {
-    const auto rate = sampleRate.load();
-    return rate > 0.0 ? static_cast<double> (positionSamples.load()) / rate : 0.0;
+    return clock.positionSeconds (sampleRate.load());
 }
 
 void AudioEngine::resetPosition()
 {
-    // The callback owns the click state; never write it from the message thread.
-    resetRequested.store (true);
+    clock.resetPosition();
 }
 
 void AudioEngine::setPositionSeconds (double seconds)
 {
-    const auto rate = juce::jmax (1.0, sampleRate.load());
-    const auto samples = static_cast<int64_t> (juce::jmax (0.0, seconds) * rate);
-    positionSamples.store (samples);
-    seekRequested.store (true);
+    clock.setPositionSeconds (seconds, sampleRate.load());
 }
 
 void AudioEngine::setLoopEnabled (bool on)
 {
-    loopEnabled.store (on);
+    clock.setLoopEnabled (on);
 }
 
 void AudioEngine::setLoopBars (double startBar, double endBar)
 {
-    const auto start = juce::jlimit (1.0, static_cast<double> (nc::limits::maxBars), startBar);
-    const auto end = juce::jlimit (start + 1.0, static_cast<double> (nc::limits::maxBars + 1), endBar);
-    loopStartBar.store (start);
-    loopEndBar.store (end);
+    clock.setLoopBars (startBar, endBar);
 }
 
 int AudioEngine::setTimelineClips (std::vector<TimelineClip> newClips)
@@ -395,7 +363,7 @@ void AudioEngine::reclaimRetiredSnapshots()
     // one returned, so once a later block has started, any block that loaded an
     // old pointer before the swap has finished with it.
     const bool callbackRunning = deviceOpen.load (std::memory_order_acquire);
-    const auto now = audioBlockCount.load (std::memory_order_acquire);
+    const auto now = clock.blockCount();
 
     auto sweep = [callbackRunning, now] (auto& list)
     {
@@ -409,8 +377,8 @@ void AudioEngine::reclaimRetiredSnapshots()
     };
 
     sweep (automationRetired);
-    sweep (tempoRetired);
     sweep (midiRetired);
+    clock.reclaimTempo (now, callbackRunning);
 }
 
 void AudioEngine::setTrackAutomation (int track, AutomationParam param, const AutomationLane& lane)
@@ -427,7 +395,7 @@ void AudioEngine::setTrackAutomation (int track, AutomationParam param, const Au
     // reclaimRetiredSnapshots() frees them once the callback that could have
     // loaded the old pointer has finished, or when the device closes.
     retireSnapshot (automationRetired, slot.owned,
-                    audioBlockCount.load (std::memory_order_acquire));
+                    clock.blockCount());
 
     slot.owned = std::move (next);
     slot.live.store (slot.owned.get(), std::memory_order_release);

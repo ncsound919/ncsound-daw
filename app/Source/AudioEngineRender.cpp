@@ -33,16 +33,16 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
 
     // A device starting up asks for a transport reset. An export in progress is
     // not the place for that: it keeps the request pending for the next live block.
-    if (! offlineRender.load (std::memory_order_acquire) && resetRequested.exchange (false))
+    if (! offlineRender.load (std::memory_order_acquire) && clock.takeResetRequest())
     {
         clickPhase = 0.0;
         clickEnvelope = 0.0;
         clickOscillator = 0.0;
         clickBeat = 0;
-        positionSamples.store (0);
+        clock.storePosition (0);
     }
 
-    if (seekRequested.exchange (false))
+    if (clock.takeSeekRequest())
     {
         clickPhase = 0.0;
         clickEnvelope = 0.0;
@@ -66,7 +66,7 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
     }
 
     const auto rate = sampleRate.load();
-    const auto isPlaying = playing.load();
+    const auto isPlaying = clock.isPlaying();
 
     // Faders set while stopped are never smoothed (the per-sample loop below
     // only runs during playback), so the first block after Play would ramp from
@@ -90,7 +90,7 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
     }
 
     transportWasPlaying = isPlaying;
-    const auto clickOn = metronome.load();
+    const auto clickOn = clock.isMetronomeOn();
 
     if (rate <= 0.0)
         return;
@@ -114,7 +114,7 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
     // Pass 4: aux returns, master rack, monitor, soft limit and metering.
     renderMasterPass (ctx);
 
-    positionSamples.store (ctx.position);
+    clock.storePosition (ctx.position);
 
     for (int trackIndex = 0; trackIndex < trackCount; ++trackIndex)
         tracks[static_cast<size_t> (trackIndex)].peak.store (ctx.blockPeaks[trackIndex]);
@@ -137,9 +137,9 @@ void AudioEngine::renderClipsPass (RenderContext& ctx)
     // Tempo map (Task 2): the live snapshot drives clip placement, loop
     // points, automation PPQ and MIDI scheduling. `tempo` is the BPM in
     // force at the block start, for the click and transport block.
-    const auto* tempoMapPtr = tempoSlot.live.load (std::memory_order_acquire);
-    const auto& tempoMap = tempoMapPtr != nullptr ? *tempoMapPtr : fallbackTempo;
-    const auto blockStartPpq = engine::ppqAtSamplesWithMap (tempoMap, positionSamples.load(), rate);
+    const auto* tempoMapPtr = clock.liveTempoMap();
+    const auto& tempoMap = tempoMapPtr != nullptr ? *tempoMapPtr : clock.fallbackTempo();
+    const auto blockStartPpq = engine::ppqAtSamplesWithMap (tempoMap, clock.positionSamples(), rate);
     const auto tempo = engine::bpmAt (tempoMap, blockStartPpq);
     const auto secondsPerBar = engine::secondsPerBar (tempo);
     const auto beatSamples = rate * 60.0 / juce::jmax (1.0, tempo);
@@ -182,14 +182,13 @@ void AudioEngine::renderClipsPass (RenderContext& ctx)
         render.gain = juce::Decibels::decibelsToGain (clip.gainDb);
     }
 
-    const auto loopStart = static_cast<int64_t> (std::llround (
-        engine::ppqToSeconds (tempoMap, engine::clipStartBeat (loopStartBar.load())) * rate));
-    const auto loopEnd = static_cast<int64_t> (std::llround (
-        engine::ppqToSeconds (tempoMap, engine::clipStartBeat (loopEndBar.load())) * rate));
-    const auto loop = loopEnabled.load() && loopEnd > loopStart;
+    int64_t loopStart = 0;
+    int64_t loopEnd = 0;
+    clock.loopPoints (tempoMap, rate, loopStart, loopEnd);
+    const auto loop = clock.isLoopEnabled() && loopEnd > loopStart;
 
     auto& position = ctx.position;
-    position = positionSamples.load();
+    position = clock.positionSamples();
 
     if (isPlaying && loop && position >= loopEnd)
     {
@@ -334,7 +333,7 @@ void AudioEngine::renderInstrumentInsertPass (RenderContext& ctx)
     const auto blockStartPpq = ctx.blockStartPpq;
     const auto trackBufferReady = ctx.trackBufferReady;
     const auto tempo = ctx.tempo;
-    const auto& tempoMap = ctx.tempoMap != nullptr ? *ctx.tempoMap : fallbackTempo;
+    const auto& tempoMap = ctx.tempoMap != nullptr ? *ctx.tempoMap : clock.fallbackTempo();
     const auto* const* inputChannelData = ctx.inputChannelData;
     const auto numInputChannels = ctx.numInputChannels;
     auto& automatedGain = ctx.automatedGain;

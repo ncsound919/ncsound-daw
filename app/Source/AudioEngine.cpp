@@ -45,8 +45,6 @@ AudioEngine::AudioEngine()
         }
     }
 
-    tempoSlot.owned = std::make_unique<nc::engine::TempoMap> (nc::engine::constantTempoMap (120.0));
-    tempoSlot.live.store (tempoSlot.owned.get(), std::memory_order_release);
     midiSlot.owned = std::make_unique<std::vector<MidiTimelineClip>> ();
     midiSlot.live.store (midiSlot.owned.get(), std::memory_order_release);
 
