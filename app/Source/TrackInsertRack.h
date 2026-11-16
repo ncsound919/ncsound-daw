@@ -93,6 +93,9 @@ public:
     void setBypassed (int track, int slot, bool);
     void setMasterBypassed (bool);
 
+    /** True when the slot's audio path is bypassed. Message thread. */
+    bool isBypassed (int track, int slot) const;
+
     int chainLatency (int track) const;
     int masterLatency() const;
     int worstTrackLatency() const { return worstLatency.load (std::memory_order_acquire); }

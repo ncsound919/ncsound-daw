@@ -184,6 +184,11 @@ export const backend = {
     return call<AppState>("loadMasterPlugin", id);
   },
 
+  /** Bypasses one insert slot without unloading it. */
+  setInsertBypassed(track: number, slot: number, bypassed: boolean): Promise<AppState> {
+    return call<AppState>("setInsertBypassed", track, slot, bypassed);
+  },
+
   /** Writes one baked MixRack parameter by its Overlay id (e.g. `lowGain`). */
   setChannelParam(track: number, param: string, value: number): Promise<AppState> {
     return call<AppState>("setChannelParam", track, param, value);

@@ -225,6 +225,14 @@ export default function App() {
     runWrite(() => backend.loadPlugin(track, slot, plugin.id));
   }, []);
 
+  const handleInsertBypassed = useCallback(
+    (track: number, slot: number, bypassed: boolean) => {
+      if (!backend.embedded) return;
+      runWrite(() => backend.setInsertBypassed(track, slot, bypassed));
+    },
+    [runWrite],
+  );
+
   const handleMasterPluginLoad = useCallback((plugin: PluginInfo) => {
     if (!backend.embedded) return;
     runWrite(() => backend.loadMasterPlugin(plugin.id));
@@ -517,6 +525,7 @@ export default function App() {
           onChannelChange={handleChannel}
           onMidiLearn={(target) => runWrite(() => backend.midiLearn(target))}
           onPluginLoad={handlePluginLoad}
+          onInsertBypassed={handleInsertBypassed}
           onMasterPluginLoad={handleMasterPluginLoad}
           onScan={handleScan}
           mixologyPresets={mixologyPresets}

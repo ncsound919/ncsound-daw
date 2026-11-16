@@ -1033,3 +1033,39 @@ compile error, check for `NCMixRackTests.exe` processes not started by ctest bef
 toolchain.
 
 
+
+---
+
+## Readiness to 95 — plan 04 (mixer density) and plan 01 task 1 (insert bypass)
+
+### Plan 04 — mixer density (3/3 tasks, committed `016c75a`, `b7761fb`, `1841a33`)
+
+- `ui/src/workspace/mixerLayout.ts` is the single strip-width decision: `densityFor(trackCount, viewportWidth)`
+  returns `"normal"` or `"compact"`, `stripMinWidthPx` maps a density to 112/72 px, `MASTER_STRIP_PX` is 96.
+- `Mixer` exposes `data-density` on its `role="group"` container and sets `--strip-min` from the same decision,
+  so the grid and the attribute can never disagree.
+- A "Fit strips" button (`.ws-mixer-tools`) is a manual override: it holds the chosen density until
+  `viewportWidth` changes, at which point the automatic decision takes over again.
+
+Verified: `mixerLayout.test.ts` 5/5, `mixer.test.tsx` density + fit tests, `tsc -b --noEmit` exit 0,
+full UI suite 99/99 green at that commit.
+
+### Plan 01 task 1 — insert bypass
+
+New end-to-end route, because the engine could already do it but nothing could reach it:
+
+- `TrackInsertRack::isBypassed(track, slot)` (const getter over the slot's atomic) and
+  `AudioEngine::trackInsertIsBypassed(track, slot)`. Adding the getter is the only engine API change.
+- `WebViewBridge` now serialises `bypassed` on every insert slot and adds the `setInsertBypassed` route
+  (track, slot, bypassed) which re-publishes state.
+- `InsertSlot.bypassed?: boolean` in `ui/src/types.ts`; `bridge.setInsertBypassed(track, slot, bypassed)`.
+- Alt-clicking a loaded slot bypasses or un-bypasses it (`Mixer.tsx` `SlotRow`, `is-bypassed` class);
+  a plain click still opens the plug-in browser. `Workspace` forwards `onInsertBypassed`, `App` wires it
+  through `runWrite`.
+- `nativeRoutes.generated.ts` regenerated from the C++ table: 53 routes.
+
+Verified: mixrack build `EXIT=0`, app build `EXIT=0`, `ctest --test-dir build -C Release` 195/195
+`CTEST_EXIT=0` (includes the render-digest assertion, unchanged), `tsc -b` exit 0, UI suite 101/101.
+
+Not verified: no interactive check in the running app — the alt-click path is covered by unit tests and
+compiles against the real route table, but I did not click a live slot.

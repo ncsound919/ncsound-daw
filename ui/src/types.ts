@@ -8,6 +8,8 @@ export interface InsertSlot {
   name: string;
   /** The saved plug-in is no longer installed. */
   missing: boolean;
+  /** Audio passes through untouched; the plug-in stays loaded. */
+  bypassed?: boolean;
 }
 
 export interface TrackInfo {

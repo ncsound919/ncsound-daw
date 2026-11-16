@@ -50,6 +50,7 @@ export const NATIVE_ROUTES = [
   "collectMedia",
   "removeMasterPlugin",
   "setChannelParam",
+  "setInsertBypassed",
   "scanPlugins",
   "getAudioState",
   "applyAudioSettings",

@@ -76,6 +76,8 @@ export interface WorkspaceProps {
   /** Arms MIDI learn on a host parameter id ("track.N.param"). */
   onMidiLearn?: (target: string) => void;
   onPluginLoad?: (plugin: PluginInfo, track: number, slot: number) => void;
+  /** Alt-click on an insert slot bypasses it without unloading the plug-in. */
+  onInsertBypassed?: (track: number, slot: number, bypassed: boolean) => void;
   onMasterPluginLoad?: (plugin: PluginInfo) => void;
   onScan?: () => void;
   /** Mixology preset names from the host; the entries hide without them. */
@@ -118,6 +120,7 @@ export function Workspace({
   onChannelChange,
   onMidiLearn,
   onPluginLoad,
+  onInsertBypassed,
   onMasterPluginLoad,
   onScan,
   mixologyPresets,
@@ -600,6 +603,7 @@ export function Workspace({
             onMasterMono={actions.masterMono}
             onRack={() => setView("inspector")}
             onInsert={openBrowser}
+            onBypass={onInsertBypassed}
             onMasterRack={() => setView("inspector")}
             onMasterInsert={openMasterBrowser}
             mixologyPresets={mixologyPresets}

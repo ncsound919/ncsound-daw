@@ -239,6 +239,7 @@ public:
         state. Returns false for an out-of-range slot or a no-op move. */
     bool moveTrackInsert (int track, int from, int to);
     void setTrackInsertBypassed (int track, int slot, bool);
+    bool trackInsertIsBypassed (int track, int slot) const;
     juce::String trackInsertName (int track, int slot) const;
     bool trackInsertIsMissing (int track, int slot) const;
     nc::engine::PluginSlotState trackInsertState (int track, int slot) const;

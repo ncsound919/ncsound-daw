@@ -28,6 +28,8 @@ export interface MixerProps {
   onMasterMono: (on: boolean) => void;
   onRack: (track: number) => void;
   onInsert?: (track: number, slot: number) => void;
+  /** Alt-click a slot to bypass it without unloading the plug-in. */
+  onBypass?: (track: number, slot: number, bypassed: boolean) => void;
   onMasterRack?: () => void;
   onMasterInsert?: () => void;
   /** Mixology technique presets; the section hides when the host has no route. */
@@ -237,14 +239,22 @@ function SlotRow({
   slot,
   track,
   onInsert,
+  onBypass,
 }: {
   insert?: InsertSlot;
   slot: number;
   track: number;
   onInsert?: (track: number, slot: number) => void;
+  /** Alt-click a slot to bypass it without unloading the plug-in. */
+  onBypass?: (track: number, slot: number, bypassed: boolean) => void;
 }) {
   const filled = Boolean(insert?.name);
-  const className = ["ws-slot", filled ? "is-filled" : "", insert?.missing ? "is-missing" : ""]
+  const className = [
+    "ws-slot",
+    filled ? "is-filled" : "",
+    insert?.missing ? "is-missing" : "",
+    insert?.bypassed ? "is-bypassed" : "",
+  ]
     .filter(Boolean)
     .join(" ");
   const label = insert?.name ? insert.name.replace(/^Overlay\s+/i, "") : "empty";
@@ -252,15 +262,24 @@ function SlotRow({
   const title = insert?.missing
     ? `${insert.name} is missing`
     : insert?.name || `Insert ${slot + 1} is empty`;
+  const hint = onBypass && filled ? " — alt-click to bypass" : "";
 
   return (
     <button
       className={className}
-      title={onInsert ? `${title} — click to load` : title}
+      title={onInsert ? `${title} — click to load${hint}` : title}
       aria-label={`Insert ${slot + 1} ${title}`}
-      disabled={!onInsert}
+      aria-pressed={insert?.bypassed ? false : undefined}
+      disabled={!onInsert && !onBypass}
       onClick={(event) => {
         event.stopPropagation();
+
+        if (event.altKey) {
+          event.preventDefault();
+          onBypass?.(track, slot, !insert?.bypassed);
+          return;
+        }
+
         onInsert?.(track, slot);
       }}
     >
@@ -555,6 +574,7 @@ function ChannelStrip({
   onArm,
   onRack,
   onInsert,
+  onBypass,
 }: {
   track: TrackInfo;
   selected: boolean;
@@ -569,6 +589,8 @@ function ChannelStrip({
   onArm: () => void;
   onRack: () => void;
   onInsert?: (track: number, slot: number) => void;
+  /** Alt-click a slot to bypass it without unloading the plug-in. */
+  onBypass?: (track: number, slot: number, bypassed: boolean) => void;
 }) {
   const tint = tintForTrack(track.index);
   const inserts = track.inserts ?? [];
@@ -618,6 +640,7 @@ function ChannelStrip({
               insert={inserts[slot]}
               track={track.index}
               onInsert={onInsert}
+              onBypass={onBypass}
             />
           ))}
         </div>
@@ -725,6 +748,7 @@ export function Mixer({
   onMasterMono,
   onRack,
   onInsert,
+  onBypass,
   onMasterRack,
   onMasterInsert,
   mixologyPresets,
@@ -783,6 +807,7 @@ export function Mixer({
               onArm={() => onArm(track.index, !track.armed)}
               onRack={() => onRack(track.index)}
               onInsert={onInsert}
+              onBypass={onBypass}
             />
           ))}
         </div>

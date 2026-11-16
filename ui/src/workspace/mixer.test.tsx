@@ -97,3 +97,36 @@ describe("Mixer fit control", () => {
     );
   });
 });
+
+function tracksWithInsert(track: number, slot: number, name = "Pro-Q"): TrackInfo[] {
+  const list = tracks(track + 1);
+  list[track] = {
+    ...list[track],
+    inserts: Array.from({ length: 8 }, (_, index) => ({
+      name: index === slot ? name : "",
+      missing: false,
+      bypassed: false,
+    })),
+  };
+  return list;
+}
+
+describe("Mixer insert bypass", () => {
+  it("alt-clicks a loaded slot to bypass it", () => {
+    const onBypass = vi.fn();
+    render(<Mixer {...props({ tracks: tracksWithInsert(0, 0), onBypass })} />);
+
+    fireEvent.click(screen.getByLabelText(/Insert 1/), { altKey: true });
+    expect(onBypass).toHaveBeenCalledWith(0, 0, true);
+  });
+
+  it("a plain click still opens the browser instead of bypassing", () => {
+    const onBypass = vi.fn();
+    const onInsert = vi.fn();
+    render(<Mixer {...props({ tracks: tracksWithInsert(0, 0), onBypass, onInsert })} />);
+
+    fireEvent.click(screen.getByLabelText(/Insert 1/));
+    expect(onInsert).toHaveBeenCalledWith(0, 0);
+    expect(onBypass).not.toHaveBeenCalled();
+  });
+});

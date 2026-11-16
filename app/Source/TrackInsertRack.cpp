@@ -468,6 +468,13 @@ void TrackInsertRack::setBypassed (int track, int slotIndex, bool shouldBeBypass
         processor->setBypassed (shouldBeBypassed);
 }
 
+bool TrackInsertRack::isBypassed (int track, int slotIndex) const
+{
+    return validTrack (track) && validSlot (slotIndex)
+               ? slotUnchecked (track, slotIndex).bypassed.load (std::memory_order_relaxed)
+               : false;
+}
+
 void TrackInsertRack::setMasterBypassed (bool shouldBeBypassed)
 {
     master.bypassed.store (shouldBeBypassed, std::memory_order_relaxed);

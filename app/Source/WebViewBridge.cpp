@@ -348,6 +348,7 @@ juce::var MainComponent::buildState() const
             auto* s = new juce::DynamicObject();
             s->setProperty ("name", engine.trackInsertName (i, slot));
             s->setProperty ("missing", engine.trackInsertIsMissing (i, slot));
+            s->setProperty ("bypassed", engine.trackInsertIsBypassed (i, slot));
             inserts.add (juce::var (s));
         }
         t->setProperty ("inserts", inserts);
@@ -924,6 +925,20 @@ juce::WebBrowserComponent::Options MainComponent::buildWebOptions()
                       engine.mixChannel (track).setParam (id, (float) value);
               }
               pushState();
+              done (buildState());
+          } },
+        { "setInsertBypassed", [this] (const Args& a, Completion done)
+          {
+              const auto track = a.size() > 0 ? (int) a[0] : -1;
+              const auto slot  = a.size() > 1 ? (int) a[1] : -1;
+              const auto off   = a.size() > 2 ? (bool) a[2] : false;
+
+              if (track >= 0 && track < engine.getActiveTrackCount() && slot >= 0 && slot < 8)
+              {
+                  engine.setTrackInsertBypassed (track, slot, off);
+                  setStatus (off ? "INSERT / bypassed" : "INSERT / active");
+              }
+
               done (buildState());
           } },
         { "scanPlugins", [this] (const Args&, Completion done)

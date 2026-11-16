@@ -783,6 +783,11 @@ void AudioEngine::setTrackInsertBypassed (int track, int slot, bool bypassed)
     inserts.setBypassed (track, slot, bypassed);
 }
 
+bool AudioEngine::trackInsertIsBypassed (int track, int slot) const
+{
+    return inserts.isBypassed (track, slot);
+}
+
 juce::String AudioEngine::trackInsertName (int track, int slot) const
 {
     return inserts.slotName (track, slot);
