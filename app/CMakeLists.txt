@@ -67,6 +67,8 @@ target_sources(NCMixRackTests PRIVATE
     Source/AudioEnginePlugins.cpp
     Source/AudioEngineRecording.cpp
     Source/AudioEngineRender.cpp
+    Source/AudioEngineDevices.cpp
+    Source/AudioEngineMix.cpp
     Source/PluginHost.cpp
     Source/ExportTests.cpp
     Source/PlaybackResampleTests.cpp
@@ -197,6 +199,8 @@ target_sources(NCSoundHub PRIVATE
     Source/AudioEnginePlugins.cpp
     Source/AudioEngineRecording.cpp
     Source/AudioEngineRender.cpp
+    Source/AudioEngineDevices.cpp
+    Source/AudioEngineMix.cpp
     Source/AudioEngine.h
     Source/ArrangeView.cpp
     Source/ArrangeView.h
