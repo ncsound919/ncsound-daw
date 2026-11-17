@@ -102,7 +102,8 @@ target_sources(NCMixRackTests PRIVATE
     Source/ProjectFile.cpp
     Source/ProjectRoundTripTests.cpp
     Source/ExportFileTests.cpp
-    Source/SoakTests.cpp)
+    Source/SoakTests.cpp
+    Source/MockAudioInterfaceTests.cpp)
 
 target_link_libraries(NCMixRackTests PRIVATE
     nc_mixrack
