@@ -8,8 +8,8 @@ TEST_CASE ("soak renders hosted inserts for the requested duration", "[.][soak]"
 {
     nc::AudioEngine engine;
     engine.setActiveTrackCount (8);
-    engine.createDemoAssets();
-    engine.prepareForRender (48000.0, 512);
+    engine.suspendAudioCallbackForTesting();
+    engine.setPlaying (true);
 
     const auto minutes = juce::SystemStats::getEnvironmentVariable ("NC_SOAK_MINUTES", "1").getDoubleValue();
     const auto blocks = static_cast<int> (minutes * 60.0 * 48000.0 / 512.0);

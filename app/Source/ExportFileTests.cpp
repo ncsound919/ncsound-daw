@@ -7,8 +7,6 @@ TEST_CASE ("a mixdown writes a readable stereo WAV", "[export]")
 {
     nc::AudioEngine engine;
     engine.setActiveTrackCount (2);
-    engine.createDemoAssets();
-    engine.prepareForRender (48000.0, 512);
 
     const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
                          .getChildFile ("nc-export-test");
@@ -33,8 +31,6 @@ TEST_CASE ("stem export writes one file per active track", "[export]")
 {
     nc::AudioEngine engine;
     engine.setActiveTrackCount (3);
-    engine.createDemoAssets();
-    engine.prepareForRender (48000.0, 512);
 
     const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
                          .getChildFile ("nc-stems-test");
