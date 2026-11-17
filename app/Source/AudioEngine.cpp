@@ -19,13 +19,13 @@ AudioEngine::AudioEngine()
 
     // Pan cache: element 0's brace initializer only seeds lane 0; every other
     // lane would start at 0 and skip the first trig, leaving its gains at zero.
-    std::fill_n (cachedPanValue, trackCount, -2.0f);
-    std::fill_n (cachedPanLeft, trackCount, 0.7071f);
-    std::fill_n (cachedPanRight, trackCount, 0.7071f);
+    std::fill_n (scratch.cachedPanValue, trackCount, -2.0f);
+    std::fill_n (scratch.cachedPanLeft, trackCount, 0.7071f);
+    std::fill_n (scratch.cachedPanRight, trackCount, 0.7071f);
 
     // Automation reads by default. The AUTO switch is an opt-out, so a fresh
     // engine must not start with every lane disconnected.
-    for (auto& flag : automationReadEnabled)
+    for (auto& flag : state.automationReadEnabled)
         flag.store (true, std::memory_order_relaxed);
 
     // Input monitoring is off until a track is armed for recording. A monitored

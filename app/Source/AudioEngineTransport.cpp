@@ -345,14 +345,26 @@ void AudioEngine::processCommands()
     {
         if (command.type == CommandType::clear)
         {
-            playbackClipCount = 0;
+            scratch.playbackClipCount = 0;
         }
-        else if (playbackClipCount < maxClips)
+        else if (scratch.playbackClipCount < maxClips)
         {
-            playbackClips[static_cast<size_t> (playbackClipCount)] = command.clip;
-            ++playbackClipCount;
+            scratch.playbackClips[static_cast<size_t> (scratch.playbackClipCount)] = command.clip;
+            ++scratch.playbackClipCount;
         }
     }
+}
+
+void AudioEngine::pollRetiredInserts()
+{
+    inserts.collectGarbage();
+    reclaimRetiredSnapshots();
+}
+
+int AudioEngine::retainedSnapshotCount() const noexcept
+{
+    return static_cast<int> (state.automationRetired.size() + clock.retainedTempoCount()
+                             + midiRetired.size());
 }
 
 void AudioEngine::reclaimRetiredSnapshots()
@@ -376,7 +388,7 @@ void AudioEngine::reclaimRetiredSnapshots()
                     list.end());
     };
 
-    sweep (automationRetired);
+    sweep (state.automationRetired);
     sweep (midiRetired);
     clock.reclaimTempo (now, callbackRunning);
 }
@@ -386,7 +398,7 @@ void AudioEngine::setTrackAutomation (int track, AutomationParam param, const Au
     if (track < 0 || track >= trackCount)
         return;
 
-    auto& slot = (param == AutomationParam::Pan ? panAutomation : volumeAutomation)
+    auto& slot = (param == AutomationParam::Pan ? state.panAutomation : state.volumeAutomation)
                      [static_cast<size_t> (track)];
 
     auto next = std::make_unique<AutomationLane> (lane);
@@ -394,7 +406,7 @@ void AudioEngine::setTrackAutomation (int track, AutomationParam param, const Au
     // Retired lanes are never freed while a block may still hold the pointer;
     // reclaimRetiredSnapshots() frees them once the callback that could have
     // loaded the old pointer has finished, or when the device closes.
-    retireSnapshot (automationRetired, slot.owned,
+    retireSnapshot (state.automationRetired, slot.owned,
                     clock.blockCount());
 
     slot.owned = std::move (next);
@@ -411,7 +423,7 @@ AutomationLane AudioEngine::trackAutomation (int track, AutomationParam param) c
     if (track < 0 || track >= trackCount)
         return {};
 
-    const auto& slot = (param == AutomationParam::Pan ? panAutomation : volumeAutomation)
+    const auto& slot = (param == AutomationParam::Pan ? state.panAutomation : state.volumeAutomation)
                            [static_cast<size_t> (track)];
     const auto* lane = slot.live.load (std::memory_order_acquire);
     return lane != nullptr ? *lane : AutomationLane {};
@@ -425,7 +437,7 @@ float AudioEngine::automationValue (int track, AutomationParam param, double bea
     if (! automationRead (track))
         return 0.0f;
 
-    const auto& slot = (param == AutomationParam::Pan ? panAutomation : volumeAutomation)
+    const auto& slot = (param == AutomationParam::Pan ? state.panAutomation : state.volumeAutomation)
                            [static_cast<size_t> (track)];
 
     const auto* lane = slot.live.load (std::memory_order_acquire);
@@ -437,13 +449,13 @@ void AudioEngine::setAutomationRead (int track, bool enabled)
     if (track < 0 || track >= trackCount)
         return;
 
-    automationReadEnabled[static_cast<size_t> (track)].store (enabled, std::memory_order_release);
+    state.automationReadEnabled[static_cast<size_t> (track)].store (enabled, std::memory_order_release);
 }
 
 bool AudioEngine::automationRead (int track) const
 {
     return track >= 0 && track < trackCount
-               ? automationReadEnabled[static_cast<size_t> (track)].load (std::memory_order_acquire)
+               ? state.automationReadEnabled[static_cast<size_t> (track)].load (std::memory_order_acquire)
                : true;
 }
 

@@ -13,9 +13,9 @@ void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
     bufferSize.store (device != nullptr ? device->getCurrentBufferSizeSamples() : 0);
     deviceOpen.store (device != nullptr);
     deviceInfo = device != nullptr ? device->getName() : "no audio device";
-    captureAvailable.store (device != nullptr
+    capture.captureAvailable.store (device != nullptr
                             && device->getActiveInputChannels().countNumberOfSetBits() > 0);
-    smoothingPrimed = false;
+    scratch.smoothingPrimed = false;
     clock.requestReset();
 
     mixBuffer.setSize (2, juce::jmax (bufferSize.load(), 4096), false, true, false);
@@ -47,12 +47,12 @@ void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
                               + "\nsampleRate=" + juce::String (sampleRate.load())
                               + "\nbufferSize=" + juce::String (bufferSize.load())
                               + "\nactiveTracks=" + juce::String (activeTrackCount.load())
-                              + "\ninputsAvailable=" + juce::String (captureAvailable.load() ? 1 : 0));
+                              + "\ninputsAvailable=" + juce::String (capture.captureAvailable.load() ? 1 : 0));
 }
 
 void AudioEngine::audioDeviceStopped()
 {
-    automationRetired.clear();
+    state.automationRetired.clear();
     clock.reclaimAll();
     midiRetired.clear();
     deviceOpen.store (false);

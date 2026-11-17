@@ -7,7 +7,7 @@
 namespace nc
 {
 //==============================================================================
-void AudioEngine::RecordBuffer::prepare (int64_t capacityFrames)
+void RecordBuffer::prepare (int64_t capacityFrames)
 {
     storage.setSize (2, static_cast<int> (juce::jmax<int64_t> (1, capacityFrames)), false, true, false);
     storage.clear();
@@ -15,13 +15,13 @@ void AudioEngine::RecordBuffer::prepare (int64_t capacityFrames)
     overflowed = false;
 }
 
-void AudioEngine::RecordBuffer::reset() noexcept
+void RecordBuffer::reset() noexcept
 {
     written = 0;
     overflowed = false;
 }
 
-void AudioEngine::RecordBuffer::push (const float* left, const float* right, int numSamples) noexcept
+void RecordBuffer::push (const float* left, const float* right, int numSamples) noexcept
 {
     const auto capacity = static_cast<int64_t> (storage.getNumSamples());
 
@@ -67,14 +67,14 @@ void AudioEngine::captureInputBlock (const float* const* inputChannelData,
     if (numInputChannels <= 0 || inputChannelData == nullptr || inputChannelData[0] == nullptr)
         numInputChannels = 0;
 
-    if (recordFramesWritten == 0)
-        recordStartFrame.store (position, std::memory_order_release);
+    if (capture.recordFramesWritten == 0)
+        capture.recordStartFrame.store (position, std::memory_order_release);
 
     int inputIndex = 0;
 
     for (int track = 0; track < trackCount; ++track)
     {
-        if (! recordArmed[static_cast<size_t> (track)].load (std::memory_order_relaxed))
+        if (! capture.recordArmed[static_cast<size_t> (track)].load (std::memory_order_relaxed))
             continue;
 
         const auto* left = numInputChannels > 0
@@ -86,26 +86,26 @@ void AudioEngine::captureInputBlock (const float* const* inputChannelData,
         // the writer thread owns the disk). RAM path: preallocated buffer.
         bool pushedThreaded = false;
 
-        for (auto& take : threadedTakes)
+        for (auto& take : capture.threadedTakes)
         {
             if (take.track != track || take.writer == nullptr)
                 continue;
 
-            const auto silence = recordSilence.data();
+            const auto silence = capture.recordSilence.data();
             const float* channels[2] { left != nullptr ? left : silence,
                                         right != nullptr ? right : silence };
             if (! take.writer->write (channels, numSamples))
-                overflowCount.fetch_add (1, std::memory_order_relaxed);
+                capture.overflowCount.fetch_add (1, std::memory_order_relaxed);
             pushedThreaded = true;
         }
 
         if (! pushedThreaded)
-            recordBuffers[static_cast<size_t> (track)].push (left, right, numSamples);
+            capture.recordBuffers[static_cast<size_t> (track)].push (left, right, numSamples);
 
         ++inputIndex;
     }
 
-    recordFramesWritten += numSamples;
+    capture.recordFramesWritten += numSamples;
 }
 
 void AudioEngine::setRecordArmed (int track, bool armed)
@@ -113,30 +113,30 @@ void AudioEngine::setRecordArmed (int track, bool armed)
     if (track < 0 || track >= trackCount)
         return;
 
-    recordArmed[static_cast<size_t> (track)].store (armed, std::memory_order_release);
+    capture.recordArmed[static_cast<size_t> (track)].store (armed, std::memory_order_release);
 }
 
 bool AudioEngine::isRecordArmed (int track) const
 {
     return track >= 0 && track < trackCount
-           && recordArmed[static_cast<size_t> (track)].load (std::memory_order_acquire);
+           && capture.recordArmed[static_cast<size_t> (track)].load (std::memory_order_acquire);
 }
 
 void AudioEngine::setTrackMonitor (int track, bool on)
 {
     if (track >= 0 && track < trackCount)
-        trackMonitor[static_cast<size_t> (track)].store (on, std::memory_order_release);
+        capture.trackMonitor[static_cast<size_t> (track)].store (on, std::memory_order_release);
 }
 
 bool AudioEngine::isTrackMonitor (int track) const
 {
     return track >= 0 && track < trackCount
-           && trackMonitor[static_cast<size_t> (track)].load (std::memory_order_acquire);
+           && capture.trackMonitor[static_cast<size_t> (track)].load (std::memory_order_acquire);
 }
 
 bool AudioEngine::consumePunchOut()
 {
-    return punchOutPending.exchange (false, std::memory_order_acq_rel);
+    return capture.punchOutPending.exchange (false, std::memory_order_acq_rel);
 }
 
 juce::Array<juce::MidiDeviceInfo> AudioEngine::availableMidiDevices()
@@ -190,8 +190,8 @@ int64_t AudioEngine::recordedFrames() const
     int64_t most = 0;
 
     for (int track = 0; track < trackCount; ++track)
-        if (recordArmed[static_cast<size_t> (track)].load (std::memory_order_relaxed))
-            most = juce::jmax (most, recordBuffers[static_cast<size_t> (track)].written);
+        if (capture.recordArmed[static_cast<size_t> (track)].load (std::memory_order_relaxed))
+            most = juce::jmax (most, capture.recordBuffers[static_cast<size_t> (track)].written);
 
     return most;
 }
@@ -201,7 +201,7 @@ int AudioEngine::recordOverflows() const
     int count = 0;
 
     for (int track = 0; track < trackCount; ++track)
-        if (recordBuffers[static_cast<size_t> (track)].overflowed)
+        if (capture.recordBuffers[static_cast<size_t> (track)].overflowed)
             ++count;
 
     return count;
@@ -209,7 +209,7 @@ int AudioEngine::recordOverflows() const
 
 bool AudioEngine::startRecording (juce::String& error)
 {
-    if (recording.load (std::memory_order_acquire))
+    if (capture.recording.load (std::memory_order_acquire))
     {
         error = "Already recording";
         return false;
@@ -226,7 +226,7 @@ bool AudioEngine::startRecording (juce::String& error)
     int armed = 0;
 
     for (int track = 0; track < trackCount; ++track)
-        if (recordArmed[static_cast<size_t> (track)].load (std::memory_order_relaxed))
+        if (capture.recordArmed[static_cast<size_t> (track)].load (std::memory_order_relaxed))
             ++armed;
 
     if (armed == 0)
@@ -242,24 +242,24 @@ bool AudioEngine::startRecording (juce::String& error)
 
     for (int track = 0; track < trackCount; ++track)
     {
-        auto& buffer = recordBuffers[static_cast<size_t> (track)];
+        auto& buffer = capture.recordBuffers[static_cast<size_t> (track)];
         buffer.reset();
 
-        if (recordArmed[static_cast<size_t> (track)].load (std::memory_order_relaxed))
+        if (capture.recordArmed[static_cast<size_t> (track)].load (std::memory_order_relaxed))
         {
             buffer.prepare (capacity);
             // The native UI arms tracks but has no separate monitor switch yet.
             // Monitoring follows the armed tracks while recording so the player
             // hears the input through the same chain being captured.
-            trackMonitor[static_cast<size_t> (track)].store (true, std::memory_order_relaxed);
+            capture.trackMonitor[static_cast<size_t> (track)].store (true, std::memory_order_relaxed);
         }
         else if (buffer.storage.getNumSamples() > 0)
             buffer.storage.setSize (0, 0);
     }
 
-    recordFramesWritten = 0;
-    recordStartFrame.store (clock.positionSamples(), std::memory_order_release);
-    recording.store (true, std::memory_order_release);
+    capture.recordFramesWritten = 0;
+    capture.recordStartFrame.store (clock.positionSamples(), std::memory_order_release);
+    capture.recording.store (true, std::memory_order_release);
     error.clear();
     return true;
 }
@@ -277,14 +277,14 @@ bool AudioEngine::startRecording (const juce::File& folder, juce::String& error)
 
     // Replace the RAM buffers with threaded writers: the callback pushes
     // blocks into a FIFO, the writer thread flushes WAV to disk.
-    threadedTakes.clear();
+    capture.threadedTakes.clear();
     juce::WavAudioFormat wav;
     const auto rate = sampleRate.load();
     int takeNumber = 0;
 
     for (int track = 0; track < trackCount; ++track)
     {
-        if (! recordArmed[static_cast<size_t> (track)].load (std::memory_order_relaxed))
+        if (! capture.recordArmed[static_cast<size_t> (track)].load (std::memory_order_relaxed))
             continue;
 
         const auto file = folder.getChildFile ("Track " + juce::String (track + 1)
@@ -295,8 +295,8 @@ bool AudioEngine::startRecording (const juce::File& folder, juce::String& error)
         if (stream == nullptr)
         {
             error = "Cannot write " + file.getFullPathName();
-            threadedTakes.clear();
-            recording.store (false, std::memory_order_release);
+            capture.threadedTakes.clear();
+            capture.recording.store (false, std::memory_order_release);
             return false;
         }
 
@@ -306,18 +306,18 @@ bool AudioEngine::startRecording (const juce::File& folder, juce::String& error)
         if (writer == nullptr)
         {
             error = "Unsupported recording format";
-            threadedTakes.clear();
-            recording.store (false, std::memory_order_release);
+            capture.threadedTakes.clear();
+            capture.recording.store (false, std::memory_order_release);
             return false;
         }
 
         ThreadedTake take;
         take.writer = std::make_unique<juce::AudioFormatWriter::ThreadedWriter> (
-            writer.release(), writerThread, 65536);
+            writer.release(), capture.writerThread, 65536);
         take.file = file;
         take.track = track;
-        take.startFrame = recordStartFrame.load (std::memory_order_acquire);
-        threadedTakes.push_back (std::move (take));
+        take.startFrame = capture.recordStartFrame.load (std::memory_order_acquire);
+        capture.threadedTakes.push_back (std::move (take));
     }
 
     error.clear();
@@ -330,13 +330,13 @@ std::vector<AudioEngine::RecordedTake> AudioEngine::stopRecording (const juce::F
 {
     std::vector<RecordedTake> takes;
 
-    if (! recording.exchange (false, std::memory_order_acq_rel))
+    if (! capture.recording.exchange (false, std::memory_order_acq_rel))
     {
         error = "Not recording";
         return takes;
     }
 
-    for (auto& monitor : trackMonitor)
+    for (auto& monitor : capture.trackMonitor)
         monitor.store (false, std::memory_order_relaxed);
 
     // A callback that was already inside captureInputBlock when the flag
@@ -361,27 +361,27 @@ std::vector<AudioEngine::RecordedTake> AudioEngine::stopRecording (const juce::F
     // Streaming takes are already on disk; deleting the writers flushes.
     // Note: the latency trim that the RAM path applies is not applied to
     // streamed takes (they start at the punch-in transport frame).
-    if (! threadedTakes.empty())
+    if (! capture.threadedTakes.empty())
     {
-        for (auto& take : threadedTakes)
+        for (auto& take : capture.threadedTakes)
         {
             take.writer.reset();
             RecordedTake recorded;
             recorded.track = take.track;
             recorded.file = take.file;
             recorded.startFrame = take.startFrame;
-            recorded.frames = recordFramesWritten;
+            recorded.frames = capture.recordFramesWritten;
             takes.push_back (std::move (recorded));
         }
 
-        threadedTakes.clear();
+        capture.threadedTakes.clear();
         error.clear();
         return takes;
     }
 
     // Capture is closed; the buffers are no longer written from this point.
-    const auto latency = static_cast<int64_t> (juce::jmax (0, recordLatency.load()));
-    const auto startFrame = recordStartFrame.load (std::memory_order_acquire);
+    const auto latency = static_cast<int64_t> (juce::jmax (0, capture.recordLatency.load()));
+    const auto startFrame = capture.recordStartFrame.load (std::memory_order_acquire);
     const auto rate = sampleRate.load();
 
     if (! folder.isDirectory() && ! folder.createDirectory())
@@ -395,10 +395,10 @@ std::vector<AudioEngine::RecordedTake> AudioEngine::stopRecording (const juce::F
 
     for (int track = 0; track < trackCount; ++track)
     {
-        if (! recordArmed[static_cast<size_t> (track)].load (std::memory_order_relaxed))
+        if (! capture.recordArmed[static_cast<size_t> (track)].load (std::memory_order_relaxed))
             continue;
 
-        auto& buffer = recordBuffers[static_cast<size_t> (track)];
+        auto& buffer = capture.recordBuffers[static_cast<size_t> (track)];
         const auto captured = buffer.written;
         const auto usable = static_cast<int64_t> (juce::jmax<int64_t> (0, captured - latency));
 
@@ -443,11 +443,11 @@ std::vector<AudioEngine::RecordedTake> AudioEngine::stopRecording (const juce::F
         takes.push_back (take);
     }
 
-    for (auto& buffer : recordBuffers)
+    for (auto& buffer : capture.recordBuffers)
         if (buffer.storage.getNumSamples() > 0)
             buffer.storage.setSize (0, 0);
 
-    recordFramesWritten = 0;
+    capture.recordFramesWritten = 0;
     return takes;
 }
 } // namespace nc

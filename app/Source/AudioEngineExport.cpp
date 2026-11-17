@@ -13,7 +13,7 @@ void AudioEngine::prepareForRender (double rate, int maxBlock)
     const auto block = juce::jmax (1, maxBlock);
 
     sampleRate.store (rate);
-    smoothingPrimed = false;
+    scratch.smoothingPrimed = false;
     clock.clearRequests();
 
     // Sized exactly as audioDeviceAboutToStart() does, so renderBlock() never

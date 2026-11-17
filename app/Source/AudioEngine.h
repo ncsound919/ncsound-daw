@@ -4,6 +4,9 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include "AuxBus.h"
+#include "AudioEngineRecord.h"
+#include "AudioEngineRender.h"
+#include "AudioEngineState.h"
 #include "MixRack.h"
 #include "TransportClock.h"
 #include "MidiLearnManager.h"
@@ -251,22 +254,14 @@ public:
     bool trackInsertIsMissing (int track, int slot) const;
     nc::engine::PluginSlotState trackInsertState (int track, int slot) const;
     int trackInsertLatency (int track, int slot) const;
-    void pollRetiredInserts()
-    {
-        inserts.collectGarbage();
-        reclaimRetiredSnapshots();
-    }
+    void pollRetiredInserts();
 
     /** Frees replaced tempo/MIDI/automation snapshots once no audio callback
         can still be holding a pointer to them. Message thread only. */
     void reclaimRetiredSnapshots();
 
     /** Diagnostics and tests: how many replaced snapshots are still retained. */
-    int retainedSnapshotCount() const noexcept
-    {
-        return static_cast<int> (automationRetired.size() + clock.retainedTempoCount()
-                                 + midiRetired.size());
-    }
+    int retainedSnapshotCount() const noexcept;
 
     std::function<void (juce::String)> onPluginStatus;
 
@@ -377,8 +372,6 @@ public:
     /** Index of the generated demo asset for a track, or -1. */
     int demoAssetId (int track) const;
 
-    /** Replaces the engine's entire schedule. The callback consumes the
-        commands at the next block boundary. */
     /** Replaces the engine's entire schedule. Returns clips dropped as
         invalid references or beyond the 1024-clip timeline so the UI can
         report a truncated project instead of losing it silently. */
@@ -494,14 +487,14 @@ public:
     /** Streaming variant: takes write straight to `folder` via threaded
         writers, so long takes are disk-bound, not RAM-bound. */
     bool startRecording (const juce::File& folder, juce::String& error);
-    bool isRecording() const { return recording.load(); }
+    bool isRecording() const { return capture.recording.load(); }
 
     /** Frames captured since startRecording, across all armed tracks. */
     int64_t recordedFrames() const;
 
     /** Input latency trimmed from the head of each take, in samples. */
-    void setRecordLatencySamples (int samples) { recordLatency.store (juce::jmax (0, samples)); }
-    int recordLatencySamples() const { return recordLatency.load(); }
+    void setRecordLatencySamples (int samples) { capture.recordLatency.store (juce::jmax (0, samples)); }
+    int recordLatencySamples() const { return capture.recordLatency.load(); }
 
     /** Buffers that overflowed during the take (Ardour's x-run counter). */
     int recordOverflows() const;
@@ -559,27 +552,6 @@ private:
 
     using AudioAsset = AssetLibrary::Asset;
 
-    struct PlaybackClip
-    {
-        const AudioAsset* asset = nullptr;
-        int track = 0;
-        double startBar = 1.0;
-        double lengthBars = 1.0;
-        double sourceOffsetSeconds = 0.0;
-        float gainDb = 0.0f;
-        float fadeInBars = 0.0f;
-        float fadeOutBars = 0.0f;
-        float crossfadeBars = 0.0f;
-    };
-
-    enum class CommandType : juce::uint8 { clear, add };
-
-    struct Command
-    {
-        CommandType type = CommandType::clear;
-        PlaybackClip clip;
-    };
-
     struct Track
     {
         std::atomic<float> gain { 0.8f };
@@ -599,22 +571,6 @@ private:
         std::atomic<float> instTuningHz { 440.0f };
     };
 
-    // Render scratch for the audio callback: preallocated once with the engine
-    // so the 1024-clip timeline never touches the callback stack or heap.
-    struct RenderClip
-    {
-        const AudioAsset* asset = nullptr;
-        int track = 0;
-        int64_t startSample = 0;
-        int64_t endSample = 0;
-        double sourceOffsetSeconds = 0.0;
-        double lengthSeconds = 0.0;
-        double fadeInSeconds = 0.0;
-        double fadeOutSeconds = 0.0;
-        double crossfadeSeconds = 0.0;
-        float gain = 1.0f;
-    };
-
     static constexpr int maxClips = nc::limits::maxClips;
     static_assert (maxClips <= nc::limits::maxClips,
                    "preview clip cap must fit central limits");
@@ -628,53 +584,6 @@ private:
     void createDemoAssets();
     bool pushCommand (const Command& command);
     void processCommands();
-
-    /** Shared per-block state handed to each render pass. Constructed once at
-        the top of renderBlock; the passes read and write it instead of the
-        block's locals, so no pass needs the whole argument list. */
-    struct RenderContext
-    {
-        const float* const* inputChannelData = nullptr;
-        int numInputChannels = 0;
-        float* const* outputChannelData = nullptr;
-        int numOutputChannels = 0;
-        int numSamples = 0;
-
-        double rate = 48000.0;
-        bool isPlaying = false;
-        bool clickOn = false;
-        bool anySolo = false;
-
-        double tempo = 120.0;
-        double beatSamples = 0.0;
-        const engine::TempoMap* tempoMap = nullptr;
-
-        bool loop = false;
-        int64_t loopStart = 0;
-        int64_t loopEnd = 0;
-        int64_t blockStartSamples = 0;
-        double blockStartPpq = 0.0;
-        int64_t position = 0;
-
-        float* mixLeft = nullptr;
-        float* mixRight = nullptr;
-        bool trackBufferReady = false;
-
-        float* auxALeft = nullptr;
-        float* auxARight = nullptr;
-        float* auxBLeft = nullptr;
-        float* auxBRight = nullptr;
-
-        std::array<float, trackCount> trackLeftScratch {};
-        std::array<float, trackCount> trackRightScratch {};
-        std::array<float, trackCount> automatedGain {};
-        std::array<float, trackCount> automatedPan {};
-        std::array<float, trackCount> blockPeaks {};
-
-        float masterPeak = 0.0f;
-        float masterPeakLeft = 0.0f;
-        float masterPeakRight = 0.0f;
-    };
 
     void renderClipsPass (RenderContext& ctx);
     void renderInstrumentInsertPass (RenderContext& ctx);
@@ -691,34 +600,7 @@ private:
         Only legal while no audio callback is attached. */
     void prepareForRender (double rate, int maxBlock);
 
-    /** One armed track's capture: preallocated, appended without allocating. */
-    struct RecordBuffer
-    {
-        juce::AudioBuffer<float> storage;
-        int64_t written = 0;
-        bool overflowed = false;
-
-        void prepare (int64_t capacityFrames);
-        void push (const float* left, const float* right, int numSamples) noexcept;
-        void reset() noexcept;
-    };
-
-    /** A published lane: the audio thread reads `live`, the message thread owns
-        `owned`. Replaced lanes are retired and freed once no callback can still
-        be reading them, or when the device stops. */
-    struct AutomationSlot
-    {
-        std::unique_ptr<AutomationLane> owned;
-        std::atomic<const AutomationLane*> live { nullptr };
-    };
-
-    std::array<AutomationSlot, trackCount> volumeAutomation;
-    std::array<AutomationSlot, trackCount> panAutomation;
-    /** Defaults to true; the constructor fills it, since a value-initialised
-        atomic<bool> would otherwise start at false and silently mute every
-        lane in the session. */
-    std::array<std::atomic<bool>, trackCount> automationReadEnabled {};
-    std::vector<RetiredSnapshot<AutomationLane>> automationRetired;
+    AudioEngineState state;
 
     struct MidiSlot
     {
@@ -737,32 +619,10 @@ private:
     const std::vector<MidiTimelineClip>* midiCursorsFor = nullptr;
     std::vector<RetiredSnapshot<std::vector<MidiTimelineClip>>> midiRetired;
 
-    std::atomic<bool> captureAvailable { false };
-    std::array<RecordBuffer, trackCount> recordBuffers;
-    std::array<std::atomic<bool>, trackCount> recordArmed {};
+    RecordCapture capture;
 
     MidiRecorder midiRecorder;
     int midiLearnTrack { 0 };
-    std::vector<float> recordSilence { 16384, 0.0f }; // ThreadedWriter needs non-null channels
-
-    // Streaming takes (ThreadedWriter): when non-empty, capture pushes
-    // straight to disk instead of the RAM buffers above.
-    struct ThreadedTake
-    {
-        std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> writer;
-        juce::File file;
-        int track = -1;
-        int64_t startFrame = 0;
-    };
-    std::vector<ThreadedTake> threadedTakes;
-    juce::TimeSliceThread writerThread { "RecordWriter" };
-    std::array<std::atomic<bool>, trackCount> trackMonitor {};
-    std::atomic<bool> punchOutPending { false };
-    std::atomic<bool> recording { false };
-    std::atomic<int> recordLatency { 0 };
-    std::atomic<int> overflowCount { 0 };
-    std::atomic<int64_t> recordStartFrame { 0 };
-    int64_t recordFramesWritten = 0;
 
     std::array<Track, trackCount> tracks;
 
@@ -819,29 +679,7 @@ private:
     // Shared nc::engine::SpscQueue (Task 1), not an ad-hoc array.
     nc::engine::SpscQueue<Command> commandQueue { commandCapacity };
 
-    // Audio-thread only. renderScratch is reused every block: the prep loop
-    // invalidates each slot it skips so stale clips can never replay.
-    std::array<PlaybackClip, maxClips> playbackClips {};
-    std::array<RenderClip, maxClips> renderScratch {};
-    int playbackClipCount = 0;
-    double clickPhase = 0.0;
-    double clickEnvelope = 0.0;
-    double clickOscillator = 0.0;
-    double probePhase = 0.0;   // diagnostic sine phase (NC_TEST_TONE_HZ)
-    int clickBeat = 0;
-    float smoothedGain[trackCount] {};
-    float smoothedPan[trackCount] {};
-    float smoothedSendA[trackCount] {};
-    float smoothedSendB[trackCount] {};
-    float smoothedWidth[trackCount] {};
-    // Equal-power pan gains, recomputed only when smoothedPan moves (audio
-    // thread only; NaN-free defaults so the first block is correct either way).
-    float cachedPanValue[trackCount] { -2.0f };
-    float cachedPanLeft[trackCount] { 0.7071f };
-    float cachedPanRight[trackCount] { 0.7071f };
-    float smoothedMaster = 0.8f;
-    bool smoothingPrimed = false;
-    bool transportWasPlaying = false;
+    RenderScratch scratch;
 
     // Aux returns: send sums are accumulated here per block, processed by
     // AuxBus (tail state), then added to the master mix. Sized in prepare().

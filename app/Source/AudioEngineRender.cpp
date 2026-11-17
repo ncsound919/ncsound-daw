@@ -35,34 +35,34 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
     // not the place for that: it keeps the request pending for the next live block.
     if (! offlineRender.load (std::memory_order_acquire) && clock.takeResetRequest())
     {
-        clickPhase = 0.0;
-        clickEnvelope = 0.0;
-        clickOscillator = 0.0;
-        clickBeat = 0;
+        scratch.clickPhase = 0.0;
+        scratch.clickEnvelope = 0.0;
+        scratch.clickOscillator = 0.0;
+        scratch.clickBeat = 0;
         clock.storePosition (0);
     }
 
     if (clock.takeSeekRequest())
     {
-        clickPhase = 0.0;
-        clickEnvelope = 0.0;
-        clickOscillator = 0.0;
-        clickBeat = 0;
+        scratch.clickPhase = 0.0;
+        scratch.clickEnvelope = 0.0;
+        scratch.clickOscillator = 0.0;
+        scratch.clickBeat = 0;
     }
 
-    if (! smoothingPrimed)
+    if (! scratch.smoothingPrimed)
     {
         for (int track = 0; track < trackCount; ++track)
         {
-            smoothedGain[track] = tracks[static_cast<size_t> (track)].gain.load();
-            smoothedPan[track] = tracks[static_cast<size_t> (track)].pan.load();
-            smoothedSendA[track] = tracks[static_cast<size_t> (track)].sendA.load();
-            smoothedSendB[track] = tracks[static_cast<size_t> (track)].sendB.load();
-            smoothedWidth[track] = tracks[static_cast<size_t> (track)].width.load();
+            scratch.smoothedGain[track] = tracks[static_cast<size_t> (track)].gain.load();
+            scratch.smoothedPan[track] = tracks[static_cast<size_t> (track)].pan.load();
+            scratch.smoothedSendA[track] = tracks[static_cast<size_t> (track)].sendA.load();
+            scratch.smoothedSendB[track] = tracks[static_cast<size_t> (track)].sendB.load();
+            scratch.smoothedWidth[track] = tracks[static_cast<size_t> (track)].width.load();
         }
 
-        smoothedMaster = masterGainValue.load();
-        smoothingPrimed = true;
+        scratch.smoothedMaster = masterGainValue.load();
+        scratch.smoothingPrimed = true;
     }
 
     const auto rate = sampleRate.load();
@@ -75,21 +75,21 @@ void AudioEngine::renderBlock (const float* const* inputChannelData, int numInpu
     // and the master maximizer's reaction to it is the metallic crack at the
     // start. Prime every smoother from the live values on the transition into
     // play so the transport starts at the gain the session actually has.
-    if (isPlaying && ! transportWasPlaying)
+    if (isPlaying && ! scratch.transportWasPlaying)
     {
         for (int track = 0; track < trackCount; ++track)
         {
-            smoothedGain[track] = tracks[static_cast<size_t> (track)].gain.load();
-            smoothedPan[track] = tracks[static_cast<size_t> (track)].pan.load();
-            smoothedSendA[track] = tracks[static_cast<size_t> (track)].sendA.load();
-            smoothedSendB[track] = tracks[static_cast<size_t> (track)].sendB.load();
-            smoothedWidth[track] = tracks[static_cast<size_t> (track)].width.load();
+            scratch.smoothedGain[track] = tracks[static_cast<size_t> (track)].gain.load();
+            scratch.smoothedPan[track] = tracks[static_cast<size_t> (track)].pan.load();
+            scratch.smoothedSendA[track] = tracks[static_cast<size_t> (track)].sendA.load();
+            scratch.smoothedSendB[track] = tracks[static_cast<size_t> (track)].sendB.load();
+            scratch.smoothedWidth[track] = tracks[static_cast<size_t> (track)].width.load();
         }
 
-        smoothedMaster = masterGainValue.load();
+        scratch.smoothedMaster = masterGainValue.load();
     }
 
-    transportWasPlaying = isPlaying;
+    scratch.transportWasPlaying = isPlaying;
     const auto clickOn = clock.isMetronomeOn();
 
     if (rate <= 0.0)
@@ -149,10 +149,10 @@ void AudioEngine::renderClipsPass (RenderContext& ctx)
     for (const auto& track : tracks)
         anySolo = anySolo || track.soloed.load();
 
-    for (int i = 0; i < playbackClipCount; ++i)
+    for (int i = 0; i < scratch.playbackClipCount; ++i)
     {
-        const auto& clip = playbackClips[static_cast<size_t> (i)];
-        auto& render = renderScratch[static_cast<size_t> (i)];
+        const auto& clip = scratch.playbackClips[static_cast<size_t> (i)];
+        auto& render = scratch.renderScratch[static_cast<size_t> (i)];
         render.asset = nullptr;
 
         if (clip.asset == nullptr || assetLibrary.frameCount (*clip.asset) <= 0)
@@ -194,17 +194,17 @@ void AudioEngine::renderClipsPass (RenderContext& ctx)
     {
         // Punch-out: the loop end finalises a take. The audio thread only
         // flags it; the message thread stops and places the take.
-        if (recording.load (std::memory_order_acquire))
-            punchOutPending.store (true, std::memory_order_release);
+        if (capture.recording.load (std::memory_order_acquire))
+            capture.punchOutPending.store (true, std::memory_order_release);
 
         position = loopStart;
-        clickPhase = 0.0;
-        clickEnvelope = 0.0;
-        clickOscillator = 0.0;
-        clickBeat = 0;
+        scratch.clickPhase = 0.0;
+        scratch.clickEnvelope = 0.0;
+        scratch.clickOscillator = 0.0;
+        scratch.clickBeat = 0;
     }
 
-    if (recording.load (std::memory_order_acquire))
+    if (capture.recording.load (std::memory_order_acquire))
         captureInputBlock (inputChannelData, numInputChannels, numSamples, position);
 
 
@@ -248,9 +248,9 @@ void AudioEngine::renderClipsPass (RenderContext& ctx)
         std::fill (trackLeftScratch.begin(), trackLeftScratch.end(), 0.0f);
         std::fill (trackRightScratch.begin(), trackRightScratch.end(), 0.0f);
 
-        for (int clipIndex = 0; clipIndex < playbackClipCount; ++clipIndex)
+        for (int clipIndex = 0; clipIndex < scratch.playbackClipCount; ++clipIndex)
         {
-            const auto& clip = renderScratch[static_cast<size_t> (clipIndex)];
+            const auto& clip = scratch.renderScratch[static_cast<size_t> (clipIndex)];
 
             if (clip.asset == nullptr
                 || position < clip.startSample
@@ -312,10 +312,10 @@ void AudioEngine::renderClipsPass (RenderContext& ctx)
         if (loop && position >= loopEnd)
         {
             position = loopStart;
-            clickPhase = 0.0;
-            clickEnvelope = 0.0;
-            clickOscillator = 0.0;
-            clickBeat = 0;
+            scratch.clickPhase = 0.0;
+            scratch.clickEnvelope = 0.0;
+            scratch.clickOscillator = 0.0;
+            scratch.clickBeat = 0;
         }
     }
 
@@ -367,12 +367,12 @@ void AudioEngine::renderInstrumentInsertPass (RenderContext& ctx)
             // through the instrument/insert chain and strip, like playback.
             // The same input is captured by captureInputBlock above.
             if (isPlaying && numInputChannels > 0 && inputChannelData != nullptr
-                && recordArmed[static_cast<size_t> (trackIndex)].load (std::memory_order_relaxed)
-                && trackMonitor[static_cast<size_t> (trackIndex)].load (std::memory_order_relaxed))
+                && capture.recordArmed[static_cast<size_t> (trackIndex)].load (std::memory_order_relaxed)
+                && capture.trackMonitor[static_cast<size_t> (trackIndex)].load (std::memory_order_relaxed))
             {
                 int armedBefore = 0;
                 for (int t = 0; t < trackIndex; ++t)
-                    if (recordArmed[static_cast<size_t> (t)].load (std::memory_order_relaxed))
+                    if (capture.recordArmed[static_cast<size_t> (t)].load (std::memory_order_relaxed))
                         ++armedBefore;
 
                 const auto* inLeft = inputChannelData[armedBefore % numInputChannels];
@@ -498,11 +498,11 @@ void AudioEngine::renderInstrumentInsertPass (RenderContext& ctx)
         // same branch an empty lane already takes.
         const auto reading = automationRead (trackIndex);
 
-        if (const auto* lane = volumeAutomation[static_cast<size_t> (trackIndex)].live.load (std::memory_order_acquire);
+        if (const auto* lane = state.volumeAutomation[static_cast<size_t> (trackIndex)].live.load (std::memory_order_acquire);
             reading && lane != nullptr && ! lane->empty())
             automatedGain[trackIndex] = lane->valueAt (blockBeat);
 
-        if (const auto* lane = panAutomation[static_cast<size_t> (trackIndex)].live.load (std::memory_order_acquire);
+        if (const auto* lane = state.panAutomation[static_cast<size_t> (trackIndex)].live.load (std::memory_order_acquire);
             reading && lane != nullptr && ! lane->empty())
             automatedPan[trackIndex] = lane->valueAt (blockBeat);
     }
@@ -573,11 +573,11 @@ void AudioEngine::renderStripPass (RenderContext& ctx)
 
         if (probe.on)
         {
-            probeTone = probe.gain * static_cast<float> (std::sin (probePhase));
-            probePhase += juce::MathConstants<double>::twoPi * probe.hz / juce::jmax (1.0, rate);
+            probeTone = probe.gain * static_cast<float> (std::sin (scratch.probePhase));
+            scratch.probePhase += juce::MathConstants<double>::twoPi * probe.hz / juce::jmax (1.0, rate);
 
-            if (probePhase >= juce::MathConstants<double>::twoPi)
-                probePhase -= juce::MathConstants<double>::twoPi;
+            if (scratch.probePhase >= juce::MathConstants<double>::twoPi)
+                scratch.probePhase -= juce::MathConstants<double>::twoPi;
         }
 
         if (isPlaying)
@@ -586,29 +586,29 @@ void AudioEngine::renderStripPass (RenderContext& ctx)
             {
                 const auto& track = tracks[static_cast<size_t> (trackIndex)];
 
-                smoothedGain[trackIndex] += (automatedGain[trackIndex] - smoothedGain[trackIndex]) * smoothingCoefficient;
-                smoothedPan[trackIndex] += (automatedPan[trackIndex] - smoothedPan[trackIndex]) * smoothingCoefficient;
-                smoothedSendA[trackIndex] += (blockSendA[trackIndex] - smoothedSendA[trackIndex]) * smoothingCoefficient;
-                smoothedSendB[trackIndex] += (blockSendB[trackIndex] - smoothedSendB[trackIndex]) * smoothingCoefficient;
-                smoothedWidth[trackIndex] += (blockWidth[trackIndex] - smoothedWidth[trackIndex]) * smoothingCoefficient;
+                scratch.smoothedGain[trackIndex] += (automatedGain[trackIndex] - scratch.smoothedGain[trackIndex]) * smoothingCoefficient;
+                scratch.smoothedPan[trackIndex] += (automatedPan[trackIndex] - scratch.smoothedPan[trackIndex]) * smoothingCoefficient;
+                scratch.smoothedSendA[trackIndex] += (blockSendA[trackIndex] - scratch.smoothedSendA[trackIndex]) * smoothingCoefficient;
+                scratch.smoothedSendB[trackIndex] += (blockSendB[trackIndex] - scratch.smoothedSendB[trackIndex]) * smoothingCoefficient;
+                scratch.smoothedWidth[trackIndex] += (blockWidth[trackIndex] - scratch.smoothedWidth[trackIndex]) * smoothingCoefficient;
 
                 const auto audible = blockAudible[trackIndex];
-                const auto gain = audible ? smoothedGain[trackIndex] : 0.0f;
+                const auto gain = audible ? scratch.smoothedGain[trackIndex] : 0.0f;
 
                 // Equal-power pan needs cos/sin of the smoothed angle. While
                 // the fader sits still — the normal case — the angle is
                 // constant, and a trig pair per track per sample was a large
                 // slice of the strip's audio budget on a slow CPU. Recompute
                 // the pair only when the smoothed value has actually moved.
-                auto& panL = cachedPanLeft[trackIndex];
-                auto& panR = cachedPanRight[trackIndex];
+                auto& panL = scratch.cachedPanLeft[trackIndex];
+                auto& panR = scratch.cachedPanRight[trackIndex];
 
-                if (std::abs (smoothedPan[trackIndex] - cachedPanValue[trackIndex]) > 1.0e-5f)
+                if (std::abs (scratch.smoothedPan[trackIndex] - scratch.cachedPanValue[trackIndex]) > 1.0e-5f)
                 {
-                    const auto angle = (smoothedPan[trackIndex] + 1.0f) * 0.25f * juce::MathConstants<float>::pi;
+                    const auto angle = (scratch.smoothedPan[trackIndex] + 1.0f) * 0.25f * juce::MathConstants<float>::pi;
                     panL = std::cos (angle);
                     panR = std::sin (angle);
-                    cachedPanValue[trackIndex] = smoothedPan[trackIndex];
+                    scratch.cachedPanValue[trackIndex] = scratch.smoothedPan[trackIndex];
                 }
 
                 const auto panLeft = panL;
@@ -644,7 +644,7 @@ void AudioEngine::renderStripPass (RenderContext& ctx)
                 // post-strip track bus before the sum.
                 {
                     const auto mid = 0.5f * (trackLeft + trackRight);
-                    const auto side = 0.5f * (trackLeft - trackRight) * (smoothedWidth[trackIndex] * 2.0f);
+                    const auto side = 0.5f * (trackLeft - trackRight) * (scratch.smoothedWidth[trackIndex] * 2.0f);
                     trackLeft = mid + side;
                     trackRight = mid - side;
                 }
@@ -657,14 +657,14 @@ void AudioEngine::renderStripPass (RenderContext& ctx)
                 {
                     if (auxALeft != nullptr && auxARight != nullptr)
                     {
-                        const auto sendA = smoothedSendA[trackIndex];
+                        const auto sendA = scratch.smoothedSendA[trackIndex];
                         auxALeft[sample] += trackLeft * sendA;
                         auxARight[sample] += trackRight * sendA;
                     }
 
                     if (auxBLeft != nullptr && auxBRight != nullptr)
                     {
-                        const auto sendB = smoothedSendB[trackIndex];
+                        const auto sendB = scratch.smoothedSendB[trackIndex];
                         auxBLeft[sample] += trackLeft * sendB;
                         auxBRight[sample] += trackRight * sendB;
                     }
@@ -685,28 +685,28 @@ void AudioEngine::renderStripPass (RenderContext& ctx)
                                                      juce::jmax (std::abs (trackLeft), std::abs (trackRight)));
             }
 
-            if (clickPhase >= beatSamples)
+            if (scratch.clickPhase >= beatSamples)
             {
-                clickPhase -= beatSamples;
-                clickEnvelope = 0.85;
-                clickOscillator = 0.0;
-                ++clickBeat;
+                scratch.clickPhase -= beatSamples;
+                scratch.clickEnvelope = 0.85;
+                scratch.clickOscillator = 0.0;
+                ++scratch.clickBeat;
             }
 
-            clickPhase += 1.0;
+            scratch.clickPhase += 1.0;
 
-            if (clickOn && ! probe.mute && clickEnvelope > 0.0001)
+            if (clickOn && ! probe.mute && scratch.clickEnvelope > 0.0001)
             {
-                const auto frequency = clickBeat % 4 == 0 ? 1600.0 : 1000.0;
-                clickOscillator += twoPi * frequency / rate;
-                click = static_cast<float> (std::sin (clickOscillator) * clickEnvelope * 0.3);
-                clickEnvelope *= 0.9994;
+                const auto frequency = scratch.clickBeat % 4 == 0 ? 1600.0 : 1000.0;
+                scratch.clickOscillator += twoPi * frequency / rate;
+                click = static_cast<float> (std::sin (scratch.clickOscillator) * scratch.clickEnvelope * 0.3);
+                scratch.clickEnvelope *= 0.9994;
             }
         }
 
-        smoothedMaster += (masterGainValue.load() - smoothedMaster) * smoothingCoefficient;
-        left = (left + click) * smoothedMaster;
-        right = (right + click) * smoothedMaster;
+        scratch.smoothedMaster += (masterGainValue.load() - scratch.smoothedMaster) * smoothingCoefficient;
+        left = (left + click) * scratch.smoothedMaster;
+        right = (right + click) * scratch.smoothedMaster;
 
         if (probe.on && probe.track < 0)
         {
