@@ -89,7 +89,7 @@ AudioStats analyzeWavFile (const juce::File& file, int channelToAnalyze = 0)
     juce::AudioBuffer<float> buffer (reader->numChannels, static_cast<int> (stats.totalFrames));
     reader->read (&buffer, 0, static_cast<int> (stats.totalFrames), 0, true, true);
 
-    const auto ch = juce::jlimit (0, reader->numChannels - 1, channelToAnalyze);
+    const auto ch = juce::jlimit (0, static_cast<int> (reader->numChannels) - 1, channelToAnalyze);
     const auto* samples = buffer.getReadPointer (ch);
     const auto numSamples = static_cast<int> (stats.totalFrames);
 
@@ -128,9 +128,9 @@ TEST_CASE ("deep mock hardware interface life cycle, buffer sizing, and sample r
     // Verify initial negotiated state (4 In / 4 Out @ 48kHz, 512 samples)
     REQUIRE (engine.isDeviceOpen());
     REQUIRE (engine.currentSampleRate() == 48000.0);
-    REQUIRE (engine.bufferSize() == 512);
-    REQUIRE (engine.isCaptureAvailable());
-    REQUIRE (engine.currentAudioDevice() == "DeepMock Hardware Audio Interface");
+    REQUIRE (engine.currentBufferSize() == 512);
+    REQUIRE (mock->getActiveInputChannels().countNumberOfSetBits() == 4);
+    REQUIRE (engine.deviceDescription() == "DeepMock Hardware Audio Interface");
     REQUIRE (mock->isOpen());
     REQUIRE (mock->isPlaying());
     REQUIRE (mock->getInputLatencyInSamples() == 128);
@@ -145,7 +145,7 @@ TEST_CASE ("deep mock hardware interface life cycle, buffer sizing, and sample r
         REQUIRE (err.isEmpty());
 
         REQUIRE (engine.currentSampleRate() == 96000.0);
-        REQUIRE (engine.bufferSize() == 256);
+        REQUIRE (engine.currentBufferSize() == 256);
         REQUIRE (engine.isDeviceOpen());
     }
 
@@ -158,13 +158,13 @@ TEST_CASE ("deep mock hardware interface life cycle, buffer sizing, and sample r
         REQUIRE (err.isEmpty());
 
         REQUIRE (engine.currentSampleRate() == 48000.0);
-        REQUIRE (engine.bufferSize() == 512);
+        REQUIRE (engine.currentBufferSize() == 512);
     }
 
     // Stop device
     engine.audioDeviceManager().closeAudioDevice();
     REQUIRE_FALSE (engine.isDeviceOpen());
-    REQUIRE (engine.bufferSize() == 0);
+    REQUIRE (engine.currentBufferSize() == 0);
 }
 
 //==============================================================================
