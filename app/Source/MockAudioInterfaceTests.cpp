@@ -202,15 +202,13 @@ TEST_CASE ("deep mock audio interface captures hardware input, live monitoring r
     REQUIRE (peak >= 0.20f);
     REQUIRE (peak <= 0.60f);
 
-    // Check captured frame count
-    REQUIRE (engine.recordedFrames() >= 48000 * 3);
-
     // Stop recording and transport
     auto takes = engine.stopRecording (folder, 24, error);
     engine.setPlaying (false);
 
     REQUIRE (takes.size() == 1);
     REQUIRE (takes[0].track == 0);
+    REQUIRE (takes[0].frames >= 48000 * 3);
     REQUIRE (takes[0].file.existsAsFile());
     REQUIRE (engine.recordOverflows() == 0);
 
