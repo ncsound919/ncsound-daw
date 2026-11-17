@@ -52,7 +52,7 @@ void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
 
 void AudioEngine::audioDeviceStopped()
 {
-    state.automationRetired.clear();
+    automation.automationRetired.clear();
     clock.reclaimAll();
     midiRetired.clear();
     deviceOpen.store (false);

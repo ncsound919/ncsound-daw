@@ -25,7 +25,7 @@ AudioEngine::AudioEngine()
 
     // Automation reads by default. The AUTO switch is an opt-out, so a fresh
     // engine must not start with every lane disconnected.
-    for (auto& flag : state.automationReadEnabled)
+    for (auto& flag : automation.automationReadEnabled)
         flag.store (true, std::memory_order_relaxed);
 
     // Input monitoring is off until a track is armed for recording. A monitored

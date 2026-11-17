@@ -6,7 +6,7 @@
 #include "AuxBus.h"
 #include "AudioEngineRecord.h"
 #include "AudioEngineRender.h"
-#include "AudioEngineState.h"
+#include "AudioEngineAutomation.h"
 #include "MixRack.h"
 #include "TransportClock.h"
 #include "MidiLearnManager.h"
@@ -600,7 +600,7 @@ private:
         Only legal while no audio callback is attached. */
     void prepareForRender (double rate, int maxBlock);
 
-    AudioEngineState state;
+    AutomationLanes automation;
 
     struct MidiSlot
     {

@@ -498,11 +498,11 @@ void AudioEngine::renderInstrumentInsertPass (RenderContext& ctx)
         // same branch an empty lane already takes.
         const auto reading = automationRead (trackIndex);
 
-        if (const auto* lane = state.volumeAutomation[static_cast<size_t> (trackIndex)].live.load (std::memory_order_acquire);
+        if (const auto* lane = automation.volumeAutomation[static_cast<size_t> (trackIndex)].live.load (std::memory_order_acquire);
             reading && lane != nullptr && ! lane->empty())
             automatedGain[trackIndex] = lane->valueAt (blockBeat);
 
-        if (const auto* lane = state.panAutomation[static_cast<size_t> (trackIndex)].live.load (std::memory_order_acquire);
+        if (const auto* lane = automation.panAutomation[static_cast<size_t> (trackIndex)].live.load (std::memory_order_acquire);
             reading && lane != nullptr && ! lane->empty())
             automatedPan[trackIndex] = lane->valueAt (blockBeat);
     }

@@ -21,8 +21,10 @@ struct AutomationSlot
     std::atomic<const AutomationLane*> live { nullptr };
 };
 
-/** Per-track automation: one published lane each for volume and pan. */
-struct AudioEngineState
+/** The session's automation lanes, and only those: one published lane each
+    for volume and pan. The MIDI clip slot is not here — it stays in the engine,
+    because the clip type is nested in AudioEngine. */
+struct AutomationLanes
 {
     std::array<AutomationSlot, nc::limits::maxTracks> volumeAutomation;
     std::array<AutomationSlot, nc::limits::maxTracks> panAutomation;
