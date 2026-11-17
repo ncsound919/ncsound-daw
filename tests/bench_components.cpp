@@ -136,31 +136,61 @@ int main (int argc, char** argv)
 
     std::vector<Result> results;
 
+    // --- calibration: the cost of the harness, not of any kernel ----------------
+    // Same loop shape as the kernels below, so every other row can be read
+    // against it. If a kernel lands on this number, the loop is being timed. It
+    // also makes a harness change obvious: if this row moves, the harness moved.
+    {
+        volatile int calibrationInput = 1;
+        results.push_back (measure ("harness.baseline_loop", "op", 4096, 250, [&calibrationInput] {
+            double acc = 0.0;
+
+            for (int i = 0; i < 4096; ++i)
+                acc += static_cast<double> (i * calibrationInput);
+
+            sink += acc;
+        }));
+    }
+
     // --- tempo map: the per-block position maths every clip and plugin sees ---
     {
         auto map = nc::engine::constantTempoMap (120.0);
         results.push_back (measure ("tempo_map.ppq_at_samples", "query", 4096, 250, [&map] {
+            // Accumulate locally: a volatile store per operation serialises the
+            // loop and can cost more than the kernel it is meant to measure.
+            double acc = 0.0;
+
             for (int i = 0; i < 4096; ++i)
-                sink += nc::engine::ppqAtSamplesWithMap (map, i * 512, 48000.0);
+                acc += nc::engine::ppqAtSamplesWithMap (map, i * 512, 48000.0);
+
+            sink += acc;
         }));
     }
 
     {
         auto map = nc::engine::constantTempoMap (120.0);
         results.push_back (measure ("tempo_map.seconds_to_ppq", "query", 4096, 250, [&map] {
+            double acc = 0.0;
+
             for (int i = 0; i < 4096; ++i)
-                sink += nc::engine::secondsToPpq (map, i * 0.01);
+                acc += nc::engine::secondsToPpq (map, i * 0.01);
+
+            sink += acc;
         }));
     }
 
     // --- clip timeline: the per-sample clip test inside the render pass ---
     {
         results.push_back (measure ("clip_timeline.clip_active_at", "query", 8192, 250, [] {
+            double acc = 0.0;
+
             for (int i = 0; i < 8192; ++i)
             {
                 const auto t = static_cast<double> (i) * 0.01;
-                sink += nc::engine::clipActiveAt (t, 1.5, 4.0) ? 1.0 : 0.0;
+                acc += nc::engine::clipActiveAt (t, 1.5, 4.0) ? 1.0 : 0.0;
             }
+
+            sink += acc;
         }));
     }
 
@@ -168,26 +198,34 @@ int main (int argc, char** argv)
     {
         nc::engine::SpscQueue<int> queue (2048);
         results.push_back (measure ("spsc_queue.push_pop", "item", 1000000, 1, [&queue] {
+            double acc = 0.0;
+
             for (int i = 0; i < 1000000; ++i)
             {
                 queue.tryPush (i);
                 int out = 0;
                 if (queue.tryPop (out))
-                    sink += out;
+                    acc += out;
             }
+
+            sink += acc;
         }));
     }
 
     // --- streaming window planning: what the reader thread asks the disk for ---
     {
         results.push_back (measure ("stream_window.plan_and_plan_read", "query", 1000000, 1, [] {
+            double acc = 0.0;
+
             for (int64_t i = 0; i < 1000000; ++i)
             {
                 const auto target = nc::engine::planWindow (i * 64, 48000 * 600, 48000 * 4);
                 const auto resident = nc::engine::planWindow (i * 64 - 48000, 48000 * 600, 48000 * 4);
                 const auto read = nc::engine::planRead (resident, target);
-                sink += static_cast<double> (read.startFrame);
+                acc += static_cast<double> (read.startFrame);
             }
+
+            sink += acc;
         }));
     }
 
@@ -200,11 +238,15 @@ int main (int argc, char** argv)
 
         bank.build (44100.0, 48000.0);
         results.push_back (measure ("resample.weights_lookup", "lookup", 1000000, 1, [&bank] {
+            double acc = 0.0;
+
             for (int i = 0; i < 1000000; ++i)
             {
                 const auto* weights = bank.weights (static_cast<double> (i % 1000) / 1000.0);
-                sink += weights != nullptr ? weights[i % nc::engine::resample::taps] : 0.0;
+                acc += weights != nullptr ? weights[i % nc::engine::resample::taps] : 0.0;
             }
+
+            sink += acc;
         }));
     }
 
@@ -260,6 +302,9 @@ int main (int argc, char** argv)
     json << "  \"run\": {\n";
     json << "    \"utc\": \"" << utcNow() << "\",\n";
     json << "    \"hardware_threads\": " << std::thread::hardware_concurrency() << ",\n";
+    // Bump when the measurement changes shape, so a baseline captured with an
+    // older harness is not compared against a newer one by accident.
+    json << "    \"harness\": 2,\n";
     json << "    \"passes\": " << passes << "\n";
     json << "  },\n";
     json << "  \"kernels\": [\n";

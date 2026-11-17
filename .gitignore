@@ -28,3 +28,6 @@ keystore.properties
 Recorded Takes/
 # coverage tooling output
 LastCoverageResults.log
+
+abr.json
+verify-wheel-app.png

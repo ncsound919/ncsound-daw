@@ -707,3 +707,71 @@ TEST_CASE ("a cancelled scan never writes a truncated index", "[catalog]")
 
     dir.deleteRecursively();
 }
+
+TEST_CASE ("Missing means not installed, never still-scanning", "[catalog]")
+{
+    std::vector<nc::PluginInfo> registry;
+    registry.push_back (registryInfo ("a", "A", "effect", nc::PluginStatus::external, "A"));
+
+    // A slow backend keeps the scan open long enough to observe the row mid-scan.
+    nc::PluginCatalog* catalogPtr = nullptr;
+    std::atomic<bool> sawScanning { false };
+    std::atomic<bool> missingWhileScanning { false };
+
+    auto backend = std::make_unique<FakeScannerBackend> (nc::ScannerReply {});
+    backend->bundles = { "a.vst3" };
+    backend->onScan = [&] (int)
+    {
+        if (catalogPtr != nullptr && catalogPtr->isScanning())
+        {
+            sawScanning.store (true);
+            const auto rows = catalogPtr->snapshot();
+            for (const auto& row : rows)
+                if (row.id == "a" && catalogPtr->isMissing (row))
+                    missingWhileScanning.store (true);
+        }
+
+        juce::Thread::sleep (20);
+        return nc::ScannerReply {};
+    };
+
+    nc::PluginCatalog catalog (registry, std::move (backend));
+    catalogPtr = &catalog;
+
+    // Before any scan the row is simply "not scanned yet".
+    for (const auto& row : catalog.snapshot())
+        if (row.id == "a")
+            CHECK_FALSE (catalog.isMissing (row));
+
+    catalog.scanSync();
+
+    REQUIRE (sawScanning.load());
+    CHECK_FALSE (missingWhileScanning.load());
+
+    // After a completed scan that found nothing, the row is Missing.
+    bool missingAfterScan = false;
+    for (const auto& row : catalog.snapshot())
+        if (row.id == "a")
+            missingAfterScan = catalog.isMissing (row);
+    CHECK (missingAfterScan);
+
+    // A rescan that finds the bundle clears it: Missing is never permanent.
+    nc::PluginCatalog* secondPtr = nullptr;
+    auto secondBackend = std::make_unique<FakeScannerBackend> (nc::ScannerReply {});
+    secondBackend->bundles = { "a.vst3" };
+    secondBackend->onScan = [] (int) { return nc::ScannerReply {}; };
+
+    nc::PluginCatalog again (registry, std::move (secondBackend));
+    secondPtr = &again;
+
+    nc::ScannerReply found;
+    found.ok = true;
+    found.descriptionsXml = descriptionsXml ({ makeDescription ("A", "C:/VST3/A.vst3", 601) });
+
+    nc::PluginCatalog scanned (registry, std::make_unique<FakeScannerBackend> (found));
+    scanned.mergeScannedDescriptions ({ makeDescription ("A", "C:/VST3/A.vst3", 601) });
+
+    for (const auto& row : scanned.snapshot())
+        if (row.id == "a")
+            CHECK_FALSE (scanned.isMissing (row));
+}

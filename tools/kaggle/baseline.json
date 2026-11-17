@@ -1,20 +1,22 @@
 {
   "schema": "nc-bench/1",
   "run": {
-    "utc": "2026-11-17T00:42:33Z",
+    "utc": "2026-11-17T03:15:32Z",
     "hardware_threads": 4,
+    "harness": 2,
     "passes": 3
   },
   "kernels": [
-    { "name": "tempo_map.ppq_at_samples", "units": "query", "ops": 4096, "ns_per_op": 44.219, "ns_total": 45280100.000 },
-    { "name": "tempo_map.seconds_to_ppq", "units": "query", "ops": 4096, "ns_per_op": 40.981, "ns_total": 41964300.000 },
-    { "name": "clip_timeline.clip_active_at", "units": "query", "ops": 8192, "ns_per_op": 43.491, "ns_total": 89069500.000 },
-    { "name": "spsc_queue.push_pop", "units": "item", "ops": 1000000, "ns_per_op": 6.164, "ns_total": 6163900.000 },
-    { "name": "stream_window.plan_and_plan_read", "units": "query", "ops": 1000000, "ns_per_op": 11.435, "ns_total": 11435300.000 },
-    { "name": "resample.bank_build", "units": "build", "ops": 1, "ns_per_op": 806959.500, "ns_total": 161391900.000 },
-    { "name": "resample.weights_lookup", "units": "lookup", "ops": 1000000, "ns_per_op": 51.414, "ns_total": 51413800.000 },
-    { "name": "export.measure_loudness_10s", "units": "buffer", "ops": 1, "ns_per_op": 270888540.000, "ns_total": 1354442700.000 },
-    { "name": "export.apply_tpdf_dither_10s", "units": "sample", "ops": 480000, "ns_per_op": 9.146, "ns_total": 21950500.000 },
-    { "name": "midi_schedule.clip_block", "units": "event", "ops": 2000, "ns_per_op": 7.439, "ns_total": 1487800.000 }
+    { "name": "harness.baseline_loop", "units": "op", "ops": 4096, "ns_per_op": 1.770, "ns_total": 1812656.000 },
+    { "name": "tempo_map.ppq_at_samples", "units": "query", "ops": 4096, "ns_per_op": 6.877, "ns_total": 7041684.000 },
+    { "name": "tempo_map.seconds_to_ppq", "units": "query", "ops": 4096, "ns_per_op": 5.300, "ns_total": 5427261.000 },
+    { "name": "clip_timeline.clip_active_at", "units": "query", "ops": 8192, "ns_per_op": 3.811, "ns_total": 7804844.000 },
+    { "name": "spsc_queue.push_pop", "units": "item", "ops": 1000000, "ns_per_op": 3.195, "ns_total": 3194815.000 },
+    { "name": "stream_window.plan_and_plan_read", "units": "query", "ops": 1000000, "ns_per_op": 2.664, "ns_total": 2663976.000 },
+    { "name": "resample.bank_build", "units": "build", "ops": 1, "ns_per_op": 431998.095, "ns_total": 86399619.000 },
+    { "name": "resample.weights_lookup", "units": "lookup", "ops": 1000000, "ns_per_op": 10.122, "ns_total": 10121971.000 },
+    { "name": "export.measure_loudness_10s", "units": "buffer", "ops": 1, "ns_per_op": 39177419.400, "ns_total": 195887097.000 },
+    { "name": "export.apply_tpdf_dither_10s", "units": "sample", "ops": 480000, "ns_per_op": 4.912, "ns_total": 11788269.000 },
+    { "name": "midi_schedule.clip_block", "units": "event", "ops": 2000, "ns_per_op": 3.447, "ns_total": 689375.000 }
   ]
 }

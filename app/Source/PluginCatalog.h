@@ -55,6 +55,12 @@ public:
 
     std::vector<PluginInfo> asPluginInfo() const;
 
+    /** One place decides what the browser calls "Missing": a registry row that
+        a *completed* scan still cannot find on disk. Before the first scan and
+        during one, nothing is missing -- the disk simply has not been checked
+        yet -- and a row the scan did find is never missing. */
+    bool isMissing (const CatalogEntry& entry) const;
+
     void scanAsync (std::function<void (bool, juce::String)> finished = {});
     int scanSync();
     void cancelScan();
@@ -123,6 +129,9 @@ private:
 
     std::atomic<bool> scanning { false };
     std::atomic<bool> cancelRequested { false };
+    /** True once a scan has run to completion. Before the first one nothing on
+        disk has been checked, so no row may be called Missing yet. */
+    std::atomic<bool> scanCompleted { false };
     std::atomic<float> progress { 0.0f };
     mutable juce::CriticalSection statusLock;
     juce::String statusText;

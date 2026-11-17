@@ -42,16 +42,36 @@ endforeach()
 
 install(DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/../docs/" DESTINATION "docs" COMPONENT docs OPTIONAL)
 
+# CPack's NSIS generator emits `File /r "${INST_DIR}\plugins\*.*"` per component,
+# and NSIS's *.* wildcard does not match bare directories. The plugins component
+# holds only bundle folders (Standalone/, VST3/*.vst3/), so that section had no
+# files to install and the NSIS script aborted before producing an installer.
+# One file at the top of the component keeps the section valid; it is also a
+# useful note in the installed tree.
+set(NC_PLUGINS_LAYOUT "${CMAKE_CURRENT_BINARY_DIR}/plugins-layout.txt")
+file(WRITE "${NC_PLUGINS_LAYOUT}"
+     "NCSound DAW plug-ins\n\n"
+     "Standalone/  standalone application build\n"
+     "VST3/        VST3 bundles; copy this folder into your VST3 directory\n")
+install(FILES "${NC_PLUGINS_LAYOUT}" DESTINATION "plugins" COMPONENT plugins)
+
 # Package only our components. Without this, JUCE's own juceaide install rule
 # (no component) lands a compiler tool in bin/ inside the product archive.
 set(CPACK_COMPONENTS_ALL "plugins;docs")
 
 set(CPACK_GENERATOR "ZIP")
 if(WIN32)
-    find_program(NC_MAKENSIS_EXECUTABLE makensis)
+    # NSIS is open source and runs from an extracted zip, so the installer does
+    # not require a system-wide install: point NC_MAKENSIS at a makensis.exe, or
+    # drop the NSIS zip's contents beside the checkout.
+    find_program(NC_MAKENSIS_EXECUTABLE makensis
+                 HINTS "${NC_MAKENSIS}" "$ENV{NC_MAKENSIS}"
+                       "${CMAKE_CURRENT_LIST_DIR}/../tools/nsis"
+                 PATH_SUFFIXES Bin)
     find_program(NC_WIX_CANDLE_EXECUTABLE candle)
     if(NC_MAKENSIS_EXECUTABLE)
         list(APPEND CPACK_GENERATOR "NSIS64")
+        set(CPACK_NSIS_EXECUTABLE "${NC_MAKENSIS_EXECUTABLE}")
     elseif(NC_WIX_CANDLE_EXECUTABLE)
         list(APPEND CPACK_GENERATOR "WIX")
     endif()

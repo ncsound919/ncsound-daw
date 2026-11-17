@@ -1,0 +1,17 @@
+{
+  "id": "terrenceperry/ncsound-daw-engine-verify",
+  "title": "NCSound DAW engine verify",
+  "code_file": "notebook.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_internet": false,
+  "enable_tpu": false,
+  "dataset_sources": [
+    "terrenceperry/ncsound-daw-src"
+  ],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "model_sources": []
+}

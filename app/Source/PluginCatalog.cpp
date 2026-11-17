@@ -57,6 +57,14 @@ std::optional<juce::PluginDescription> PluginCatalog::findDescription (const juc
     return std::nullopt;
 }
 
+bool PluginCatalog::isMissing (const CatalogEntry& entry) const
+{
+    return entry.external
+        && ! entry.scanned
+        && scanCompleted.load (std::memory_order_acquire)
+        && ! isScanning();
+}
+
 std::vector<PluginInfo> PluginCatalog::asPluginInfo() const
 {
     std::vector<PluginInfo> result;
@@ -106,6 +114,12 @@ int PluginCatalog::scanSync()
     progress.store (0.0f, std::memory_order_relaxed);
     auto result = scanAll();
     mergeScannedDescriptions (std::move (result.descriptions));
+
+    // A cancelled scan has not checked the whole disk, so it must not turn
+    // rows Missing: only a complete pass may make that claim.
+    if (! cancelRequested.load (std::memory_order_acquire))
+        scanCompleted.store (true, std::memory_order_release);
+
     // Progress first: isScanning() is what a poller watches, so the final
     // reading must already be visible when it turns false.
     progress.store (1.0f, std::memory_order_relaxed);
@@ -208,6 +222,10 @@ void PluginCatalog::run()
 
         const auto cancelled = cancelRequested.load (std::memory_order_acquire);
         mergeScannedDescriptions (std::move (result.descriptions));
+
+        if (! cancelled)
+            scanCompleted.store (true, std::memory_order_release);
+
         progress.store (1.0f, std::memory_order_relaxed);
         scanning.store (false, std::memory_order_release);
 

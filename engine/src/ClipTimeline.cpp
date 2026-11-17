@@ -91,13 +91,17 @@ double clipGainCrossfadeAt (double localSeconds,
     constexpr double halfPi = 1.5707963267948966;
     auto gain = 1.0;
 
-    if (safeFadeIn > 0.0)
+    // Outside both fade regions the gain is exactly 1: clamping t or remaining
+    // to 1 and taking sin (halfPi) returns 1. The previous form evaluated two
+    // sines for every sample of every faded clip, including the body in the
+    // middle, which measured as the second-largest cost in the clip pass.
+    if (safeFadeIn > 0.0 && localSeconds < safeFadeIn)
     {
         const auto t = std::clamp (localSeconds / safeFadeIn, 0.0, 1.0);
         gain = std::min (gain, std::sin (t * halfPi));
     }
 
-    if (safeFadeOut > 0.0)
+    if (safeFadeOut > 0.0 && localSeconds > lengthSeconds - safeFadeOut)
     {
         // Remaining fraction: 1 at fade start, 0 at the clip end.
         // Equal-power outgoing gain is cos(progress*PI/2) == sin(remaining*PI/2).

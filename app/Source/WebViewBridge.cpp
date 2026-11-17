@@ -372,11 +372,9 @@ juce::var MainComponent::buildState() const
         p->setProperty ("category", entry.isInstrument ? "instrument" : "effect");
         p->setProperty ("format", entry.description.pluginFormatName);
         p->setProperty ("path", entry.description.fileOrIdentifier);
-        // "Missing" means not installed, not "the startup scan has not reached
-        // it yet". Rows were disabled for the whole scan, so nothing could load.
-        p->setProperty ("missing",
-                        entry.external && ! entry.scanned
-                            && ! engine.pluginCatalog().isScanning());
+        // The catalog owns this rule: "missing" means not installed, never
+        // "the startup scan has not reached it yet".
+        p->setProperty ("missing", engine.pluginCatalog().isMissing (entry));
         p->setProperty ("scanned", entry.scanned);
         p->setProperty ("registryRow", entry.registryRow);
         plugins.add (juce::var (p));
