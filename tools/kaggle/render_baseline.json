@@ -1,0 +1,20 @@
+{
+  "schema": "nc-bench/1",
+  "run": {
+    "utc": "2026-11-17T01:38:03Z",
+    "kind": "render_block",
+    "sample_rate": 44100.000,
+    "tracks_with_clips": 16,
+    "clips": 128,
+    "blocks": 600,
+    "passes": 3
+  },
+  "kernels": [
+    { "name": "render_block.idle.64", "units": "block", "ops": 64, "ns_per_op": 671545.333, "ns_total": 671545.333, "realtime_factor": 2.161 },
+    { "name": "render_block.idle.256", "units": "block", "ops": 256, "ns_per_op": 3111030.167, "ns_total": 3111030.167, "realtime_factor": 1.866 },
+    { "name": "render_block.idle.512", "units": "block", "ops": 512, "ns_per_op": 5942857.500, "ns_total": 5942857.500, "realtime_factor": 1.954 },
+    { "name": "render_block.timeline.64", "units": "block", "ops": 64, "ns_per_op": 1445413.167, "ns_total": 1445413.167, "realtime_factor": 1.004 },
+    { "name": "render_block.timeline.256", "units": "block", "ops": 256, "ns_per_op": 6186106.000, "ns_total": 6186106.000, "realtime_factor": 0.938 },
+    { "name": "render_block.timeline.512", "units": "block", "ops": 512, "ns_per_op": 12120256.333, "ns_total": 12120256.333, "realtime_factor": 0.958 }
+  ]
+}

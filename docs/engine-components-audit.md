@@ -5,9 +5,9 @@ the user, not by size: a component that can glitch or crash playback outranks a
 big function that is merely hard to read.
 
 Each entry says what the evidence is, what the failure would look like, and the
-smallest change that removes the risk. The benchmark in `tools/kaggle/` covers
-the pure-engine kernels; the block path is not covered yet, which is itself the
-first gap.
+smallest change that removes the risk. `tools/kaggle/` covers the pure-engine
+kernels; `NCBenchRender` covers the block path on Windows (see the README), so
+every item below can now be measured before and after.
 
 ## 1. Streaming cache slot reuse (audio-thread data race)
 
@@ -54,11 +54,16 @@ This may or may not be the intermittent 0xC0000374: the crash here is
 `0xC0000005`, reproduced on demand, not the 0xC0000374 abort. Treat them as
 separate until proven otherwise.
 
-Next step: make the "is a callback running" question answerable without
-`deviceOpen` (a dedicated counter that `processBlockForTesting` also bumps), so
-the rule is enforced by the engine rather than by a comment in a test. After
-that, enable the Windows heap verifier (`gflags /p /enable NCMixRackTests.exe
-/full`) in a soak run and treat the first hit as the reproducer.
+Done since: `testBlocksInFlight` is that counter. `processBlockForTesting` bumps
+it around the render and counts the block, and reclaim treats
+`deviceOpen || testBlocksInFlight > 0` as "a callback may be reading", so the
+mid-flight poll in the test now takes the two-block path. The test drains the
+lists while the block thread is still running, which fails if reclaim ever falls
+back to the free-everything case.
+
+Remaining: the intermittent `0xC0000374` still has no reproducer. Enable the
+Windows heap verifier (`gflags /p /enable NCMixRackTests.exe /full`) in a soak
+run and treat the first hit as it.
 
 ## 3. `renderStripPass` (211 lines, per-sample hot path)
 
@@ -108,7 +113,10 @@ is the one that would expose a mistake in the retirement rule first.
 
 ## Order of work
 
-1. Block-path benchmark (Windows, no device) so any change below can be measured.
+1. ~~Block-path benchmark~~ done: `NCBenchRender`, baseline in
+   `tools/kaggle/render_baseline.json`. It already answers the first question
+   (see below): idle at 512 frames costs 5.9 ms on this box, so per-track work
+   that runs with nothing playing dominates before any clip does.
 2. Streaming slot stamping (audit item 1) with a test that plays a streamed
    asset across a refill.
 3. Heap verifier soak (item 2) — gates all optimisation, because a corruption

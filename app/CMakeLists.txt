@@ -33,15 +33,10 @@ if (MSVC)
     target_compile_options(nc_mixrack PRIVATE /utf-8 /EHsc)
 endif()
 
-juce_add_console_app(NCMixRackTests PRODUCT_NAME "NCMixRackTests")
-
-target_sources(NCMixRackTests PRIVATE
-    Source/MixRackTests.cpp
-    Source/TrackInsertTests.cpp
-    Source/PluginCatalogTests.cpp
-    Source/PluginRegistryTests.cpp
-    Source/MidiLearnManagerTests.cpp
-    Source/VstHostSmokeTests.cpp
+# Sources shared by the test binary and the render bench: the engine plus the
+# hosting, automation and rack support it links against. One list, so a new
+# engine TU cannot land in the tests and go missing from the bench.
+set(NC_APP_ENGINE_SOURCES
     Source/PluginEditorWindow.cpp
     Source/HostedInsert.cpp
     Source/BuiltinSynth.cpp
@@ -72,6 +67,18 @@ target_sources(NCMixRackTests PRIVATE
     Source/AudioEngineDevices.cpp
     Source/AudioEngineMix.cpp
     Source/PluginHost.cpp
+)
+
+juce_add_console_app(NCMixRackTests PRODUCT_NAME "NCMixRackTests")
+
+target_sources(NCMixRackTests PRIVATE
+    Source/MixRackTests.cpp
+    Source/TrackInsertTests.cpp
+    Source/PluginCatalogTests.cpp
+    Source/PluginRegistryTests.cpp
+    Source/MidiLearnManagerTests.cpp
+    Source/VstHostSmokeTests.cpp
+    ${NC_APP_ENGINE_SOURCES}
     Source/ExportTests.cpp
     Source/PlaybackResampleTests.cpp
     Source/AuxBusTests.cpp
@@ -121,6 +128,25 @@ endif()
 # Registered with CTest so `ctest` and CI actually run this suite; without it the
 # 52k assertions below only run when the binary is started by hand.
 add_test(NAME mix_rack COMMAND NCMixRackTests)
+
+# Block-path benchmark: measures one renderBlock at realistic block sizes. Needs
+# the real engine and JUCE, so it lives here rather than in tests/, and it is not
+# a ctest entry - it measures, it does not assert.
+juce_add_console_app(NCBenchRender PRODUCT_NAME "NCBenchRender")
+target_sources(NCBenchRender PRIVATE Source/RenderBench.cpp ${NC_APP_ENGINE_SOURCES})
+target_compile_definitions(NCBenchRender PRIVATE JUCE_PLUGINHOST_VST3=1)
+target_link_libraries(NCBenchRender PRIVATE
+    nc_mixrack
+    NCSoundFonts
+    juce::juce_audio_processors
+    juce::juce_audio_basics
+    juce::juce_audio_devices
+    juce::juce_audio_formats
+    juce::juce_core)
+
+if (MSVC)
+    target_compile_options(NCBenchRender PRIVATE /utf-8 /EHsc)
+endif()
 
 # Manual gate tool for the child-process plugin scanner; not part of a normal build.
 juce_add_console_app(NCScannerProbe PRODUCT_NAME "NCScannerProbe")

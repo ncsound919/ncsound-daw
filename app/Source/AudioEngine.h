@@ -646,6 +646,10 @@ private:
     std::atomic<int> activeTrackCount { nc::limits::defaultActiveTracks };
     std::atomic<int> bufferSize { 0 };
     std::atomic<bool> deviceOpen { false };
+    // Blocks currently inside processBlockForTesting. A harness that drives the
+    // render path on its own thread is a running callback as far as reclaim is
+    // concerned, and deviceOpen cannot see it (a suspended device looks idle).
+    std::atomic<int> testBlocksInFlight { 0 };
     std::atomic<float> dspLoadValue { 0.0f };
     // Callbacks that ran longer than the device budget (elapsed > blockSize /
     // rate). Every one is a guaranteed audible dropout: the device had already

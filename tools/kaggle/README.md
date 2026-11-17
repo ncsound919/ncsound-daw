@@ -83,10 +83,29 @@ iterations, fn)`, keep `ops` the number of logical operations per call so
 `ns_per_op` stays comparable, and give it a stable name. Do not rename existing
 kernels: the baseline is keyed by name.
 
-## Still to do before optimising
+## The block path (Windows only)
 
-The harness covers the pure engine only. The block render path (`renderBlock`
-and its four passes) needs a Windows bench target that drives
-`processBlockForTesting` without a device, so its cost per block can be tracked
-the same way. That is the next piece, and it has to live in `app/` because it
-needs the JUCE types.
+`NCBenchRender` (built from `app/`, not `tests/`) drives the real
+`renderBlock` with no audio device, at 64/256/512 frames, in two scenarios:
+`idle` (transport running, nothing to render) and `timeline` (demo assets on
+every track that has one, 8 clips each). It emits the same `nc-bench/1` schema
+plus a `realtime_factor` per row, where 1.0 means the block consumed its whole
+budget.
+
+```bash
+cmake --build build --target NCBenchRender
+build/app/NCBenchRender_artefacts/Release/NCBenchRender.exe --json out.json
+```
+
+`tools/kaggle/render_baseline.json` is the current reference: 44.1 kHz,
+16 tracks, 128 clips.
+
+```
+render_block.idle.512        5.94 ms   1.95x realtime
+render_block.timeline.512   12.12 ms   0.96x realtime
+render_block.timeline.64     1.45 ms   1.00x realtime
+```
+
+Idle at 512 frames costing 5.9 ms means most of the block is per-track work
+that runs whether or not anything is playing. That is the first thing an
+optimisation pass should look at, and it is why the idle row exists.

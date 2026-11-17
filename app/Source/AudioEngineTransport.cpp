@@ -370,11 +370,17 @@ int AudioEngine::retainedSnapshotCount() const noexcept
 void AudioEngine::reclaimRetiredSnapshots()
 {
     // Called from the message thread, by the same poll that collects retired
-    // inserts. With no device open there is no callback, so every retired
-    // snapshot is safe to free. Otherwise a block runs only after the previous
-    // one returned, so once a later block has started, any block that loaded an
-    // old pointer before the swap has finished with it.
-    const bool callbackRunning = deviceOpen.load (std::memory_order_acquire);
+    // inserts. A block runs only after the previous one returned, so once a
+    // later block has started, any block that loaded an old pointer before the
+    // swap has finished with it.
+    //
+    // "A block may be reading" is not the same question as "a device is open":
+    // processBlockForTesting renders on the caller's thread with the device
+    // suspended, and tests, the render bench and any headless harness use it. So
+    // both sources count, and with neither present every retired snapshot is
+    // safe to free at once.
+    const bool callbackRunning = deviceOpen.load (std::memory_order_acquire)
+                                 || testBlocksInFlight.load (std::memory_order_acquire) > 0;
     const auto now = clock.blockCount();
 
     auto sweep = [callbackRunning, now] (auto& list)

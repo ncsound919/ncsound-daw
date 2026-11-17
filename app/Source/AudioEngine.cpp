@@ -369,6 +369,20 @@ void AudioEngine::processBlockForTesting (const float* const* inputChannelData,
                                           int numOutputChannels,
                                           int numSamples)
 {
+    // Mirrors one device callback exactly where lifetime matters: the block
+    // counter advances, and the in-flight count makes this block visible to
+    // reclaimRetiredSnapshots. Without the counter a harness that renders on its
+    // own thread with the device suspended looks idle, so a poll on the message
+    // thread freed snapshots this block was still reading (0xC0000005).
+    testBlocksInFlight.fetch_add (1, std::memory_order_acq_rel);
+    clock.countBlock();
+
+    struct InFlightGuard
+    {
+        std::atomic<int>& count;
+        ~InFlightGuard() { count.fetch_sub (1, std::memory_order_acq_rel); }
+    } inFlight { testBlocksInFlight };
+
     renderBlock (inputChannelData, numInputChannels, outputChannelData, numOutputChannels, numSamples);
 }
 

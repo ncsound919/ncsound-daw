@@ -94,13 +94,13 @@ TEST_CASE ("publishing while blocks run keeps snapshots alive until a later bloc
         engine.setMidiClips ({});
         engine.setPlaying ((i % 2) == 0);
 
-        // Deliberately no pollRetiredInserts() here. Reclaim treats an unopened
-        // device as "no callback can be running" and frees every retired
-        // snapshot at once; this test renders on its own thread with the device
-        // suspended, so polling mid-flight frees memory the block still holds
-        // and crashes (reproduced: access violation inside the publish loop).
-        // On a real device the two-block rule covers the same case, which is
-        // why this only bites a harness that drives blocks without one.
+        // Reclaiming while blocks run is the rule under test: processBlockFor-
+        // Testing counts as an in-flight callback, so this poll takes the
+        // two-block path instead of the "device is idle, free everything" one.
+        // Before that counter existed this exact call freed a snapshot the block
+        // was reading and crashed inside the loop.
+        engine.pollRetiredInserts();
+
         if (i % 8 == 0)
             juce::Thread::sleep (1);
     }
@@ -111,12 +111,33 @@ TEST_CASE ("publishing while blocks run keeps snapshots alive until a later bloc
     for (int i = 0; i < 2000 && blocksRun.load() <= blocksBefore; ++i)
         juce::Thread::sleep (1);
 
+    REQUIRE (blocksRun.load() > blocksBefore);
+
+    // The lists must drain while the block thread is still running: draining
+    // after the join would pass even if reclaim had only ever taken the "no
+    // callback, free everything" path, which is the bug that used to crash here.
+    bool drainedWhileBlocksRan = false;
+    const auto blocksBeforeDrain = blocksRun.load();
+
+    for (int i = 0; i < 600; ++i)
+    {
+        engine.pollRetiredInserts();
+
+        if (engine.retainedSnapshotCount() == 0)
+        {
+            drainedWhileBlocksRan = true;
+            break;
+        }
+
+        juce::Thread::sleep (2);
+    }
+
+    const auto blocksWhileDraining = blocksRun.load();
+
     stop.store (true, std::memory_order_relaxed);
     audio.join();
 
-    REQUIRE (blocksRun.load() > blocksBefore);
-
-    REQUIRE (blocksRun.load() > 0);
-    REQUIRE (drainRetiredSnapshots (engine));
+    REQUIRE (drainedWhileBlocksRan);
+    REQUIRE (blocksWhileDraining > blocksBeforeDrain);
     REQUIRE (engine.retainedSnapshotCount() == 0);
 }
