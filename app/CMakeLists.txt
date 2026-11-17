@@ -98,7 +98,11 @@ target_sources(NCMixRackTests PRIVATE
     Source/SnapshotReclaimTests.cpp
     Source/PianoRollWindow.cpp
     Source/PianoRollWindowTests.cpp
-    Source/WindowLifetimeTests.cpp)
+    Source/WindowLifetimeTests.cpp
+    Source/ProjectFile.cpp
+    Source/ProjectRoundTripTests.cpp
+    Source/ExportFileTests.cpp
+    Source/SoakTests.cpp)
 
 target_link_libraries(NCMixRackTests PRIVATE
     nc_mixrack
@@ -318,3 +322,7 @@ target_link_libraries(NCSoundHub PRIVATE
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags)
+
+if (NC_ENABLE_PACKAGING)
+    install(TARGETS NCSoundHub RUNTIME DESTINATION . COMPONENT app)
+endif()

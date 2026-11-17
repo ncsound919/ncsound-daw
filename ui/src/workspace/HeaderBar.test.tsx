@@ -56,3 +56,32 @@ describe("HeaderBar master A/B", () => {
     ).toBeDisabled();
   });
 });
+
+describe("HeaderBar status reporting", () => {
+  it("renders status when provided", () => {
+    render(
+      <HeaderBar
+        {...headerProps({ status: "EXPORT / no active tracks", statusIsError: true })}
+      />,
+    );
+    const statusEl = screen.getByRole("status");
+    expect(statusEl).toHaveTextContent("EXPORT / no active tracks");
+    expect(statusEl).toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("does not render role status when no status is provided", () => {
+    render(<HeaderBar {...headerProps()} />);
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("renders status without aria-invalid when status is not an error", () => {
+    render(
+      <HeaderBar
+        {...headerProps({ status: "SESSION / cancelled", statusIsError: false })}
+      />,
+    );
+    const statusEl = screen.getByRole("status");
+    expect(statusEl).toHaveTextContent("SESSION / cancelled");
+    expect(statusEl).not.toHaveAttribute("aria-invalid");
+  });
+});

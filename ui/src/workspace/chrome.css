@@ -14,6 +14,29 @@
   box-shadow: inset 0 1.5px 0 rgba(194, 90, 42, 0.62);
 }
 
+.ws-header-status {
+  font-family: var(--ws-mono, monospace);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #a8a096;
+  padding: 2px 8px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  white-space: nowrap;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-header-status.is-error,
+.ws-header-status[aria-invalid="true"] {
+  color: #ff6b6b;
+  border-color: rgba(255, 107, 107, 0.4);
+  background: rgba(255, 80, 80, 0.12);
+}
+
 .ws-logo {
   display: flex;
   align-items: center;

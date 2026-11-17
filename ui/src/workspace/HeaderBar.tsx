@@ -47,6 +47,9 @@ export interface HeaderBarProps {
   onSelectPrevious?: () => void;
   onSelectNext?: () => void;
   onFit?: () => void;
+  /** Session, export, or engine status to surface in the header. */
+  status?: string;
+  statusIsError?: boolean;
 }
 
 type Item = {
@@ -99,6 +102,8 @@ export function HeaderBar({
   onSelectPrevious,
   onSelectNext,
   onFit,
+  status,
+  statusIsError = false,
 }: HeaderBarProps) {
   const [open, setOpen] = useState<number | null>(null);
   const [dialog, setDialog] = useState<"about" | "keys" | "prefs" | null>(null);
@@ -495,6 +500,16 @@ export function HeaderBar({
           </button>
         ))}
       </div>
+
+      {status && (
+        <span
+          role="status"
+          aria-invalid={statusIsError ? "true" : undefined}
+          className={`ws-header-status ${statusIsError ? "is-error" : ""}`}
+        >
+          {status}
+        </span>
+      )}
 
       <span className="ws-spacer" />
 

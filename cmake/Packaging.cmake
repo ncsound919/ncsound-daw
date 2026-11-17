@@ -41,6 +41,7 @@ foreach(plugin IN ITEMS "NCEightOHeight:eightoheight" "NCChopStation:chopstation
 endforeach()
 
 install(DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/../docs/" DESTINATION "docs" COMPONENT docs OPTIONAL)
+install(FILES "${CMAKE_CURRENT_LIST_DIR}/../LICENSE" "${CMAKE_CURRENT_LIST_DIR}/../THIRD-PARTY-NOTICES.md" DESTINATION "." COMPONENT docs OPTIONAL)
 
 # CPack's NSIS generator emits `File /r "${INST_DIR}\plugins\*.*"` per component,
 # and NSIS's *.* wildcard does not match bare directories. The plugins component
@@ -57,7 +58,7 @@ install(FILES "${NC_PLUGINS_LAYOUT}" DESTINATION "plugins" COMPONENT plugins)
 
 # Package only our components. Without this, JUCE's own juceaide install rule
 # (no component) lands a compiler tool in bin/ inside the product archive.
-set(CPACK_COMPONENTS_ALL "plugins;docs")
+set(CPACK_COMPONENTS_ALL "app;plugins;docs")
 
 set(CPACK_GENERATOR "ZIP")
 if(WIN32)
