@@ -85,7 +85,16 @@ export function Browser({
         </span>
         <span className="ws-spacer" />
         {scanning ? (
-          <span className="ws-browser-scanning">SCANNING {Math.round(progress * 100)}%</span>
+          <span className="ws-browser-scanning">
+            <span
+              role="progressbar"
+              aria-valuenow={Math.round(progress * 100)}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
+              SCANNING {Math.round(progress * 100)}%
+            </span>
+          </span>
         ) : null}
         {onScan ? (
           <button

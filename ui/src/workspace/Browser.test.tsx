@@ -42,4 +42,12 @@ describe("Browser", () => {
 
     expect(copies).toEqual(["×2", "×2"]);
   });
+
+  it("shows bundle progress while scanning", () => {
+    const { getByRole } = render(
+      <Browser plugins={[]} scanning={true} progress={0.48} status="12/25" />,
+    );
+    expect(getByRole("progressbar")).toHaveAttribute("aria-valuenow", "48");
+    expect(getByRole("status")).toHaveTextContent("12/25");
+  });
 });
