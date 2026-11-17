@@ -12,6 +12,16 @@ if(MSVC)
     target_compile_options(nc_tests PRIVATE /EHsc)
 endif()
 
+# Component benchmark. Unlike every other target here it needs no test
+# framework and no JUCE, so a Kaggle (or any Linux CI) box with no
+# third_party/JUCE still configures and produces comparable numbers.
+add_executable(nc_bench bench_components.cpp)
+target_link_libraries(nc_bench PRIVATE nc_engine)
+
+if(MSVC)
+    target_compile_options(nc_bench PRIVATE /EHsc)
+endif()
+
 include(CTest)
 include(Catch)
 catch_discover_tests(nc_tests)
