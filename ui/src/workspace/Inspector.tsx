@@ -151,14 +151,20 @@ export function Inspector({
 
   const column = (
     <>
-      <header className="ws-ins-head">
+      <header
+        className="ws-ins-head"
+        style={{ "--tint": tintForTrack(track.index) } as React.CSSProperties}
+      >
         <span className="ws-tint" style={{ background: tintForTrack(track.index) }} />
-        <span className="ws-ins-title">
+        <p className="ws-ins-title">
           <span className="ws-ins-name" title={track.name}>
-            TRACK {track.index + 1}
+            {track.name}
           </span>
-          <span className="ws-ins-sub">{track.instrumentName || "No instrument"}</span>
-        </span>
+          <span className="ws-ins-sub">
+            TRACK {track.index + 1}
+            {track.instrumentName ? ` · ${track.instrumentName}` : ""}
+          </span>
+        </p>
 
         {!compact && (
           <span className="ws-strip-buttons">

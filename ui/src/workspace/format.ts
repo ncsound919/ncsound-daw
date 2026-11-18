@@ -135,16 +135,17 @@ export function fitScale(
   return Math.max(min, Math.min(max, fit));
 }
 
-/** Track identity tints, mirroring theme::trackTints in app/Source/Theme.h. */
+/** Track identity tints. They come from the Overlay module accent map, so the
+ *  workspace never invents a hue outside the protocol's accent set. */
 export const TRACK_TINTS = [
-  "#ff8a3c",
-  "#ff5f3a",
-  "#ffc247",
-  "#8fe06a",
-  "#e8a04c",
-  "#d98b6a",
-  "#4fd6c0",
-  "#e07ab8",
+  "#ff8a00", // eq    — amber
+  "#4dd0e1", // deq   — cyan
+  "#e0a356", // dyn   — sand
+  "#b98cff", // exc   — violet
+  "#6ee7a0", // img   — green
+  "#e0567a", // max   — rose
+  "#35d0d8", // mod   — signal cyan
+  "#ffc98a", // a-hot — warm highlight
 ] as const;
 
 export function tintForTrack(track: number): string {

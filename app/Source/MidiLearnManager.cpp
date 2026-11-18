@@ -249,6 +249,13 @@ void MidiLearnManager::handleIncomingMidiMessage (juce::MidiInput*, const juce::
     if (auto binding = bindingFor (channel, controller, isNote))
     {
         juce::ScopedLock scopedLock (lock);
+
+        // A controller in a tight loop while the message thread is blocked must
+        // not grow the queue without bound. Keep the newest changes; the UI
+        // polls at 30 Hz and a stale step is less useful than a fresh one.
+        if (pendingChanges.size() >= 1024)
+            pendingChanges.pop();
+
         pendingChanges.push ({ *binding, value });
     }
 }

@@ -1196,3 +1196,62 @@ Recording fix in this pass: `TimeSliceThread` for streamed takes is now started
 (and stopped), writers are published per track so the callback never walks the
 take list, the streamed path no longer allocates the 3-minute RAM buffer per
 track, and disk FIFO overflows are counted by `recordOverflows()`.
+
+### Audit correction - 17 November 2026 (`docs/AUDIT-2026-11-17.md`)
+
+The "Readiness to 95%" entry above is superseded by the executed audit. Corrections:
+
+- CTest was **195/196**, not 196/196. Three of the four `[mock]` tests abort
+  (`0xC0000409`, `ucrtbase`) before reporting; the mock take test left a
+  104-byte WAV. The non-mock suite was green (148 cases, 269,003 assertions).
+- The pinned render digest is **`0x22afee9716a36bd2`**, not `0x1b5398dd4a9f297a`.
+  The change is the intended v3 DSP update; the old claim was stale.
+- The 0.39-0.45 DSP-load figure is not reproducible: `NCBenchRender` reports a
+  timeline.512 realtime factor of 0.79 on this machine while another build was
+  loading it. Re-measure on a quiet box and record the result.
+- ESLint had 5 errors (conditional hooks); Prettier failed 11 files. Both are
+  fixed in the tree after this entry.
+- The NSIS installer could not be reproduced (`makensis` missing), its generated
+  script had no app section, and the app needs the VC++ redistributable and the
+  WebView2 Runtime. Gate 3 is open.
+- The Mixology Autopilot defaulted to `D:/assets/earshot-main`, blocked the
+  message thread for the whole render/measure, and had no child-process timeout.
+- Estimated readiness is **approximately 81/100**, not 95. The full evidence is
+  in `docs/AUDIT-2026-11-17.md`.
+
+Recording fix in this pass: `TimeSliceThread` for streamed takes is now started
+(and stopped), writers are published per track so the callback never walks the
+take list, the streamed path no longer allocates the 3-minute RAM buffer per
+track, and disk FIFO overflows are counted by `recordOverflows()`.
+
+---
+
+### UI protocol redo - 17 November 2026
+
+The React workspace now ships the Overlay UI Protocol skin (`docs/UI-PROTOCOL.md`).
+
+- `ui/src/protocol/tokens.css` carries the canonical surface, line, text, accent,
+  type, space, radius, dial and motion tokens.
+- `ui/src/protocol/protocol.css` is loaded last and is the single enforcement
+  layer: it bridges the legacy `--ws-*` names onto the protocol ladder and
+  restyles the header, transport, toolbar, ruler, track heads, clips, mixer,
+  inspector, browser, piano roll, automation, settings, status and menus.
+- Numbers are JetBrains Mono (self-hosted woff2, added to `main.tsx`); labels are
+  9-11 px Archivo caps. Dials draw the 13-graduation ring, dark cap, lit edge,
+  pointer and amber tip dot; readouts split value from unit.
+- Track identity uses the protocol module accent map and still follows the
+  Settings tint / clip-boldness controls through `color-mix()`.
+- Master strip no longer hosts Mixology autopilot or a reference path; Mixology
+  owns that flow. The "MASTER CHAIN" heading and the footer OUT 1–2 label are
+  gone, the monitor switches sit under the insert chain, and the visualizer fills
+  the remaining height.
+- Mixer strips now lead with the track name (TRACK n · instrument below); the
+  pan/send values moved to an unscaled 9 px read row so the scaled dials no longer
+  push type below the floor.
+- Long header menus cap their height and scroll; the master readout canvas uses
+  protocol colours and marks the no-signal state.
+- Fixed the mixer meter-scale calc (`% x %` is invalid; -24/-48 labels were
+  silently zeroed).
+- Audited at 1320x780 and 1120x660: zero overflow on the canvas, cards, strips
+  and decks. `npm run typecheck`, `npm test` (115 UI + 5 uPlot) and
+  `npm run build` pass.

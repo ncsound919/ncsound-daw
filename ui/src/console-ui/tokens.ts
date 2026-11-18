@@ -10,44 +10,44 @@
 //   everything else — neutral ramp. Sub-system chips are the only other hues.
 
 export const color = {
-  bg: "#171615",
-  panel: "#262320",
-  panelHi: "#35312d",
-  panelLo: "#1d1c1a",
-  well: "#101010",
-  track: "#262320",
-  edge: "#040404",
-  text: "#f8e8c8",
-  label: "rgba(248,232,200,0.78)",
-  muted: "rgba(248,232,200,0.58)",
-  value: "#e0824d",
-  valueHot: "#ffd9b0",
-  lcdText: "#ffae3a",
-  lcdBg: "#151413",
-  mod: "#e4a15c",
-  modSoft: "#ffd9b0",
-  danger: "#e0503c",
-  meterLow: "#7fd8a0",
-  meterMid: "#d8b22e",
-  meterHigh: "#e0503c",
+  bg: "#0e0e11",
+  panel: "#141417",
+  panelHi: "#202026",
+  panelLo: "#1a1a1f",
+  well: "#0a0a0c",
+  track: "#26262c",
+  edge: "#26262c",
+  text: "#f1eee7",
+  label: "#b5b0a6",
+  muted: "#8b867d",
+  value: "#ff8a00",
+  valueHot: "#ffc98a",
+  lcdText: "#ffb347",
+  lcdBg: "#120c05",
+  mod: "#35d0d8",
+  modSoft: "#a9f0f4",
+  danger: "#ff5a4a",
+  meterLow: "#55d18b",
+  meterMid: "#ff8a00",
+  meterHigh: "#ff5a4a",
 } as const;
 
-/** Sub-system chips — warm family only (workspace accent discipline). */
+/** Sub-system chips — the protocol's module accent map, nothing invented. */
 export const system = {
-  source: "#e0c48a",
-  filter: "#e0824d",
-  env: "#f8e8c8",
-  colour: "#e4a15c",
-  mod: "#e4a15c",
-  dynamics: "#e0503c",
-  out: "#f8e8c8",
+  source: "#e0a356",
+  filter: "#ff8a00",
+  env: "#f1eee7",
+  colour: "#b98cff",
+  mod: "#35d0d8",
+  dynamics: "#e0567a",
+  out: "#f1eee7",
 } as const;
 
 /**
- * Knob diameters on a perfect-fourth (4:3) scale. "s" is retired: it renders
- * at M because 28 px was too small to hit reliably. Use a Slider for extras.
+ * Dial ladder from the UI protocol: 34 / 42 / 54 / 68 / 82. "s" is retired and
+ * renders at sm; use a Slider below that.
  */
-export const knobSize = { s: 48, m: 48, l: 62, xl: 78, xxl: 96 } as const;
+export const knobSize = { s: 42, m: 54, l: 68, xl: 82, xxl: 96 } as const;
 export type KnobSize = keyof typeof knobSize;
 
 /** Invisible hit margin around every knob, each side. */
@@ -68,10 +68,10 @@ export const WHEEL_STEP_FINE = 0.002;
 export const FRAME_MS = 32;
 
 export const font = {
-  ui: "'DIN Neuzeit', 'Archivo Variable', system-ui, sans-serif",
-  mono: "'DIN Neuzeit', ui-monospace, monospace",
+  ui: "'Archivo Variable', Archivo, 'Segoe UI', sans-serif",
+  mono: "'JetBrains Mono', ui-monospace, 'Cascadia Mono', monospace",
   googleCss:
-    "https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=Share+Tech+Mono&display=swap",
+    "https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=JetBrains+Mono:wght@400;500&display=swap",
 } as const;
 
 export function alpha(hex: string, a: number): string {

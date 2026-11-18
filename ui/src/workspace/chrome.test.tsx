@@ -307,10 +307,30 @@ describe("edit menu parity", () => {
     render(<Workspace state={STATE} transport={TRANSPORT} actions={actions()} />);
 
     fireEvent.click(screen.getByRole("button", { name: "EDIT" }));
-    for (const name of [/MIDI Learn/, /Add Marker/, /Reverse Clip/, /Automix/]) {
+    for (const name of [/MIDI Learn/, /Automix/]) {
       const item = screen.getByRole("menuitem", { name });
       expect(item).toBeDisabled();
       expect(item.title).toMatch(/Desktop app/);
     }
+  });
+
+  it("routes the marker and AudioSuite entries to the host actions", () => {
+    const marker = vi.fn();
+    const reverse = vi.fn();
+    render(
+      <Workspace
+        state={STATE}
+        transport={TRANSPORT}
+        actions={{ ...actions(), addMarker: marker, reverseClip: reverse }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "EDIT" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Add Marker/ }));
+    expect(marker).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "EDIT" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Reverse Clip/ }));
+    expect(reverse).toHaveBeenCalledTimes(1);
   });
 });

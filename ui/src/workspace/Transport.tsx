@@ -38,6 +38,8 @@ export function Transport({
   // Silence reads as an em dash, not a fabricated -60 dB.
   const masterPeak = Math.max(transport.masterPeakLeft, transport.masterPeakRight);
   const masterDb = masterPeak <= 0.001 ? "—" : dbLabel(20 * Math.log10(masterPeak));
+  const masterDbNum =
+    masterPeak <= 0.001 ? -60 : Math.max(-60, Math.min(0, 20 * Math.log10(masterPeak)));
 
   const beginBpmDrag = (event: React.PointerEvent<HTMLDivElement>) => {
     drag.current = { y: event.clientY, bpm: transport.bpm };
@@ -180,14 +182,14 @@ export function Transport({
         tabIndex={0}
       >
         <span className="ws-lcd-value">{transport.bpm.toFixed(1)}</span>
-        <span className="ws-lcd-caption">BPM / TEMPO</span>
+        <span className="ws-lcd-caption">BPM</span>
       </div>
 
       {/* Committed time signature: the engine assumes 4/4 (beatsPerBar=4),
           so this is a fact readout, not an editable control. */}
       <div className="ws-lcd" title="Signature (4/4, fixed by the engine)">
         <span className="ws-lcd-value">4/4</span>
-        <span className="ws-lcd-caption">4 BEATS</span>
+        <span className="ws-lcd-caption">BEATS</span>
       </div>
 
       {globalPitch && onGlobalPitch && (
@@ -197,8 +199,23 @@ export function Transport({
         </div>
       )}
 
-      <div className="ws-meter ws-meter-fill-space" title="Master peak">
-        <span className="ws-meter-label">MASTER {masterDb}</span>
+      <div
+        className="ws-meter ws-meter-fill-space"
+        title="Master peak"
+        role="meter"
+        aria-label="Master peak"
+        aria-valuemin={-60}
+        aria-valuemax={0}
+        aria-valuenow={Math.round(masterDbNum)}
+        aria-valuetext={masterDb === "—" ? "silent" : `${masterDb} dBFS`}
+      >
+        <span className="ws-meter-label">
+          <b>MASTER</b>
+          <span className="ws-meter-read">
+            {masterDb}
+            <i>dBFS</i>
+          </span>
+        </span>
         <span className="ws-meter-bar">
           <span
             className="ws-meter-fill"
@@ -210,6 +227,12 @@ export function Transport({
             className="ws-meter-fill"
             style={{ width: `${meterPct(transport.masterPeakRight)}%` }}
           />
+        </span>
+        <span className="ws-meter-scale" aria-hidden="true">
+          <span>0</span>
+          <span>−12</span>
+          <span>−24</span>
+          <span>−48</span>
         </span>
       </div>
     </div>

@@ -19,6 +19,11 @@ namespace fx
     //            stretches as gain reduction deepens).
     //   varimu - variable-mu: ratio softens as it clamps harder, RMS detector,
     //            soft knee, slowest envelopes, program-dependent release.
+    // Two opto variants extend the family with their classic envelopes:
+    //   optoLa2a - T4-cell response: slowest opto attack, longest program-dependent
+    //              release, softest knee. Built for leveling, not transients.
+    //   optoCl1b - faster opto: medium attack, shorter release than the LA-2A,
+    //              tighter knee; keeps grip on dense material.
     // The differences are applied to the actual detector / curve / envelope maths,
     // not just labels.
     //
@@ -29,7 +34,7 @@ namespace fx
     class Compressor
     {
     public:
-        enum class Type { vca, fet, opto, varimu };
+        enum class Type { vca, fet, opto, varimu, optoLa2a, optoCl1b };
 
         void prepare (double sampleRate, int numChannels)
         {
@@ -54,7 +59,6 @@ namespace fx
 
             recomputeAttackRelease();
             updateScEq();
-            refreshConstants();
         }
 
         void reset() noexcept
@@ -121,21 +125,9 @@ namespace fx
 
             if (scEqChanged)
                 updateScEq();
-
-            refreshConstants();
         }
 
         float gainReductionDb() const noexcept { return grDb; }
-
-        // Constants that only change when the params change. process() used to
-        // recompute these with std::exp/std::pow on every sample, which on a
-        // 16-track session costs four transcendental calls per sample per
-        // channel strip and alone can exceed the audio budget on a slow CPU.
-        void refreshConstants() noexcept
-        {
-            scCoeff = std::exp (-2.0f * 3.14159265f * params.sidechainHpfHz / (float) sr);
-            constantMakeup = std::pow (10.0f, params.makeupDb / 20.0f);
-        }
 
         void process (float& l, float& r) noexcept
         {
@@ -149,7 +141,7 @@ namespace fx
             }
 
             // ---- detector (on the *undelayed* input so lookahead anticipates) ----
-            const auto scCoeff = this->scCoeff;
+            const auto scCoeff = std::exp (-2.0f * 3.14159265f * params.sidechainHpfHz / (float) sr);
             float scL = 0.0f, scR = 0.0f;
             {
                 const auto inL = l, inR = r;
@@ -176,7 +168,7 @@ namespace fx
             const auto peak = std::max (std::abs (scL), std::abs (scR));
             float det = peak;
 
-            if (params.type == Type::opto || params.type == Type::varimu)
+            if (isOptoLike (params.type) || params.type == Type::varimu)
             {
                 const auto sq = std::max (scL * scL, scR * scR);
                 detState[0] = sq + rmsCoeff * (detState[0] - sq);
@@ -212,7 +204,7 @@ namespace fx
 
             // Program-dependent release for opto/varimu (and optional auto)
             // stretches as gain reduction deepens.
-            const auto programDep = params.type == Type::opto || params.type == Type::varimu;
+            const auto programDep = isOptoLike (params.type) || params.type == Type::varimu;
             if (programDep || params.autoRelease)
             {
                 auto relMs = params.releaseMs * releaseScale (params.type);
@@ -260,11 +252,7 @@ namespace fx
             const auto appliedGr = grDb * std::max (0.0f, params.amount);
             const auto gain = std::pow (10.0f, -appliedGr / 20.0f);
             const auto autoMakeup = params.autoGain ? grAvgDb : 0.0f;
-            // With autoGain off the makeup is constant; pow() per sample was a
-            // wasted transcendental call in the strip's per-sample path.
-            const auto makeup = params.autoGain
-                                    ? std::pow (10.0f, (params.makeupDb + autoMakeup) / 20.0f)
-                                    : constantMakeup;
+            const auto makeup = std::pow (10.0f, (params.makeupDb + autoMakeup) / 20.0f);
             const auto wet = gain * makeup;
 
             l = dryL * (1.0f - params.mix) + dryL * wet * params.mix;
@@ -272,15 +260,22 @@ namespace fx
         }
 
     private:
+        static bool isOptoLike (Type t) noexcept
+        {
+            return t == Type::opto || t == Type::optoLa2a || t == Type::optoCl1b;
+        }
+
         static float attackScale (Type t) noexcept
         {
             switch (t)
             {
-                case Type::fet:    return 0.5f;
-                case Type::opto:   return 2.5f;
-                case Type::varimu: return 3.0f;
+                case Type::fet:     return 0.5f;
+                case Type::opto:    return 2.5f;
+                case Type::optoLa2a: return 2.6f;
+                case Type::optoCl1b: return 1.6f;
+                case Type::varimu:  return 3.0f;
                 case Type::vca:
-                default:           return 1.0f;
+                default:            return 1.0f;
             }
         }
 
@@ -288,11 +283,13 @@ namespace fx
         {
             switch (t)
             {
-                case Type::fet:    return 0.7f;
-                case Type::opto:   return 3.0f;
-                case Type::varimu: return 4.0f;
+                case Type::fet:     return 0.7f;
+                case Type::opto:    return 3.0f;
+                case Type::optoLa2a: return 3.6f;
+                case Type::optoCl1b: return 2.2f;
+                case Type::varimu:  return 4.0f;
                 case Type::vca:
-                default:           return 1.0f;
+                default:            return 1.0f;
             }
         }
 
@@ -300,11 +297,13 @@ namespace fx
         {
             switch (t)
             {
-                case Type::fet:    return 0.12f;
-                case Type::opto:   return 1.6f;
-                case Type::varimu: return 1.3f;
+                case Type::fet:     return 0.12f;
+                case Type::opto:    return 1.6f;
+                case Type::optoLa2a: return 1.9f;
+                case Type::optoCl1b: return 1.3f;
+                case Type::varimu:  return 1.3f;
                 case Type::vca:
-                default:           return 1.0f;
+                default:            return 1.0f;
             }
         }
 
@@ -312,11 +311,13 @@ namespace fx
         {
             switch (t)
             {
-                case Type::fet:    return 1.5f;
+                case Type::fet:     return 1.5f;
                 case Type::opto:
+                case Type::optoLa2a:
+                case Type::optoCl1b:
                 case Type::varimu:
                 case Type::vca:
-                default:           return 1.0f;
+                default:            return 1.0f;
             }
         }
 
@@ -357,7 +358,5 @@ namespace fx
         float attackCoeff { 0.99f }, releaseCoeff { 0.999f };
         float rmsCoeff { 0.999f };
         float autoGainCoeff { 0.9999f };
-        float scCoeff { 0.9974f };      // sidechain HPF one-pole, from sidechainHpfHz
-        float constantMakeup { 1.0f };  // 10^(makeupDb/20), when autoGain is off
     };
 }

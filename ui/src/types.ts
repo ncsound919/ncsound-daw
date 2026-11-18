@@ -307,5 +307,12 @@ export interface AppState {
   automation?: AutomationLaneState[];
   undoDepth?: number;
   redoDepth?: number;
+  /** Named song positions, in bar units (1 = song start). */
+  markers?: MarkerState[];
   pluginScan?: PluginScanState;
+}
+
+export interface MarkerState {
+  bar: number;
+  name: string;
 }

@@ -30,7 +30,7 @@ export interface UiSettings {
 }
 
 export const DEFAULT_SETTINGS: UiSettings = {
-  accent: "#e0824d",
+  accent: "#ff8a00",
   tintAmount: 7,
   clipBoldness: 42,
   density: "comfortable",
@@ -215,16 +215,16 @@ export function loadSettings(): UiSettings {
 }
 
 const ACCENTS: { hex: string; name: string }[] = [
-  { hex: "#e0824d", name: "Rust" },
-  { hex: "#ffb020", name: "Amber" },
-  { hex: "#8fe06a", name: "Lime" },
-  { hex: "#4fd6c0", name: "Teal" },
-  { hex: "#e07ab8", name: "Rose" },
-  { hex: "#f8e8c8", name: "Cream" },
+  { hex: "#ff8a00", name: "Amber" },
+  { hex: "#4dd0e1", name: "Cyan" },
+  { hex: "#e0a356", name: "Sand" },
+  { hex: "#b98cff", name: "Violet" },
+  { hex: "#6ee7a0", name: "Green" },
+  { hex: "#e0567a", name: "Rose" },
 ];
 
 export function accentHot(hex: string): string {
-  return hex === "#f8e8c8" ? "#e0824d" : hex;
+  return hex === "#ff8a00" ? "#ffc98a" : hex;
 }
 
 export function SettingsPanel({

@@ -43,6 +43,14 @@ export interface HeaderBarProps {
   onRedo?: () => void;
   undoDepth?: number;
   redoDepth?: number;
+  /** Marker commands; entries stay disabled until the host wires them. */
+  onAddMarker?: () => void;
+  onNextMarker?: () => void;
+  onPreviousMarker?: () => void;
+  onDeleteMarker?: () => void;
+  /** AudioSuite clip processing; disabled until the host wires it. */
+  onReverseClip?: () => void;
+  onNormalizeClip?: () => void;
   onTranscribeSelected?: () => void;
   onSelectPrevious?: () => void;
   onSelectNext?: () => void;
@@ -98,6 +106,12 @@ export function HeaderBar({
   onRedo,
   undoDepth = 0,
   redoDepth = 0,
+  onAddMarker,
+  onNextMarker,
+  onPreviousMarker,
+  onDeleteMarker,
+  onReverseClip,
+  onNormalizeClip,
   onTranscribeSelected,
   onSelectPrevious,
   onSelectNext,
@@ -293,20 +307,14 @@ export function HeaderBar({
         { label: "MIDI Learn…", disabled: true, hint: "Desktop app EDIT → MIDI" },
         "separator",
         { heading: "MARKERS" },
-        {
-          label: "Add Marker at Playhead",
-          disabled: true,
-          hint: "Desktop app EDIT → Markers",
-        },
-        {
-          label: "Go to Next Marker",
-          disabled: true,
-          hint: "Desktop app EDIT → Markers",
-        },
+        wired("Add Marker at Playhead", onAddMarker),
+        wired("Go to Next Marker", onNextMarker),
+        wired("Go to Previous Marker", onPreviousMarker),
+        wired("Delete Marker at Playhead", onDeleteMarker),
         "separator",
         { heading: "AUDIOSUITE" },
-        { label: "Reverse Clip", disabled: true, hint: "Desktop app EDIT → Audiosuite" },
-        { label: "Normalize Clip", disabled: true, hint: "Desktop app EDIT → Audiosuite" },
+        wired("Reverse Clip", onReverseClip),
+        wired("Normalize Clip", onNormalizeClip),
         "separator",
         { heading: "MASTER INSERT" },
         ...(onLoadMasterPlugin

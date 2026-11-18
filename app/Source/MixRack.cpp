@@ -350,11 +350,29 @@ void MixRackChannel::process (juce::AudioBuffer<float>& buffer, int numSamples)
         || numSamples > buffer.getNumSamples())
         return;
 
+    beginBlock();
+
     auto* left = buffer.getWritePointer (0);
     auto* right = buffer.getWritePointer (1);
 
     for (int i = 0; i < numSamples; ++i)
         processSample (left[i], right[i]);
+}
+
+void MixRackChannel::beginBlock()
+{
+    auto& d = *impl;
+
+    if (! d.prepared)
+        return;
+
+    const auto revision = params.revision.load (std::memory_order_relaxed);
+
+    if (revision != d.cachedRevision)
+    {
+        d.configure (params);
+        d.cachedRevision = revision;
+    }
 }
 
 void MixRackChannel::processSample (float& left, float& right)
@@ -364,7 +382,11 @@ void MixRackChannel::processSample (float& left, float& right)
     if (! d.prepared || ! params.stripOn.load())
         return;
 
+    // The engine calls beginBlock() once per block; direct processSample()
+    // callers (tests, offline helpers) still get a revision check here. With
+    // beginBlock() in front this is one relaxed load, not a reconfigure.
     const auto revision = params.revision.load (std::memory_order_relaxed);
+
     if (revision != d.cachedRevision)
     {
         d.configure (params);

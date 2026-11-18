@@ -246,8 +246,24 @@ export function ChannelRackPanel({
     if (channel) store.update(channel);
   }, [channel, store]);
 
+  useEffect(() => {
+    const key = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [onClose]);
+
   return (
-    <div className="ws-rack-overlay" role="dialog" aria-label="Overlay Channel Strip">
+    <div
+      className="ws-rack-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Overlay Channel Strip"
+      onPointerDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
       <div className="ws-rack-bar">
         <button
           type="button"
@@ -505,8 +521,24 @@ export function MasterRackPanel({
     if (master) store.update(master);
   }, [master, store]);
 
+  useEffect(() => {
+    const key = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [onClose]);
+
   return (
-    <div className="ws-rack-overlay" role="dialog" aria-label="Overlay Master">
+    <div
+      className="ws-rack-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Overlay Master"
+      onPointerDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
       <div className="ws-rack-bar">
         <button
           type="button"

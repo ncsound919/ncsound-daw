@@ -1119,7 +1119,7 @@ export function Arrangement({
                       className="ws-head-db"
                       title={`T${track.index + 1} · ${track.gainDb.toFixed(1)} dB`}
                     >
-                      {track.gainDb.toFixed(1)} dB
+                      {track.gainDb.toFixed(1)} <i>dB</i>
                     </span>
                     <span className="ws-head-meter" title={`Peak ${Math.round(peak * 100)}%`}>
                       <i style={{ width: `${Math.min(100, peak * 100)}%` }} />

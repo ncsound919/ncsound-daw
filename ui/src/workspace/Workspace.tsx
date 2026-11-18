@@ -26,6 +26,9 @@ import "./workspace.css";
 import "./chrome.css";
 import "./refine.css";
 import "../brand.css";
+/* Protocol skin: loaded last so it is the final word on every surface. */
+import "../protocol/tokens.css";
+import "../protocol/protocol.css";
 
 export interface WorkspaceActions {
   play: (playing: boolean) => void;
@@ -63,6 +66,12 @@ export interface WorkspaceActions {
   loopRange?: (startBar: number, endBar: number) => void;
   undo?: () => void;
   redo?: () => void;
+  addMarker?: () => void;
+  nextMarker?: () => void;
+  previousMarker?: () => void;
+  deleteMarker?: () => void;
+  reverseClip?: () => void;
+  normalizeClip?: () => void;
 }
 
 export interface WorkspaceProps {
@@ -93,12 +102,6 @@ export interface WorkspaceProps {
   onScan?: () => void;
   /** Mixology preset names from the host; the entries hide without them. */
   mixologyPresets?: string[];
-  /** Render/measure/apply an autonomous Mixology first pass. */
-  onMixologyAutopilot?: (
-    brief: string,
-    depth: number,
-    referencePath: string,
-  ) => Promise<{ report: string; summary: string; assessment: string }>;
   /** Import Audio hook; the menu item stays disabled without it. */
   onImportAudio?: () => void;
   /** Session and export hooks; each menu entry stays disabled without its route. */
@@ -147,7 +150,6 @@ export function Workspace({
   onMasterPluginLoad,
   onScan,
   mixologyPresets,
-  onMixologyAutopilot,
   onImportAudio,
   onRecord,
   onOpenSession,
@@ -158,9 +160,18 @@ export function Workspace({
   onCollectMedia,
   onRemoveMasterPlugin,
 }: WorkspaceProps) {
-  const [view, setView] = useState<WorkspaceView>(
-    WORKSPACE_VIEWS.some((entry) => entry.id === initialView) ? initialView : "arrange",
-  );
+  const [view, setView] = useState<WorkspaceView>(() => {
+    // Design-review affordance: ?view=mix opens a surface directly, so each
+    // screen can be audited at a fixed size without clicking through the shell.
+    let requested: string | null = null;
+    try {
+      requested = new URLSearchParams(window.location.search).get("view");
+    } catch {
+      requested = null;
+    }
+    const candidate = (requested ?? initialView) as WorkspaceView;
+    return WORKSPACE_VIEWS.some((entry) => entry.id === candidate) ? candidate : "arrange";
+  });
   const [rackDialog, setRackDialog] = useState<"channel" | "master" | null>(null);
   const [mode, setMode] = useState<DawMode>(() => {
     try {
@@ -482,6 +493,12 @@ export function Workspace({
         onCollectMedia={onCollectMedia}
         onUndo={actions.undo}
         onRedo={actions.redo}
+        onAddMarker={actions.addMarker}
+        onNextMarker={actions.nextMarker}
+        onPreviousMarker={actions.previousMarker}
+        onDeleteMarker={actions.deleteMarker}
+        onReverseClip={actions.reverseClip}
+        onNormalizeClip={actions.normalizeClip}
         undoDepth={state.undoDepth ?? 0}
         redoDepth={state.redoDepth ?? 0}
         onTranscribeSelected={
@@ -641,7 +658,6 @@ export function Workspace({
             onMasterInsert={openMasterBrowser}
             mixologyPresets={mixologyPresets}
             onApplyMixology={actions.applyMixology}
-            onMixologyAutopilot={onMixologyAutopilot}
             onMasterGain={(db) => {
               setMasterGainDb(db);
               actions.masterGain(db);

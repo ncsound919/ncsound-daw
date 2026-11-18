@@ -113,6 +113,12 @@ export function Knob({
   const D = knobSize[size];
   const B = D + HIT_PAD * 2;
   const text = formatValue(v, spec);
+  // Protocol rule 5: the unit is a separate dim span, never part of the value
+  // string. "1.20 kHz" renders as 1.20 + kHz so digits stay tabular and the
+  // unit can drop out in compact layouts.
+  const splitAt = text.lastIndexOf(" ");
+  const valueText = splitAt > 0 ? text.slice(0, splitAt) : text;
+  const unitText = splitAt > 0 ? text.slice(splitAt + 1) : "";
   // APG slider: expose the real range when the spec is numeric; option lists
   // keep a 0..100 position with aria-valuetext carrying the label.
   const numeric = !spec.options;
@@ -287,10 +293,13 @@ export function Knob({
           </span>
         </span>
       </div>
-      <span className="cs-knob-label" style={{ fontSize: 11 }}>
-        {label}
-      </span>
-      {showValue && <span className="cs-knob-value">{text}</span>}
+      <span className="cs-knob-label">{label}</span>
+      {showValue && (
+        <span className="cs-knob-value">
+          {valueText}
+          {unitText ? <span className="cs-unit">{unitText}</span> : null}
+        </span>
+      )}
     </div>
   );
 }

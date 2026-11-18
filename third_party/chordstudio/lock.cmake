@@ -20,10 +20,10 @@ set(NC_CHORDSTUDIO_LOCK
     "plugins/mixology/Source/Engine/OverlaySessionWriter.cpp=e0a9683e301d05a7666c75949d09290cafdc4ff05346ec347b1b93ea4974cd59"
     "plugins/mixology/Source/Engine/OverlaySessionWriter.h=c8fca88ad8d72abc8905df9d2b5b6ad6952d210de6a1a992dbb38929917b8de3"
     "plugins/overlay-fx/libs/fx_core/include/fx/Biquad.h=a0aacb0348196e1ae5efeeb234a28e42186ae47576e57ad0485488b4fa2d0a17"
-    "plugins/overlay-fx/libs/fx_core/include/fx/Compressor.h=36b8382a3b8ad7107f1391de02b78bfc8f1761736ba6ceb1f206d991833e3533"
+    "plugins/overlay-fx/libs/fx_core/include/fx/Compressor.h=0b75d2e421ae8e3f903062f664790743f1d512e7e29167434f7c943705c8b96b"
     "plugins/overlay-fx/libs/fx_core/include/fx/Crossover.h=25118f06741db3d89658a4b9ce5f60b06b89f29f1df783612e4fbccc943a3d05"
     "plugins/overlay-fx/libs/fx_core/include/fx/DynamicEq.h=c9e50d46892eaf5209e4c548a2f57c6917227753a7efffdd5311d71752428f19"
     "plugins/overlay-fx/libs/fx_core/include/fx/Loudness.h=a7799d9b38a39b1c80a81626081ea43babbd009a273741189ba19c39d6de5f09"
     "plugins/overlay-fx/libs/fx_core/include/fx/MasterLimiter.h=150e2800105f9d72fbb805a3863f1a64b64ddec0bae87b930d065f1cd3b213db"
-    "plugins/overlay-fx/libs/fx_core/include/fx/Saturator.h=a14377085b84780839878bee3f7844fdaa51717308a614c39d9d71ab4fa01c7e"
+    "plugins/overlay-fx/libs/fx_core/include/fx/Saturator.h=55a8a2bee7b525a661f7afc8ef2f6f0992b50049bf51673b824be7c1119a0264"
     "plugins/overlay-fx/plugins/overlay_master/Source/MasterDsp.h=dd2965d6769364e6bf11d0f37e88727f83c18c4664b33aa37b2dec59a169f0ef")

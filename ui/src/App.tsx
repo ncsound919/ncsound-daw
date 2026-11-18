@@ -288,22 +288,6 @@ export default function App() {
     [applyState],
   );
 
-  const handleMixologyAutopilot = useCallback(
-    async (brief: string, depth: number, referencePath: string) => {
-      if (!backend.embedded) {
-        return { report: "Autopilot requires the desktop host.", summary: "", assessment: "" };
-      }
-
-      const sentAt = stateRevision.current;
-      const targetLufs = depth >= 0.85 ? -9 : depth >= 0.65 ? -11 : -14;
-      const result = await backend.mixologyAutopilot(brief, "", referencePath, depth, targetLufs);
-
-      if (stateRevision.current === sentAt) applyState(result.state);
-      return result;
-    },
-    [applyState],
-  );
-
   const handleImportAudio = useCallback(() => {
     if (!backend.embedded) return;
     runWrite(() => backend.importAudio());
@@ -545,6 +529,30 @@ export default function App() {
         if (!backend.embedded) return;
         runWrite(() => backend.redo());
       },
+      addMarker() {
+        if (!backend.embedded) return;
+        runWrite(() => backend.addMarker());
+      },
+      nextMarker() {
+        if (!backend.embedded) return;
+        runWrite(() => backend.nextMarker());
+      },
+      previousMarker() {
+        if (!backend.embedded) return;
+        runWrite(() => backend.previousMarker());
+      },
+      deleteMarker() {
+        if (!backend.embedded) return;
+        runWrite(() => backend.deleteMarker());
+      },
+      reverseClip() {
+        if (!backend.embedded) return;
+        runWrite(() => backend.reverseClip());
+      },
+      normalizeClip() {
+        if (!backend.embedded) return;
+        runWrite(() => backend.normalizeClip());
+      },
       loopRange(startBar, endBar) {
         setTransport((current) => ({ ...current, loopStartBar: startBar, loopEndBar: endBar }));
         if (!backend.embedded) return;
@@ -590,7 +598,6 @@ export default function App() {
           onMasterPluginLoad={handleMasterPluginLoad}
           onScan={handleScan}
           mixologyPresets={mixologyPresets}
-          onMixologyAutopilot={handleMixologyAutopilot}
           onImportAudio={handleImportAudio}
           onRecord={(recording) => {
             if (!backend.embedded) return;

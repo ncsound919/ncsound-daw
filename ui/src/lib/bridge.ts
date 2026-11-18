@@ -292,6 +292,30 @@ export const backend = {
     return call<AppState>("redo");
   },
 
+  addMarker(): Promise<AppState> {
+    return call<AppState>("addMarker");
+  },
+
+  nextMarker(): Promise<AppState> {
+    return call<AppState>("nextMarker");
+  },
+
+  previousMarker(): Promise<AppState> {
+    return call<AppState>("previousMarker");
+  },
+
+  deleteMarker(): Promise<AppState> {
+    return call<AppState>("deleteMarker");
+  },
+
+  reverseClip(): Promise<AppState> {
+    return call<AppState>("reverseClip");
+  },
+
+  normalizeClip(): Promise<AppState> {
+    return call<AppState>("normalizeClip");
+  },
+
   setLoopBars(startBar: number, endBar: number): Promise<AppState> {
     return call<AppState>("setLoopBars", startBar, endBar);
   },

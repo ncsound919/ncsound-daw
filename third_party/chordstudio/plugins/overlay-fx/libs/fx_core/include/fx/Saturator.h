@@ -20,10 +20,19 @@ namespace fx
     //   oversample - runs the nonlinearity at 2x (drive < 12 dB) or 4x (drive >=
     //                12 dB) using juce::dsp::Oversampling to suppress aliasing.
     //   outputDb   - output trim after the shaper.
+    //   harmonics  - optional 2nd/3rd order blend added after the shaper, for
+    //                material where the component curve alone is not enough.
+    //
+    // Modes are character curves, not circuit models:
+    //   tape       - tanh, symmetric, gentle odd-order.
+    //   tube       - asymmetric tanh with a 2nd-order term (even harmonics).
+    //   diode      - two-stage odd-order knee, hard edge.
+    //   transistor - symmetric soft clip with a harder knee than tape (odd).
+    //   transformer- iron: tanh plus a low-order compression term (weight).
     class Saturator
     {
     public:
-        enum class Mode { tape, tube, diode };
+        enum class Mode { tape, tube, diode, transistor, transformer };
 
         void prepare (double sampleRate, int maxBlockSize = 512, int numChannels = 2)
         {
@@ -80,6 +89,13 @@ namespace fx
         void setOversample (bool on) noexcept { oversample = on; }
 
         void setOutputDb (float db) noexcept { outputGain = std::pow (10.0f, db / 20.0f); }
+
+        /** Extra 2nd/3rd order content added after the component curve (0..1). */
+        void setHarmonicOrders (float second, float third) noexcept
+        {
+            h2 = std::clamp (second, 0.0f, 1.0f);
+            h3 = std::clamp (third, 0.0f, 1.0f);
+        }
 
         // Per-sample path (no oversampling). Kept for callers that process
         // sample-by-sample and for the unit tests.
@@ -188,6 +204,16 @@ namespace fx
 
             auto y = shape (x);
 
+            if (h2 > 0.0f || h3 > 0.0f)
+            {
+                // Harmonic generator on the bounded fundamental. x^2 carries the
+                // even order (its DC offset is removed by blockDc); the cubic is
+                // subtracted so it deepens the shaper's own odd-order compression
+                // instead of cancelling it.
+                const auto xs = std::tanh (x);
+                y += h2 * 0.35f * xs * xs - h3 * 0.28f * xs * xs * xs;
+            }
+
             if (tone != 0.0f)
             {
                 auto& lowState = tiltPostState[(size_t) ch];
@@ -224,6 +250,16 @@ namespace fx
                     const auto y = std::tanh (x) + 0.5f * std::tanh (x * 0.5f);
                     return y / 1.5f;
                 }
+                case Mode::transistor:
+                {
+                    // Symmetric soft clip: odd-order, harder knee than tape.
+                    return 1.35f * x / (1.0f + 0.55f * std::abs (x));
+                }
+                case Mode::transformer:
+                {
+                    // Iron: odd-order with a low-order compression term.
+                    return (std::tanh (x) + 0.18f * std::tanh (0.5f * x)) / 1.18f;
+                }
                 case Mode::tape:
                 default:
                     return std::tanh (x);
@@ -235,6 +271,7 @@ namespace fx
         float preGain { 1.0f }, postGain { 1.0f }, mix { 0.0f };
         float driveDb { 0.0f };
         float bias { 0.0f }, tone { 0.0f };
+        float h2 { 0.0f }, h3 { 0.0f };
         float lowTiltGain { 1.0f }, highTiltGain { 1.0f };
         float outputGain { 1.0f };
         bool  oversample { false };

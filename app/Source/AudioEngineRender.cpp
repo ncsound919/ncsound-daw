@@ -562,6 +562,10 @@ void AudioEngine::renderStripPass (RenderContext& ctx)
         blockSendB[trackIndex] = track.sendB.load();
         blockWidth[trackIndex] = track.width.load();
         blockAudible[trackIndex] = ! track.muted.load() && (! anySolo || track.soloed.load());
+
+        // Rebuild the strip's coefficients at the block boundary, never in the
+        // middle of the sample loop.
+        mixRack[static_cast<size_t> (trackIndex)].beginBlock();
     }
 
     for (int sample = 0; sample < numSamples; ++sample)

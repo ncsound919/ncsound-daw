@@ -1,0 +1,91 @@
+/* Overlay UI Protocol — canonical tokens.
+   Copied verbatim from the protocol's 02-tokens.md. Never restate these hex
+   values inline in a component; reference the token instead. */
+
+:root {
+  /* ---- surfaces: seven-step descent, no gradients ---------------------- */
+  --s-canvas: #08080a;
+  --s-inset: #0a0a0c;
+  --s-shell: #0e0e11;
+  --s-panel: #141417;
+  --s-raised: #1a1a1f;
+  --s-control: #202026;
+
+  /* ---- lines ---------------------------------------------------------- */
+  --line: #26262c;
+  --line-soft: rgba(255, 255, 255, 0.055);
+  --line-strong: rgba(255, 255, 255, 0.11);
+  --seam-hi: rgba(255, 255, 255, 0.05);
+  --seam-lo: rgba(0, 0, 0, 0.7);
+
+  /* ---- text: warm-tinted so it sits beside amber without clashing ------ */
+  --t-white: #fbf9f5;
+  --t-hi: #f1eee7;
+  --t-mid: #b5b0a6;
+  --t-low: #8b867d;
+  --t-dim: #63605a;
+
+  /* ---- accent + semantics --------------------------------------------- */
+  --a: #ff8a00;
+  --a-hot: #ffc98a;
+  --a-dim: rgba(255, 138, 0, 0.14);
+  --a-line: rgba(255, 138, 0, 0.34);
+  --a-glow: rgba(255, 138, 0, 0.22);
+  --mod: #35d0d8;
+  --ok: #55d18b;
+  --danger: #ff5a4a;
+  --gr: #e0567a;
+  --lcd-bg: #120c05;
+  --lcd: #ffb347;
+
+  /* ---- module accents: legend / identity swatch only ------------------- */
+  --m-eq: #ff8a00;
+  --m-deq: #4dd0e1;
+  --m-dyn: #e0a356;
+  --m-exc: #b98cff;
+  --m-img: #6ee7a0;
+  --m-max: #e0567a;
+
+  /* ---- type: self-hosted woff2 only ----------------------------------- */
+  --f-ui: "Archivo Variable", Archivo, "Segoe UI", sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", monospace;
+  --fs-micro: 9px;
+  --fs-label: 10px;
+  --fs-value: 11px;
+  --fs-ui: 12px;
+  --fs-sec: 15px;
+  --fs-title: 22px;
+
+  /* ---- space: multiples of 4 ------------------------------------------ */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+
+  /* ---- radii: nothing above 12 ---------------------------------------- */
+  --r-1: 4px;
+  --r-2: 6px;
+  --r-3: 8px;
+  --r-4: 12px;
+
+  /* ---- dial ladder ----------------------------------------------------- */
+  --d-xs: 34px;
+  --d-sm: 42px;
+  --d-md: 54px;
+  --d-lg: 68px;
+  --d-xl: 82px;
+
+  /* ---- motion ---------------------------------------------------------- */
+  --mo-fast: 110ms;
+  --mo-med: 170ms;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* ---- meter grammar --------------------------------------------------- */
+  --meter-release: 13dB;
+  --meter-hold: 1.5s;
+
+  /* ---- scale contract -------------------------------------------------- */
+  --scale-min: 0.62;
+  --scale-max: 1.4;
+}

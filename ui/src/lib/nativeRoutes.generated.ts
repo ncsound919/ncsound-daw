@@ -61,6 +61,12 @@ export const NATIVE_ROUTES = [
   "scanPlugins",
   "getAudioState",
   "applyAudioSettings",
+  "addMarker",
+  "nextMarker",
+  "previousMarker",
+  "deleteMarker",
+  "reverseClip",
+  "normalizeClip",
   "undo",
   "redo",
 ] as const;

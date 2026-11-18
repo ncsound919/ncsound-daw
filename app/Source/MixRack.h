@@ -144,6 +144,10 @@ public:
     /** One stereo frame, used by the engine while it sums the tracks. */
     void processSample (float& left, float& right);
 
+    /** Reads the parameter revision once per block and rebuilds the strip's
+        coefficients there, instead of in the middle of the sample loop. */
+    void beginBlock();
+
     /** Sets the vocal role. A vocal track gets the Open Mic stage baked in
         unless the user has already switched that stage themselves, so adding
         or reopening a vocal track never leaves the mic stage off. */

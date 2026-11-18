@@ -401,6 +401,18 @@ juce::var MainComponent::buildState() const
     if (active > 0 && selectedTrack >= 0 && selectedTrack < active)
         o->setProperty ("channel", engine.mixChannel (selectedTrack).toVar());
 
+    juce::Array<juce::var> markerArray;
+
+    for (const auto& marker : engine.markers())
+    {
+        auto* m = new juce::DynamicObject();
+        m->setProperty ("bar", 1.0 + marker.ppq / 4.0);
+        m->setProperty ("name", juce::String (marker.name));
+        markerArray.add (juce::var (m));
+    }
+
+    o->setProperty ("markers", markerArray);
+
     o->setProperty ("master", engine.masterMix().toVar());
 
     return juce::var (o);
@@ -1186,6 +1198,46 @@ juce::WebBrowserComponent::Options MainComponent::buildWebOptions()
               setStatus (ok ? "AUDIO / " + (detail.isNotEmpty() ? detail : "applied")
                             : "AUDIO / " + detail, ! ok);
               done (result);
+          } },
+        { "addMarker", [this] (const Args&, Completion done)
+          {
+              addMarkerAtPlayhead();
+              pushState();
+              done (buildState());
+          } },
+        { "nextMarker", [this] (const Args&, Completion done)
+          {
+              jumpToMarker (true);
+              pushState();
+              done (buildState());
+          } },
+        { "previousMarker", [this] (const Args&, Completion done)
+          {
+              jumpToMarker (false);
+              pushState();
+              done (buildState());
+          } },
+        { "deleteMarker", [this] (const Args&, Completion done)
+          {
+              deleteMarkerAtPlayhead();
+              pushState();
+              done (buildState());
+          } },
+        { "reverseClip", [this] (const Args&, Completion done)
+          {
+              nc::engine::audiosuite::Process process;
+              process.kind = nc::engine::audiosuite::Kind::reverse;
+              arrange.applyAudioSuite (process);
+              pushState();
+              done (buildState());
+          } },
+        { "normalizeClip", [this] (const Args&, Completion done)
+          {
+              nc::engine::audiosuite::Process process;
+              process.kind = nc::engine::audiosuite::Kind::normalize;
+              arrange.applyAudioSuite (process);
+              pushState();
+              done (buildState());
           } },
         { "undo", [this] (const Args&, Completion done)
           {
