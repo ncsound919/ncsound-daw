@@ -288,6 +288,22 @@ export default function App() {
     [applyState],
   );
 
+  const handleMixologyAutopilot = useCallback(
+    async (brief: string, depth: number, referencePath: string) => {
+      if (!backend.embedded) {
+        return { report: "Autopilot requires the desktop host.", summary: "", assessment: "" };
+      }
+
+      const sentAt = stateRevision.current;
+      const targetLufs = depth >= 0.85 ? -9 : depth >= 0.65 ? -11 : -14;
+      const result = await backend.mixologyAutopilot(brief, "", referencePath, depth, targetLufs);
+
+      if (stateRevision.current === sentAt) applyState(result.state);
+      return result;
+    },
+    [applyState],
+  );
+
   const handleImportAudio = useCallback(() => {
     if (!backend.embedded) return;
     runWrite(() => backend.importAudio());
@@ -337,6 +353,13 @@ export default function App() {
     if (!backend.embedded) return;
     scheduleSave(saveChannelTimers.current, `${track}:${param}`, () => {
       runWrite(() => backend.setChannelParam(track, param, value));
+    });
+  }, []);
+
+  const handleMasterChannel = useCallback((param: string, value: number) => {
+    if (!backend.embedded) return;
+    scheduleSave(saveChannelTimers.current, `master:${param}`, () => {
+      runWrite(() => backend.setMasterParam(param, value));
     });
   }, []);
 
@@ -555,6 +578,7 @@ export default function App() {
           onNotesChanged={handleNotes}
           onAutomationChanged={handleAutomation}
           onChannelChange={handleChannel}
+          onMasterChange={handleMasterChannel}
           onMidiLearn={(target) => runWrite(() => backend.midiLearn(target))}
           onPluginLoad={handlePluginLoad}
           onInsertBypassed={handleInsertBypassed}
@@ -566,6 +590,7 @@ export default function App() {
           onMasterPluginLoad={handleMasterPluginLoad}
           onScan={handleScan}
           mixologyPresets={mixologyPresets}
+          onMixologyAutopilot={handleMixologyAutopilot}
           onImportAudio={handleImportAudio}
           onRecord={(recording) => {
             if (!backend.embedded) return;

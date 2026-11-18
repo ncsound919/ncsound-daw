@@ -219,6 +219,11 @@ export const backend = {
     return call<AppState>("setChannelParam", track, param, value);
   },
 
+  /** Writes one baked Overlay Master parameter by its Overlay id. */
+  setMasterParam(param: string, value: number): Promise<AppState> {
+    return call<AppState>("setMasterParam", param, value);
+  },
+
   /** Starts the folder scan; the host pushes state when it finishes. */
   scanPlugins(): Promise<AppState> {
     return call<AppState>("scanPlugins");
@@ -230,6 +235,21 @@ export const backend = {
 
   applyMixologyPreset(index: number): Promise<{ state: AppState; report: string }> {
     return call("applyMixologyPreset", index);
+  },
+
+  /**
+   * Render (or take) a mix, measure it with Earshot, and apply a bounded
+   * Overlay Channel Strip / Master first pass. An empty audioPath renders the
+   * current session. `referencePath` is optional.
+   */
+  mixologyAutopilot(
+    brief: string,
+    audioPath: string,
+    referencePath: string,
+    depth: number,
+    targetLufs: number,
+  ): Promise<{ state: AppState; report: string; summary: string; assessment: string }> {
+    return call("mixologyAutopilot", brief, audioPath, referencePath, depth, targetLufs);
   },
 
   importAudio(): Promise<AppState> {

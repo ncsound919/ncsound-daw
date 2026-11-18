@@ -63,38 +63,24 @@ function tracks(count: number): TrackInfo[] {
 describe("Mixer density", () => {
   it("renders 16 tracks in compact density at 1280", () => {
     render(<Mixer {...props({ tracks: tracks(16), viewportWidth: 1280 })} />);
-    expect(screen.getByRole("group", { name: "Mixer" })).toHaveAttribute(
-      "data-density",
-      "compact",
-    );
+    expect(screen.getByRole("group", { name: "Mixer" })).toHaveAttribute("data-density", "compact");
   });
 
   it("stays normal for 8 tracks at 1280", () => {
     render(<Mixer {...props({ tracks: tracks(8), viewportWidth: 1280 })} />);
-    expect(screen.getByRole("group", { name: "Mixer" })).toHaveAttribute(
-      "data-density",
-      "normal",
-    );
+    expect(screen.getByRole("group", { name: "Mixer" })).toHaveAttribute("data-density", "normal");
   });
 });
 
 describe("Mixer fit control", () => {
   it("keeps the user's manual density until the window changes", () => {
-    const { rerender } = render(
-      <Mixer {...props({ tracks: tracks(16), viewportWidth: 1280 })} />,
-    );
+    const { rerender } = render(<Mixer {...props({ tracks: tracks(16), viewportWidth: 1280 })} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Fit strips" }));
-    expect(screen.getByRole("group", { name: "Mixer" })).toHaveAttribute(
-      "data-density",
-      "normal",
-    );
+    expect(screen.getByRole("group", { name: "Mixer" })).toHaveAttribute("data-density", "normal");
 
     rerender(<Mixer {...props({ tracks: tracks(16), viewportWidth: 1300 })} />);
-    expect(screen.getByRole("group", { name: "Mixer" })).toHaveAttribute(
-      "data-density",
-      "compact",
-    );
+    expect(screen.getByRole("group", { name: "Mixer" })).toHaveAttribute("data-density", "compact");
   });
 });
 

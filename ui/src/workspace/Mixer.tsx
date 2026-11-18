@@ -36,11 +36,21 @@ export interface MixerProps {
   onOpenEditor?: (track: number, slot: number) => Promise<{ ok: boolean; error?: string }>;
   onMasterRack?: () => void;
   onMasterInsert?: () => void;
+  /** Opens the live baked channel-strip faceplate. */
+  onOpenStrip?: () => void;
+  /** Opens the live baked master faceplate. */
+  onOpenMasterPanel?: () => void;
   /** Per-track AUTO switch; the button hides when the host has no route. */
   onAutomationRead?: (track: number, enabled: boolean) => void;
   /** Mixology technique presets; the section hides when the host has no route. */
   mixologyPresets?: string[];
   onApplyMixology?: (index: number) => Promise<string>;
+  /** Render/measure the mix and apply an autonomous first pass. */
+  onMixologyAutopilot?: (
+    brief: string,
+    depth: number,
+    referencePath: string,
+  ) => Promise<{ report: string; summary: string; assessment: string }>;
 }
 
 const DB_MIN = -60;
@@ -833,10 +843,33 @@ export function Mixer({
   onAutomationRead,
   onMasterRack,
   onMasterInsert,
+  onOpenStrip,
+  onOpenMasterPanel,
   mixologyPresets,
   onApplyMixology,
+  onMixologyAutopilot,
 }: MixerProps) {
   const [mixologyReport, setMixologyReport] = useState<string | null>(null);
+  const [autopilotBrief, setAutopilotBrief] = useState("Balance the mix and open the top end");
+  const [autopilotReference, setAutopilotReference] = useState("");
+  const [autopilotDepth, setAutopilotDepth] = useState(0.65);
+  const [autopilotBusy, setAutopilotBusy] = useState(false);
+  const [autopilotSummary, setAutopilotSummary] = useState<string | null>(null);
+
+  const runAutopilot = () => {
+    if (!onMixologyAutopilot || autopilotBusy) return;
+    setAutopilotBusy(true);
+    setAutopilotSummary(null);
+    onMixologyAutopilot(autopilotBrief, autopilotDepth, autopilotReference.trim())
+      .then(({ report, summary, assessment }) => {
+        setMixologyReport(report);
+        setAutopilotSummary([assessment, summary].filter(Boolean).join(" "));
+      })
+      .catch((error: unknown) => {
+        setMixologyReport(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => setAutopilotBusy(false));
+  };
   const masterPeak = Math.max(transport?.masterPeakLeft ?? 0, transport?.masterPeakRight ?? 0);
   const masterPeakDb =
     masterPeak > 0 ? 20 * Math.log10(Math.max(1e-6, masterPeak)) : Number.NEGATIVE_INFINITY;
@@ -861,6 +894,16 @@ export function Mixer({
       style={{ "--strip-min": `${stripMinWidthPx(density)}px` } as CSSProperties}
     >
       <div className="ws-mixer-tools">
+        {onOpenStrip && (
+          <button type="button" className="ws-mini-btn" onClick={onOpenStrip}>
+            Channel strip
+          </button>
+        )}
+        {onOpenMasterPanel && (
+          <button type="button" className="ws-mini-btn" onClick={onOpenMasterPanel}>
+            Master rack
+          </button>
+        )}
         <button
           type="button"
           className="ws-mini-btn"
@@ -939,6 +982,78 @@ export function Mixer({
               </button>
             </div>
           </div>
+
+          {onMixologyAutopilot && (
+            <div className="ws-strip-section" role="group" aria-label="Mixology autopilot">
+              <div className="ws-section-head">
+                <span>Autopilot</span>
+              </div>
+              <input
+                className="ws-autopilot-brief"
+                aria-label="Mixology autopilot brief"
+                value={autopilotBrief}
+                onChange={(event) => setAutopilotBrief(event.target.value)}
+                placeholder="Brief, e.g. clearer vocal, heavier 808"
+                style={{
+                  width: "100%",
+                  boxSizing: "border-box",
+                  marginBottom: 6,
+                  background: "transparent",
+                  border: "1px solid var(--ws-line, #3a3a3a)",
+                  color: "inherit",
+                  font: "inherit",
+                  padding: "4px 6px",
+                }}
+              />
+              <input
+                className="ws-autopilot-brief"
+                aria-label="Mixology reference track path"
+                value={autopilotReference}
+                onChange={(event) => setAutopilotReference(event.target.value)}
+                placeholder="Reference track path (optional)"
+                style={{
+                  width: "100%",
+                  boxSizing: "border-box",
+                  marginBottom: 6,
+                  background: "transparent",
+                  border: "1px solid var(--ws-line, #3a3a3a)",
+                  color: "inherit",
+                  font: "inherit",
+                  padding: "4px 6px",
+                }}
+              />
+              <div className="ws-strip-buttons is-master-switches">
+                <button
+                  type="button"
+                  className="ws-chan-btn"
+                  disabled={autopilotBusy}
+                  aria-label="Run Mixology autopilot"
+                  title="Render the session, measure it with Earshot, and apply a bounded first pass"
+                  onClick={runAutopilot}
+                >
+                  {autopilotBusy ? "Analysing…" : "Autopilot"}
+                </button>
+                <button
+                  type="button"
+                  className="ws-chan-btn"
+                  aria-label="Autopilot depth"
+                  onClick={() =>
+                    setAutopilotDepth(
+                      autopilotDepth >= 0.85 ? 0.35 : autopilotDepth >= 0.65 ? 0.85 : 0.65,
+                    )
+                  }
+                  title="Cycle autopilot depth: gentle, musical, loud"
+                >
+                  {autopilotDepth >= 0.85 ? "LOUD" : autopilotDepth >= 0.65 ? "MUSICAL" : "GENTLE"}
+                </button>
+              </div>
+              {autopilotSummary && (
+                <p className="ws-mixology-report" aria-live="polite">
+                  {autopilotSummary}
+                </p>
+              )}
+            </div>
+          )}
 
           {mixologyPresets && mixologyPresets.length > 0 && onApplyMixology && (
             <div className="ws-strip-section" role="group" aria-label="Mixology presets">

@@ -116,6 +116,10 @@ export interface PluginInfo {
 export interface ChannelParams {
   stripOn: boolean;
   vocal: boolean;
+  inputTrim?: number;
+  phase?: boolean;
+  eqDynAttack?: number;
+  eqDynRelease?: number;
   openMicOn: boolean;
   openMicUserSet: boolean;
   openMicDrive: number;
@@ -124,10 +128,13 @@ export interface ChannelParams {
   eqOn: boolean;
   hpfOn: boolean;
   hpfFreq: number;
+  hpfSlope?: number;
   lpfOn: boolean;
   lpfFreq: number;
+  lpfSlope?: number;
   lowFreq: number;
   lowGain: number;
+  lowQ?: number;
   lmfFreq: number;
   lmfGain: number;
   lmfQ: number;
@@ -136,16 +143,118 @@ export interface ChannelParams {
   hmfQ: number;
   highFreq: number;
   highGain: number;
+  highQ?: number;
   compOn: boolean;
+  compType?: number;
   compThresh: number;
   compRatio: number;
   compAttack: number;
   compRelease: number;
+  compKnee?: number;
   compMakeup: number;
+  compMix?: number;
+  compDrive?: number;
+  compOutput?: number;
+  compColor?: number;
+  compFeedback?: number;
+  compLookahead?: number;
+  compHold?: number;
+  compRange?: number;
+  compAmount?: number;
+  compAutoRelease?: boolean;
+  compAutoGain?: boolean;
+  scHpf?: number;
+  scEqFreq?: number;
+  scEqGain?: number;
+  scEqQ?: number;
   satOn: boolean;
+  satMode?: number;
   satDrive: number;
   satMix: number;
+  satBias?: number;
+  satTone?: number;
+  satToneBass?: number;
+  satToneMid?: number;
+  satToneTreble?: number;
+  satTonePresence?: number;
+  satDynamics?: number;
+  satFeedback?: number;
+  satFeedbackHz?: number;
+  satOversample?: boolean;
+  satOutput?: number;
   outputDb: number;
+  width?: number;
+  mono?: boolean;
+  /** Canonical 8-band keys, when the host publishes them. */
+  [bandKey: `band${number}${string}`]: number | boolean | undefined;
+}
+
+/** The baked Overlay Master rack, 1:1 with nc::MasterRack::toVar(). */
+export interface MasterParams {
+  eqOn: boolean;
+  hpfOn: boolean;
+  hpfFreq: number;
+  hpfSlope?: number;
+  lpfOn: boolean;
+  lpfFreq: number;
+  lpfSlope?: number;
+  lowFreq: number;
+  lowGain: number;
+  midFreq: number;
+  midGain: number;
+  highFreq: number;
+  highGain: number;
+  deqOn?: boolean;
+  satOn?: boolean;
+  satMode?: number;
+  satDrive?: number;
+  satMix?: number;
+  satTone?: number;
+  satToneBass?: number;
+  satToneMid?: number;
+  satToneTreble?: number;
+  satTonePresence?: number;
+  satDynamics?: number;
+  satFeedback?: number;
+  satFeedbackHz?: number;
+  satOversample?: boolean;
+  satOutput?: number;
+  dynOn: boolean;
+  dynType?: number;
+  dynBands?: number;
+  dynX1?: number;
+  dynX2?: number;
+  dynX3?: number;
+  dynKnee?: number;
+  dynDetect?: boolean;
+  dynMix?: number;
+  excOn?: boolean;
+  excBands?: number;
+  excX1?: number;
+  excX2?: number;
+  excX3?: number;
+  imgOn: boolean;
+  imgBands?: number;
+  imgX1?: number;
+  imgX2?: number;
+  imgX3?: number;
+  imgMono?: number;
+  width: number;
+  maxOn: boolean;
+  maxThresh?: number;
+  ceiling: number;
+  maxRelease?: number;
+  maxMode?: number;
+  maxOversample?: number;
+  maxTransient?: number;
+  maxLink?: number;
+  automixOn: boolean;
+  targetLufs: number;
+  automixProfile: number;
+  compare: boolean;
+  trimDb: number;
+  [bandKey: `band${number}${string}`]: number | boolean | undefined;
+  [deqKey: `deq${number}${string}`]: number | boolean | undefined;
 }
 
 export type AutomationParam = "volume" | "pan";
@@ -192,6 +301,8 @@ export interface AppState {
   plugins?: PluginInfo[];
   /** Baked MixRack parameters for the selected track. */
   channel?: ChannelParams;
+  /** Baked Overlay Master parameters. */
+  master?: MasterParams;
   /** Non-empty automation lanes across the session. */
   automation?: AutomationLaneState[];
   undoDepth?: number;

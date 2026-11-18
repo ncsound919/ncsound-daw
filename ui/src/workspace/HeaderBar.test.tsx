@@ -45,24 +45,18 @@ describe("HeaderBar master A/B", () => {
 
   it("disables capture until a master plugin is loaded", () => {
     render(
-      <HeaderBar
-        {...headerProps({ onCaptureMasterAb: vi.fn(), canCaptureMasterAb: false })}
-      />,
+      <HeaderBar {...headerProps({ onCaptureMasterAb: vi.fn(), canCaptureMasterAb: false })} />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: "EDIT" }));
-    expect(
-      screen.getByRole("menuitem", { name: "Capture Master A/B" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("menuitem", { name: "Capture Master A/B" })).toBeDisabled();
   });
 });
 
 describe("HeaderBar status reporting", () => {
   it("renders status when provided", () => {
     render(
-      <HeaderBar
-        {...headerProps({ status: "EXPORT / no active tracks", statusIsError: true })}
-      />,
+      <HeaderBar {...headerProps({ status: "EXPORT / no active tracks", statusIsError: true })} />,
     );
     const statusEl = screen.getByRole("status");
     expect(statusEl).toHaveTextContent("EXPORT / no active tracks");
@@ -75,11 +69,7 @@ describe("HeaderBar status reporting", () => {
   });
 
   it("renders status without aria-invalid when status is not an error", () => {
-    render(
-      <HeaderBar
-        {...headerProps({ status: "SESSION / cancelled", statusIsError: false })}
-      />,
-    );
+    render(<HeaderBar {...headerProps({ status: "SESSION / cancelled", statusIsError: false })} />);
     const statusEl = screen.getByRole("status");
     expect(statusEl).toHaveTextContent("SESSION / cancelled");
     expect(statusEl).not.toHaveAttribute("aria-invalid");

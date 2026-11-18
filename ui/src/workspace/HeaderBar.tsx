@@ -326,9 +326,7 @@ export function HeaderBar({
               {
                 label: "Capture Master A/B",
                 run: onCaptureMasterAb,
-                ...(canCaptureMasterAb
-                  ? {}
-                  : { disabled: true, hint: "No master plugin loaded" }),
+                ...(canCaptureMasterAb ? {} : { disabled: true, hint: "No master plugin loaded" }),
               },
             ] as Entry[])
           : []),

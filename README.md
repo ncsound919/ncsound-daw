@@ -26,6 +26,20 @@ cd ui && npm test              rem vitest
 cd ui && npm run typecheck
 ```
 
+## Mix rack and Mixology
+
+The Mixer's **Channel strip** and **Master rack** buttons open live faceplates
+for the baked MixRack. The channel strip faceplate exposes four EQ bands plus
+HP/LP over the DSP's 8-band Pro EQ (bands 5–8 remain addressable by Mixology
+presets and the project state, but are not drawn yet), eight compressor
+characters and a Saturn-style saturation stage. The master has an 8-band EQ, a
+separate 4-band dynamic EQ, typed multiband dynamics, a multiband Saturn
+exciter, an imager and the maximizer.
+
+**Autopilot** renders the session, measures it with local Earshot, applies a
+bounded channel pass, re-measures at musical depth, then builds the master pass
+from that evidence. See `docs/MIXRACK_V3.md`.
+
 ## Licence
 
 The project as a whole is distributed under the **GNU General Public License

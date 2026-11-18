@@ -62,15 +62,15 @@ void MixRackEditor::setupTrack()
     knobs[4].setLabel ("SAT");
     knobs[5].setLabel ("OUT");
 
-    configureBipolarDd (knobs[0], channel.params.lowGainDb.load(), [this] (float db)
+    configureBipolarDd (knobs[0], channel.params.bands[0].gainDb.load(), [this] (float db)
     {
         engine.mixChannel (track).setParam ("lowGain", db);
     });
-    configureBipolarDd (knobs[1], channel.params.lmfGainDb.load(), [this] (float db)
+    configureBipolarDd (knobs[1], channel.params.bands[1].gainDb.load(), [this] (float db)
     {
         engine.mixChannel (track).setParam ("lmfGain", db);
     });
-    configureBipolarDd (knobs[2], channel.params.highGainDb.load(), [this] (float db)
+    configureBipolarDd (knobs[2], channel.params.bands[3].gainDb.load(), [this] (float db)
     {
         engine.mixChannel (track).setParam ("highGain", db);
     });
@@ -79,6 +79,7 @@ void MixRackEditor::setupTrack()
     knobs[3].setDefaultValue (0.625);
     knobs[3].setValue (juce::jlimit (0.0f, 1.0f, (channel.params.compThreshDb.load() + 48.0f) / 48.0f));
     knobs[3].setValueText (dbText (channel.params.compThreshDb.load()));
+    // compThreshDb is still a direct field.
     knobs[3].onChange = [this] (double normalised)
     {
         const auto db = -48.0f + static_cast<float> (normalised) * 48.0f;
@@ -146,23 +147,23 @@ void MixRackEditor::setupMaster()
     knobs[4].setLabel ("WIDTH");
     knobs[5].setLabel ("CEIL");
 
-    configureBipolarDd (knobs[0], rack.params.lowGainDb.load(), [this] (float db)
+    configureBipolarDd (knobs[0], rack.params.bands[0].gainDb.load(), [this] (float db)
     {
         engine.masterMix().setParam ("lowGain", db);
     });
-    configureBipolarDd (knobs[1], rack.params.midGainDb.load(), [this] (float db)
+    configureBipolarDd (knobs[1], rack.params.bands[1].gainDb.load(), [this] (float db)
     {
         engine.masterMix().setParam ("midGain", db);
     });
-    configureBipolarDd (knobs[2], rack.params.highGainDb.load(), [this] (float db)
+    configureBipolarDd (knobs[2], rack.params.bands[2].gainDb.load(), [this] (float db)
     {
         engine.masterMix().setParam ("highGain", db);
     });
 
     knobs[3].setBipolar (false);
     knobs[3].setDefaultValue (0.708);
-    knobs[3].setValue (juce::jlimit (0.0f, 1.0f, (rack.params.dynThreshDb.load() + 48.0f) / 48.0f));
-    knobs[3].setValueText (dbText (rack.params.dynThreshDb.load()));
+    knobs[3].setValue (juce::jlimit (0.0f, 1.0f, (rack.params.dynBands[0].threshDb.load() + 48.0f) / 48.0f));
+    knobs[3].setValueText (dbText (rack.params.dynBands[0].threshDb.load()));
     knobs[3].onChange = [this] (double normalised)
     {
         const auto db = -48.0f + static_cast<float> (normalised) * 48.0f;
@@ -172,8 +173,8 @@ void MixRackEditor::setupMaster()
 
     knobs[4].setBipolar (false);
     knobs[4].setDefaultValue (0.5);
-    knobs[4].setValue (juce::jlimit (0.0f, 1.0f, rack.params.width.load() * 0.5f));
-    knobs[4].setValueText (juce::String (juce::roundToInt (rack.params.width.load() * 100.0f)) + "%");
+    knobs[4].setValue (juce::jlimit (0.0f, 1.0f, rack.params.imgWidth[0].load() * 0.5f));
+    knobs[4].setValueText (juce::String (juce::roundToInt (rack.params.imgWidth[0].load() * 100.0f)) + "%");
     knobs[4].onChange = [this] (double normalised)
     {
         const auto width = static_cast<float> (normalised) * 2.0f;

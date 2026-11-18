@@ -401,6 +401,8 @@ juce::var MainComponent::buildState() const
     if (active > 0 && selectedTrack >= 0 && selectedTrack < active)
         o->setProperty ("channel", engine.mixChannel (selectedTrack).toVar());
 
+    o->setProperty ("master", engine.masterMix().toVar());
+
     return juce::var (o);
 }
 
@@ -859,12 +861,85 @@ juce::WebBrowserComponent::Options MainComponent::buildWebOptions()
               const auto preset = a.isEmpty() ? 0
                                             : juce::jlimit (0, 4, (int) std::round (finiteOr (a[0], 0.0)));
               const auto report = applyMixologyPreset (engine, preset);
+              engine.noteSessionEdit();
               setStatus (report.text, ! report.ok());
               pushState();
               auto* answer = new juce::DynamicObject();
               answer->setProperty ("state", buildState());
               answer->setProperty ("report", report.text);
               done (juce::var (answer));
+          } },
+        { "mixologyAutopilot", [this] (const Args& a, Completion done)
+          {
+              if (autopilotBusy.exchange (true))
+              {
+                  auto* busy = new juce::DynamicObject();
+                  busy->setProperty ("state", buildState());
+                  busy->setProperty ("report", "MIXOLOGY AUTOPILOT / ALREADY RUNNING");
+                  busy->setProperty ("summary", "Wait for the current pass to finish.");
+                  busy->setProperty ("assessment", juce::String());
+                  done (juce::var (busy));
+                  return;
+              }
+
+              const auto brief = a.size() > 0 ? a[0].toString() : juce::String();
+              const auto audioPath = a.size() > 1 ? a[1].toString() : juce::String();
+              const auto referencePath = a.size() > 2 ? a[2].toString() : juce::String();
+              const auto depth = a.size() > 3 ? finiteOr (a[3], 0.65) : 0.65;
+              const auto targetLufs = a.size() > 4 ? finiteOr (a[4], -14.0) : -14.0;
+
+              // Rendering and Earshot measurement can take minutes. The worker
+              // owns the engine; the completion returns to the message thread
+              // and the destructor joins the worker before the engine dies.
+              autopilotThread = std::thread (
+                  [this, brief, audioPath, referencePath, depth, targetLufs, done]() mutable
+                  {
+                      MixologyAutopilotReport report;
+
+                      try
+                      {
+                          report = runMixologyAutopilot (engine, brief, audioPath,
+                                                         referencePath, depth, targetLufs);
+                      }
+                      catch (const std::exception& e)
+                      {
+                          report.text = "MIXOLOGY AUTOPILOT / EXCEPTION";
+                          report.summary = e.what();
+                      }
+                      catch (...)
+                      {
+                          report.text = "MIXOLOGY AUTOPILOT / EXCEPTION";
+                          report.summary = "An unknown error stopped the pass.";
+                      }
+
+                      juce::MessageManager::callAsync (
+                          [safe = juce::Component::SafePointer<MainComponent> (this),
+                           report, done]() mutable
+                          {
+                              auto* self = safe.getComponent();
+
+                              if (self == nullptr)
+                                  return;
+
+                              if (self->autopilotThread.joinable())
+                                  self->autopilotThread.join();
+
+                              self->autopilotBusy.store (false);
+
+                              if (report.ok)
+                                  self->engine.noteSessionEdit();
+
+                              self->setStatus (report.text, ! report.ok);
+                              self->pushState();
+
+                              auto* answer = new juce::DynamicObject();
+                              answer->setProperty ("state", self->buildState());
+                              answer->setProperty ("report", report.text);
+                              answer->setProperty ("summary", report.summary);
+                              answer->setProperty ("assessment", report.assessment);
+                              done (juce::var (answer));
+                          });
+                  });
           } },
         { "importAudio", [this] (const Args&, Completion done)
           {
@@ -921,8 +996,28 @@ juce::WebBrowserComponent::Options MainComponent::buildWebOptions()
 
                   if (track >= 0 && track < engine.getActiveTrackCount()
                       && id.isNotEmpty() && std::isfinite (value))
+                  {
                       engine.mixChannel (track).setParam (id, (float) value);
+                      engine.noteSessionEdit();
+                  }
               }
+              pushState();
+              done (buildState());
+          } },
+        { "setMasterParam", [this] (const Args& a, Completion done)
+          {
+              if (a.size() >= 2)
+              {
+                  const auto id = a[0].toString();
+                  const auto value = finiteOr (a[1], 0.0);
+
+                  if (id.isNotEmpty() && std::isfinite (value))
+                  {
+                      engine.masterMix().setParam (id, (float) value);
+                      engine.noteSessionEdit();
+                  }
+              }
+
               pushState();
               done (buildState());
           } },

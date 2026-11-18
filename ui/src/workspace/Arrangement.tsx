@@ -446,9 +446,7 @@ export function Arrangement({
   const positionBar = transport?.positionBar;
   const zoomAt = (direction: "in" | "out") => {
     const ratio =
-      positionBar !== undefined
-        ? clamp((positionBar - viewStart) / visibleBars, 0, 1)
-        : 0.5;
+      positionBar !== undefined ? clamp((positionBar - viewStart) / visibleBars, 0, 1) : 0.5;
     const next = zoomWindow(viewStart, visibleBars, ratio, direction, MIN_BARS, MAX_BARS);
     setVisibleBars(next.visibleBars);
     setViewStart(next.viewStart);

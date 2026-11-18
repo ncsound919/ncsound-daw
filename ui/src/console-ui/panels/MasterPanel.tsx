@@ -181,7 +181,20 @@ const dynKeys = bandKeys("dyn", (b) => [
 const excKeys = bandKeys("exc", () => [
   ["Drive", dB("Drive", 0.25, 0, 24)],
   ["Mix", pct("Amount", 0)],
-  ["Mode", opts("Mode", 0, ["Tape", "Tube", "Diode"])],
+  ["Mode", opts("Mode", 0, ["Tape", "Tube", "Diode", "Soft", "Warm", "Fold", "Fuzz", "Crunch"])],
+  ["Dyn", { label: "Dynamics", def: 0.5, bipolar: true, spec: { min: -1, max: 1, decimals: 2 } }],
+  ["Feedback", pct("Feedback", 0)],
+  ["ToneBass", { label: "Bass", def: 0.5, bipolar: true, spec: { min: -1, max: 1, decimals: 2 } }],
+  ["ToneMid", { label: "Mid", def: 0.5, bipolar: true, spec: { min: -1, max: 1, decimals: 2 } }],
+  [
+    "ToneTreble",
+    { label: "Treble", def: 0.5, bipolar: true, spec: { min: -1, max: 1, decimals: 2 } },
+  ],
+  [
+    "TonePresence",
+    { label: "Presence", def: 0.5, bipolar: true, spec: { min: -1, max: 1, decimals: 2 } },
+  ],
+  ["Level", dB("Level", 0.5, -24, 24, true)],
 ]);
 const imgKeys = bandKeys("img", () => [["Width", pct("Width", 0.5, 200)]]);
 
@@ -1600,6 +1613,21 @@ function ExcDeck() {
             <Row justify="space-around">
               <PKnob k={`exc${b}Mix`} size="xl" />
               <PKnob k={`exc${b}Drive`} size="l" />
+            </Row>
+            <Row justify="space-around">
+              <PKnob k={`exc${b}Dyn`} size="m" />
+              <PKnob k={`exc${b}Feedback`} size="m" />
+            </Row>
+            <Row justify="space-around">
+              <PKnob k={`exc${b}ToneBass`} size="m" />
+              <PKnob k={`exc${b}ToneMid`} size="m" />
+            </Row>
+            <Row justify="space-around">
+              <PKnob k={`exc${b}ToneTreble`} size="m" />
+              <PKnob k={`exc${b}TonePresence`} size="m" />
+            </Row>
+            <Row justify="space-around">
+              <PKnob k={`exc${b}Level`} size="m" />
             </Row>
           </PGroup>
         ))}

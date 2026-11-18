@@ -27,7 +27,16 @@ import {
 import { Overlay, PluginFrame } from "./PluginFrame";
 import { StereoMeter } from "./StereoMeter";
 
-export const STRIP_SHAPES = ["Bell", "Shelf", "Notch", "BP", "AP"] as const;
+export const STRIP_SHAPES = [
+  "Bell",
+  "Low Shelf",
+  "High Shelf",
+  "Low Cut",
+  "High Cut",
+  "Notch",
+  "Band Pass",
+  "All Pass",
+] as const;
 export const STRIP_SLOPES = ["12", "24", "36", "48"] as const;
 export const STRIP_TEMPLATES = [
   "Clean utility",
@@ -40,12 +49,25 @@ export const STRIP_TEMPLATES = [
   "Parallel smash",
 ] as const;
 
+/** One accent per compressor character: VCA clean red, FET orange, Opto amber,
+ *  VariMu violet, Bus cyan, Punch magenta, Transparent green, Limiter ice. */
+export const COMP_TYPE_COLORS = [
+  "#ff4d4d",
+  "#ff8a00",
+  "#ffcf5a",
+  "#b06cff",
+  "#3cd6dd",
+  "#ff3d8b",
+  "#7ee787",
+  "#9fe0ff",
+] as const;
+
 const hz = (min: number, max: number) => ({ unit: "Hz" as const, min, max, curve: "log" as const });
 const BAND_DEFAULTS = [
   { f: 80, s: 1 },
   { f: 320, s: 0 },
   { f: 2400, s: 0 },
-  { f: 10000, s: 1 },
+  { f: 10000, s: 2 },
 ];
 const freqNorm = (f: number) => Math.log(f / 20) / Math.log(1000);
 
@@ -53,7 +75,14 @@ const bandSchema = Object.fromEntries(
   BAND_DEFAULTS.flatMap((b, i) => {
     const n = i + 1;
     return [
-      [`band${n}Type`, { label: `Band ${n} shape`, def: b.s / 4, spec: { options: STRIP_SHAPES } }],
+      [
+        `band${n}Type`,
+        {
+          label: `Band ${n} shape`,
+          def: b.s / (STRIP_SHAPES.length - 1),
+          spec: { options: STRIP_SHAPES },
+        },
+      ],
       [`band${n}Freq`, { label: "Freq", def: freqNorm(b.f), spec: hz(20, 20000) }],
       [
         `band${n}Gain`,
@@ -79,11 +108,16 @@ const bandSchema = Object.fromEntries(
 
 /** Maps a band-shape option label to what the EQ drawing needs. Accepts the
  *  panel's own labels and host labels ("Low Shelf", "Band Pass", ...). */
-export function bandShape(label: string, band: number): "b" | "ls" | "hs" | "notch" | "bp" | "ap" {
+export function bandShape(
+  label: string,
+  band: number,
+): "b" | "ls" | "hs" | "lc" | "hc" | "notch" | "bp" | "ap" {
   const k = optionKey(label);
   if (k === "shelf") return band <= 2 ? "ls" : "hs";
   if (k.startsWith("lo") && k.includes("sh")) return "ls";
   if (k.startsWith("hi") && k.includes("sh")) return "hs";
+  if (k === "lowcut" || k === "locut" || k === "lc") return "lc";
+  if (k === "highcut" || k === "hicut" || k === "hc") return "hc";
   if (k === "notch") return "notch";
   if (k === "bp" || k === "bandpass") return "bp";
   if (k === "ap" || k === "allpass") return "ap";
@@ -96,7 +130,22 @@ export const channelStripSchema = {
   lpfOn: { label: "LPF", def: 1 },
   dynPreEq: { label: "Pre-EQ", def: 0 },
   compOn: { label: "Dynamics", def: 1 },
-  compType: { label: "Character", def: 0, spec: { options: ["VCA", "FET", "Opto", "VariMu"] } },
+  compType: {
+    label: "Character",
+    def: 0,
+    spec: {
+      options: ["VCA", "FET", "Opto", "VariMu", "Bus", "Punch", "Transparent", "Limiter"],
+    },
+  },
+  compDrive: { label: "Drive", def: 0.5, bipolar: true, spec: { unit: "dB", min: -24, max: 24 } },
+  compOutput: {
+    label: "Color out",
+    def: 0.5,
+    bipolar: true,
+    spec: { unit: "dB", min: -24, max: 24 },
+  },
+  compColor: { label: "Color", def: 0, spec: { unit: "%", min: 0, max: 100 } },
+  compFeedback: { label: "Feedback", def: 0, spec: { unit: "%", min: 0, max: 45 } },
   compKnee: { label: "Knee", def: 0.25, spec: { unit: "dB", min: 0, max: 24 } },
   compMakeup: {
     label: "Makeup",
@@ -105,11 +154,36 @@ export const channelStripSchema = {
     spec: { unit: "dB", min: -12, max: 24 },
   },
   compMix: { label: "Mix", def: 1, spec: { unit: "%", min: 0, max: 100 } },
-  satMode: { label: "Sat mode", def: 0, spec: { options: ["Tape", "Tube", "Diode"] } },
+  satMode: {
+    label: "Sat mode",
+    def: 0,
+    spec: { options: ["Tape", "Tube", "Diode", "Soft", "Warm", "Fold", "Fuzz", "Crunch"] },
+  },
   satBias: { label: "Bias", def: 0.5, bipolar: true, spec: { min: -1, max: 1, decimals: 2 } },
   satTone: { label: "Tone", def: 0.5, bipolar: true, spec: { min: -1, max: 1, decimals: 2 } },
+  satToneBass: { label: "Bass", def: 0.5, bipolar: true, spec: { min: -1, max: 1, decimals: 2 } },
+  satToneMid: { label: "Mid", def: 0.5, bipolar: true, spec: { min: -1, max: 1, decimals: 2 } },
+  satToneTreble: {
+    label: "Treble",
+    def: 0.5,
+    bipolar: true,
+    spec: { min: -1, max: 1, decimals: 2 },
+  },
+  satTonePresence: {
+    label: "Presence",
+    def: 0.5,
+    bipolar: true,
+    spec: { min: -1, max: 1, decimals: 2 },
+  },
+  satDynamics: {
+    label: "Dynamics",
+    def: 0.5,
+    bipolar: true,
+    spec: { min: -1, max: 1, decimals: 2 },
+  },
+  satFeedback: { label: "Feedback", def: 0, spec: { unit: "%", min: 0, max: 100 } },
   satOutput: { label: "Sat out", def: 0.5, bipolar: true, spec: { unit: "dB", min: -12, max: 12 } },
-  satOversample: { label: "OS", def: 0 },
+  satOversample: { label: "HQ", def: 0 },
   trim: { label: "Trim", def: 0.5, bipolar: true, spec: { unit: "dB", min: -24, max: 24 } },
   phase: { label: "Ø Phase", def: 0 },
   hpfFreq: { label: "HPF", def: 0, spec: hz(20, 1000) },
@@ -268,6 +342,14 @@ function StripDeck({
   const page = sel === FILTER_PAGE && hasFilters ? FILTER_PAGE : Math.min(sel, 3);
   const b = page + 1;
   const dynOn = panelValue(p, `band${b}Dyn`) >= 0.5;
+  const compIndex = Math.max(
+    0,
+    Math.min(
+      COMP_TYPE_COLORS.length - 1,
+      Math.round(panelValue(p, "compType") * (COMP_TYPE_COLORS.length - 1)),
+    ),
+  );
+  const compAccent = COMP_TYPE_COLORS[compIndex];
   const hasDynDetail = panelHas(
     p,
     "compLookahead",
@@ -377,22 +459,30 @@ function StripDeck({
 
       <PGroup
         title="Dynamics"
-        chip={system.dynamics}
+        chip={compAccent}
         keys={["compThresh", "compRatio"]}
         enable="compOn"
         style={{ width: 340, boxSizing: "border-box" }}
         extra={
-          hasDynDetail && (
-            <Seg
-              label="Dynamics page"
-              value={dPage}
-              onChange={setDynPage}
-              options={[
-                { id: "comp", label: "Comp" },
-                { id: "detail", label: "More" },
-              ]}
-            />
-          )
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Readout
+              size={10}
+              style={{ color: compAccent, letterSpacing: ".12em", whiteSpace: "nowrap" }}
+            >
+              {panelLabel(p, "compType").toUpperCase()}
+            </Readout>
+            {hasDynDetail && (
+              <Seg
+                label="Dynamics page"
+                value={dPage}
+                onChange={setDynPage}
+                options={[
+                  { id: "comp", label: "Comp" },
+                  { id: "detail", label: "More" },
+                ]}
+              />
+            )}
+          </div>
         }
       >
         {dPage === "comp" ? (
@@ -409,6 +499,12 @@ function StripDeck({
               <PKnob k="compMix" size="m" />
             </Row>
             <PChoice k="compType" variant="seg" />
+            <Row justify="space-around">
+              <PKnob k="compDrive" size="m" />
+              <PKnob k="compColor" size="m" />
+              <PKnob k="compOutput" size="m" label="Color out" />
+              <PKnob k="compFeedback" size="m" />
+            </Row>
           </>
         ) : (
           <>
@@ -435,7 +531,7 @@ function StripDeck({
         keys={["satDrive", "satMix"]}
         enable="satOn"
         style={{ width: 200, boxSizing: "border-box" }}
-        extra={<PToggle k="satOversample">OS</PToggle>}
+        extra={<PToggle k="satOversample">HQ</PToggle>}
       >
         <Row justify="space-around">
           <PKnob k="satDrive" size="xl" learn />
@@ -446,6 +542,18 @@ function StripDeck({
           <PKnob k="satBias" size="m" learn />
           <PKnob k="satTone" size="m" learn />
           <PKnob k="satOutput" size="m" label="Out" learn />
+        </Row>
+        <Row justify="space-around">
+          <PKnob k="satDynamics" size="m" learn />
+          <PKnob k="satFeedback" size="m" learn />
+        </Row>
+        <Row justify="space-around">
+          <PKnob k="satToneBass" size="m" learn />
+          <PKnob k="satToneMid" size="m" learn />
+        </Row>
+        <Row justify="space-around">
+          <PKnob k="satToneTreble" size="m" learn />
+          <PKnob k="satTonePresence" size="m" learn />
         </Row>
       </PGroup>
 

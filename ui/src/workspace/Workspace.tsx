@@ -19,6 +19,7 @@ import { Inspector } from "./Inspector";
 import { PianoRoll } from "./PianoRoll";
 import { Browser } from "./Browser";
 import { Automation } from "./Automation";
+import { ChannelRackPanel, MasterRackPanel } from "./RackPanel";
 
 import { INSERT_SLOTS, WORKSPACE_VIEWS, type WorkspaceView } from "./format";
 import "./workspace.css";
@@ -73,6 +74,7 @@ export interface WorkspaceProps {
   onNotesChanged?: (clip: number, notes: MidiNote[]) => void;
   onAutomationChanged?: (track: number, draft: AutomationLaneDraft) => void;
   onChannelChange?: (track: number, param: string, value: number) => void;
+  onMasterChange?: (param: string, value: number) => void;
   /** Arms MIDI learn on a host parameter id ("track.N.param"). */
   onMidiLearn?: (target: string) => void;
   onPluginLoad?: (plugin: PluginInfo, track: number, slot: number) => void;
@@ -91,6 +93,12 @@ export interface WorkspaceProps {
   onScan?: () => void;
   /** Mixology preset names from the host; the entries hide without them. */
   mixologyPresets?: string[];
+  /** Render/measure/apply an autonomous Mixology first pass. */
+  onMixologyAutopilot?: (
+    brief: string,
+    depth: number,
+    referencePath: string,
+  ) => Promise<{ report: string; summary: string; assessment: string }>;
   /** Import Audio hook; the menu item stays disabled without it. */
   onImportAudio?: () => void;
   /** Session and export hooks; each menu entry stays disabled without its route. */
@@ -127,6 +135,7 @@ export function Workspace({
   onNotesChanged,
   onAutomationChanged,
   onChannelChange,
+  onMasterChange,
   onMidiLearn,
   onPluginLoad,
   onInsertBypassed,
@@ -138,6 +147,7 @@ export function Workspace({
   onMasterPluginLoad,
   onScan,
   mixologyPresets,
+  onMixologyAutopilot,
   onImportAudio,
   onRecord,
   onOpenSession,
@@ -151,6 +161,7 @@ export function Workspace({
   const [view, setView] = useState<WorkspaceView>(
     WORKSPACE_VIEWS.some((entry) => entry.id === initialView) ? initialView : "arrange",
   );
+  const [rackDialog, setRackDialog] = useState<"channel" | "master" | null>(null);
   const [mode, setMode] = useState<DawMode>(() => {
     try {
       const saved = localStorage.getItem("nc.daw.mode");
@@ -619,15 +630,18 @@ export function Workspace({
             onMasterDim={actions.masterDim}
             onMasterMono={actions.masterMono}
             onRack={() => setView("inspector")}
+            onOpenStrip={() => setRackDialog("channel")}
             onInsert={openBrowser}
             onBypass={onInsertBypassed}
             onAutomationRead={onAutomationRead}
             onMove={onInsertMove}
             onOpenEditor={onOpenPluginEditor}
             onMasterRack={() => setView("inspector")}
+            onOpenMasterPanel={() => setRackDialog("master")}
             onMasterInsert={openMasterBrowser}
             mixologyPresets={mixologyPresets}
             onApplyMixology={actions.applyMixology}
+            onMixologyAutopilot={onMixologyAutopilot}
             onMasterGain={(db) => {
               setMasterGainDb(db);
               actions.masterGain(db);
@@ -762,6 +776,22 @@ export function Workspace({
             />
           </div>
         </div>
+      )}
+
+      {rackDialog === "channel" && (
+        <ChannelRackPanel
+          channel={state.channel}
+          onParam={(id, value) => onChannelChange?.(trackIndex, id, value)}
+          onClose={() => setRackDialog(null)}
+        />
+      )}
+
+      {rackDialog === "master" && (
+        <MasterRackPanel
+          master={state.master}
+          onParam={(id, value) => onMasterChange?.(id, value)}
+          onClose={() => setRackDialog(null)}
+        />
       )}
 
       <StatusBar
