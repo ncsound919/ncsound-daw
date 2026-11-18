@@ -31,6 +31,7 @@ nc::engine::TempoMap AudioEngine::tempoMap() const
 void AudioEngine::setMarkers (std::vector<nc::engine::Marker> markers)
 {
     clock.setMarkers (std::move (markers));
+    noteSessionEdit();
 }
 
 void AudioEngine::setMidiClips (std::vector<MidiTimelineClip> clips)
@@ -403,6 +404,8 @@ void AudioEngine::setTrackAutomation (int track, AutomationParam param, const Au
 {
     if (track < 0 || track >= trackCount)
         return;
+
+    noteSessionEdit();
 
     auto& slot = (param == AutomationParam::Pan ? automation.panAutomation : automation.volumeAutomation)
                      [static_cast<size_t> (track)];

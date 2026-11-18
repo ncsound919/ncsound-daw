@@ -1,6 +1,6 @@
 # Human & Hardware Release Gates
 
-This document formalizes the release verification gates that require human evaluation and physical hardware before production binary sign-off. Automated CI and CTest suites guarantee bit-exact signal integrity and crash-free headless logic, but the physical gates below must be exercised by a release engineer.
+This document formalizes the release verification gates that require human evaluation and physical hardware before production binary sign-off. Automated CI and CTest suites cover bit-exact signal integrity and headless logic, but a green suite is not a substitute for the physical gates below; they must be exercised by a release engineer.
 
 ---
 
@@ -42,17 +42,22 @@ This document formalizes the release verification gates that require human evalu
 ## Gate 3: End-to-End NSIS Windows Installer Verification
 - **Category:** Distribution & Setup
 - **Target Department:** Packaging & Distribution
-- **Prerequisites:** System with `makensis` (NSIS 3.x) installed or configured via `NC_MAKENSIS`.
+- **Prerequisites:** `makensis` (NSIS 3.x) installed or configured via `NC_MAKENSIS`, and a clean Windows 10/11 VM with neither the VC++ 2015-2022 x64 redistributable nor the WebView2 Evergreen Runtime pre-installed (to prove the installer handles both).
 - **Procedure:**
   1. Run `cpack --config build/CPackConfig.cmake -G NSIS64 -B build/pkg`.
   2. Run the generated installer `ncsound-daw-*.exe` on a clean Windows virtual machine or test machine.
   3. Complete standard installation to `C:\Program Files\NCSound DAW\`.
-  4. Verify Start Menu shortcut and installed binaries (`NCSound Music Hub.exe`, VST3 bundles in `Common Files\VST3`, documentation and licenses).
+  4. Verify Start Menu shortcut and installed binaries (`NCSound Music Hub.exe`, VST3 bundles in `Common Files\VST3`, documentation and licenses), plus the VC++ redistributable and WebView2 Runtime prerequisites.
   5. Launch the installed application from the Start Menu shortcut.
-  6. Uninstall the application via Windows Add/Remove Programs.
+  6. Confirm the signature on the installer and the application (`signtool verify /pa`).
+  7. Uninstall the application via Windows Add/Remove Programs.
 - **Acceptance Criteria:**
   - Installer completes without elevation errors or unhandled file locks.
+  - The app launches and a plug-in loads on a machine that had no VC++ redistributable or WebView2 Runtime.
+  - VST3 bundles are visible to a host from `Common Files\VST3`.
+  - Both binaries are signed by the release certificate.
   - Uninstaller cleanly removes all installed files and directories without leaving residual registry entries.
+- **Current status (2026-11-17 audit):** OPEN. The generated NSIS script had no `app` section, `makensis` is not installed here, the app depends on `MSVCP140.dll`/`VCRUNTIME140.dll`, and the binaries are unsigned.
 
 ---
 

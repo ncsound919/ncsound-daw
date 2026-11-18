@@ -76,6 +76,15 @@ for bundle in "Chop Station" "808 Designer"; do
     required "VST3/$bundle.vst3/Contents/Resources/moduleinfo.json"
 done
 
+# The application is the package's main deliverable. A package that contains
+# only the plug-ins is not a DAW installer, so this is a hard requirement.
+required "NCSound Music Hub.exe"
+
+# Legal payload: the GPL text and every third-party notice must travel with the
+# binaries; distribution without them is not permitted.
+required "LICENSE"
+required "THIRD-PARTY-NOTICES.md"
+
 # The linker's side products sit next to the bundle in the build tree; the
 # install rules exclude them, and a regression there ships a .lib with the
 # product.

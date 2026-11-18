@@ -176,7 +176,7 @@ void AudioEngine::refreshResampleBanks()
 
 void AudioEngine::serviceStreaming()
 {
-    assetLibrary.serviceStreaming (sampleRate.load(), positionSeconds());
+    assetLibrary.serviceStreaming (sampleRate.load(), positionSeconds(), clock.blockCount());
 }
 
 } // namespace nc

@@ -9,6 +9,7 @@
 #include <atomic>
 #include <optional>
 #include <memory>
+#include <thread>
 
 #include "ArrangeView.h"
 #include "AudioEngine.h"
@@ -27,7 +28,7 @@ class MainComponent final : public juce::Component,
 {
 public:
     explicit MainComponent (juce::File registryFile);
-    ~MainComponent() override = default;
+    ~MainComponent() override;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -138,13 +139,22 @@ private:
     bool statusAlert = false;
     double statusUntil = 0.0;
 
-    // Autosave journal. `lastEditMillis` is wall-clock now when the undo
-    // depth advances (dirty proxy); the `.autosave` sibling is written by
-    // maybeAutosave() on the 30 Hz timer after the debounce + interval.
+    // Autosave journal. `lastEditMillis` is wall-clock now when either the undo
+    // depth advances (clip edits) or the engine's session fingerprint changes
+    // (mix, insert, plug-in, tempo, marker, pitch, automation edits); the
+    // `.autosave` sibling is written by maybeAutosave() on the 30 Hz timer
+    // after the debounce + interval.
     int64_t lastSaveMillis = 0;
     int64_t lastEditMillis = 0;
     int64_t lastAutosaveMillis = 0;
     std::size_t lastSeenUndoDepth = 0;
+    std::uint64_t lastSeenSessionFingerprint = 0;
+
+    // Mixology Autopilot renders and measures off the message thread. The
+    // worker is joined by the destructor so a close during a pass cannot leave
+    // it touching a dead engine.
+    std::thread autopilotThread;
+    std::atomic<bool> autopilotBusy { false };
 
     // Slot written by the last manual-save rotation; -1 means none yet.
     int lastBackupIndex = -1;

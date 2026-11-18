@@ -116,7 +116,8 @@ void AssetLibrary::refreshResampleBanks (double outputRate)
     }
 }
 
-void AssetLibrary::serviceStreaming (double outputRate, double positionSeconds)
+void AssetLibrary::serviceStreaming (double outputRate, double positionSeconds,
+                                     std::uint64_t blockNow)
 {
     // A session-rate change (a device swap, an export at another rate) leaves
     // the playback kernels stale; this runs on the message thread often
@@ -146,6 +147,16 @@ void AssetLibrary::serviceStreaming (double outputRate, double positionSeconds)
         auto& left = asset.cacheA[slot];
         auto& right = asset.cacheB[slot];
         const auto count = static_cast<int> (juce::jmin<int64_t> (target.lengthFrames, asset.cacheFrames));
+
+        // Two refills in quick succession can otherwise reach the slot a late
+        // block captured two publishes ago. Skip until two blocks have started
+        // since this slot was last written; the next service tick retries.
+        const auto published = asset.slotPublishedBlock[slot].load (std::memory_order_acquire);
+
+        if (published != 0 && published + 2 > blockNow)
+            continue;
+
+        asset.slotPublishedBlock[slot].store (blockNow, std::memory_order_release);
 
         std::fill (left.begin(), left.end(), 0.0f);
         std::fill (right.begin(), right.end(), 0.0f);

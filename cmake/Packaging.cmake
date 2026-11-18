@@ -1,14 +1,11 @@
 # Release packaging (CPack).
 #
-# The two plug-ins are the deliverable that builds entirely from this tree, so
-# they are always packaged. The app links against the out-of-repo
-# ChordStudio-master sources, so it is deliberately not part of this package:
-# a package that silently omitted half its binaries would be worse than one
-# that says what it contains.
-#
-# ZIP builds anywhere. NSIS/WIX are added to the generator list only when their
-# toolchains are actually installed, so `cpack` never fails on a machine that
-# has no installer toolchain - it just produces the archive.
+# The application and both plug-ins are deliverables that build entirely from
+# this tree, so all three are packaged together. The ZIP installs the app at the
+# archive root, the plug-ins under VST3/ and Standalone/, and the licences and
+# notices beside them. NSIS/WIX are added only when their toolchains are
+# installed, so `cpack` still produces the portable archive on a machine that
+# has no installer toolchain.
 
 option(NC_ENABLE_PACKAGING "Generate CPack install and packaging rules" ON)
 

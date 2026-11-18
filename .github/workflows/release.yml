@@ -34,8 +34,8 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-      - name: Build plug-ins
-        run: cmake --build build --config Release --target NCChopStation NCEightOHeight
+      - name: Build app and plug-ins
+        run: cmake --build build --config Release --target NCSoundHub NCChopStation NCEightOHeight
       - name: Package (ZIP)
         working-directory: build
         run: cpack -G ZIP

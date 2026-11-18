@@ -114,7 +114,10 @@ TEST_CASE ("engine render digest is stable", "[digest]")
     const auto digest = digestOf (engine);
     INFO ("render digest: "
           << juce::String::formatted ("0x%016llx", static_cast<unsigned long long> (digest)));
-    REQUIRE (digest == 0x1b5398dd4a9f297aull);
+    // v3 MixRack: 8-band Pro EQ defaults, the new saturation stage and the
+    // typed compressor change the rendered samples by design. The guard still
+    // pins every sample after this intentional update.
+    REQUIRE (digest == 0x22afee9716a36bd2ull);
 }
 
 /*  The split into four passes made the block's early exits and its

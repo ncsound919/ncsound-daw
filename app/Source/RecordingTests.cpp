@@ -141,6 +141,54 @@ TEST_CASE ("an armed track captures what arrives at its input", "[record]")
     folder.deleteRecursively();
 }
 
+TEST_CASE ("a streamed take writes its audio to disk", "[record]")
+{
+    nc::AudioEngine engine;
+
+    if (! waitForDevice (engine))
+    {
+        WARN ("No audio device on this machine; skipping streamed recording test");
+        return;
+    }
+    engine.suspendAudioCallbackForTesting();
+
+    const auto folder = recordingFolder ("streamed");
+    const auto blockSize = 256;
+
+    engine.setRecordArmed (0, true);
+
+    juce::String error;
+    REQUIRE (engine.startRecording (folder, error));
+
+    std::vector<float> left (static_cast<size_t> (blockSize));
+    std::vector<float> right (static_cast<size_t> (blockSize));
+    std::vector<float> outLeft (static_cast<size_t> (blockSize));
+    std::vector<float> outRight (static_cast<size_t> (blockSize));
+
+    for (int i = 0; i < blockSize; ++i)
+        left[static_cast<size_t> (i)] = static_cast<float> (i) * 0.001f;
+
+    feedBlock (engine, left, right, outLeft.data(), outRight.data());
+    feedBlock (engine, left, right, outLeft.data(), outRight.data());
+
+    const auto takes = engine.stopRecording (folder, 24, error);
+    REQUIRE (takes.size() == 1);
+    REQUIRE (takes[0].frames == static_cast<int64_t> (2 * blockSize));
+    REQUIRE (takes[0].file.existsAsFile());
+
+    int64_t frames = 0;
+    double rate = 0.0;
+    const auto samples = readWav (takes[0].file, frames, rate);
+
+    // The threaded writer must have flushed the queued blocks before the take
+    // was returned; a header-only WAV is the regression this pins.
+    REQUIRE (frames == static_cast<int64_t> (2 * blockSize));
+    REQUIRE (rate == engine.currentSampleRate());
+    REQUIRE (std::abs (samples[10] - 0.01f) < 1.0e-3f);
+
+    folder.deleteRecursively();
+}
+
 TEST_CASE ("an unarmed track records nothing and unarmed start is refused", "[record]")
 {
     nc::AudioEngine engine;

@@ -525,9 +525,22 @@ public:
         Real-device playback stops for this engine; capture and export still run. */
     void suspendAudioCallbackForTesting();
 
+    /** Cheap content fingerprint used by the unsaved-work / autosave check.
+        Changes whenever a persisted mix, insert, plugin, tempo, marker or
+        automation value changes; it is not a render hash. */
+    std::uint64_t sessionFingerprint() const;
+
+    /** Bumps the fingerprint for state the cheap scan cannot see directly. */
+    void noteSessionEdit() { sessionRevision.fetch_add (1, std::memory_order_relaxed); }
+
 private:
     PluginCatalog catalog;
     TrackInsertRack inserts;
+    std::atomic<std::uint64_t> sessionRevision { 0 };
+    /** Validates the armed set and resets capture state. Does not set the
+        recording flag or create writers; each public startRecording() does that
+        for its own path. */
+    bool beginRecording (juce::String& error, bool prepareRamBuffers);
     std::shared_ptr<std::atomic<bool>> engineAlive;
     juce::AudioBuffer<float> mixBuffer;
     juce::AudioBuffer<float> instrumentBlock;

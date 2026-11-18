@@ -52,6 +52,10 @@ public:
         std::array<std::vector<float>, 2> cacheB;
         std::array<std::atomic<int64_t>, 2> slotStart {};
         std::array<std::atomic<int64_t>, 2> slotLength {};
+        // Transport block at which each slot was last refilled. A slot may still
+        // be the one a late callback is reading, so a refill waits two blocks —
+        // the same retirement rule the snapshot lists use.
+        std::array<std::atomic<std::uint64_t>, 2> slotPublishedBlock {};
         std::atomic<int> activeCache { 0 };
     };
 
@@ -91,8 +95,10 @@ public:
     void refreshResampleBanks (double outputRate);
 
     /** Refills the streaming read-ahead windows around the transport. Message
-        thread only; `positionSeconds` is the transport position. */
-    void serviceStreaming (double outputRate, double positionSeconds);
+        thread only; `positionSeconds` is the transport position and `blockNow`
+        the transport's block counter, used to avoid overwriting a slot a late
+        callback may still be reading. */
+    void serviceStreaming (double outputRate, double positionSeconds, std::uint64_t blockNow);
 
     float sampleAt (const Asset& asset, int64_t frame, int channel) const;
 

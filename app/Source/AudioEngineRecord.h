@@ -43,7 +43,12 @@ struct RecordCapture
     std::array<std::atomic<bool>, nc::limits::maxTracks> recordArmed {};
     std::vector<float> recordSilence { 16384, 0.0f }; // ThreadedWriter needs non-null channels
 
+    // Message-thread ownership of the take list. The callback never walks this
+    // vector: it reads one published writer per track, so start/stop can add or
+    // retire takes without racing a block that is already writing.
     std::vector<ThreadedTake> threadedTakes;
+    std::array<std::atomic<juce::AudioFormatWriter::ThreadedWriter*>,
+               nc::limits::maxTracks> recordWriters {};
     juce::TimeSliceThread writerThread { "RecordWriter" };
 
     std::array<std::atomic<bool>, nc::limits::maxTracks> trackMonitor {};
@@ -52,6 +57,6 @@ struct RecordCapture
     std::atomic<int> recordLatency { 0 };
     std::atomic<int> overflowCount { 0 };
     std::atomic<int64_t> recordStartFrame { 0 };
-    int64_t recordFramesWritten = 0;
+    std::atomic<int64_t> recordFramesWritten { 0 };
 };
 } // namespace nc

@@ -17,6 +17,10 @@ AudioEngine::AudioEngine()
     engineAlive = std::make_shared<std::atomic<bool>> (true);
     formats.registerBasicFormats();
 
+    // Streaming recording: ThreadedWriter only flushes while its TimeSliceThread
+    // is running. Without this, a take writes a header and no audio.
+    capture.writerThread.startThread();
+
     // Pan cache: element 0's brace initializer only seeds lane 0; every other
     // lane would start at 0 and skip the first trig, leaving its gains at zero.
     std::fill_n (scratch.cachedPanValue, trackCount, -2.0f);
@@ -179,6 +183,7 @@ AudioEngine::~AudioEngine()
     engineAlive->store (false, std::memory_order_release);
     deviceManager.removeAudioCallback (this);
     inserts.collectGarbage();
+    capture.writerThread.stopThread (2000);
 }
 
 
@@ -263,6 +268,7 @@ void AudioEngine::setGlobalPitch (const nc::engine::PitchStack& stack)
     globalTranspose.store (p.transpose, std::memory_order_relaxed);
     globalPitchCents.store (p.pitchCents, std::memory_order_relaxed);
     globalTuningHz.store (p.tuningHz, std::memory_order_relaxed);
+    noteSessionEdit();
 }
 
 nc::engine::PitchStack AudioEngine::globalPitchStack() const noexcept

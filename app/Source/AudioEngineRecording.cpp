@@ -67,7 +67,7 @@ void AudioEngine::captureInputBlock (const float* const* inputChannelData,
     if (numInputChannels <= 0 || inputChannelData == nullptr || inputChannelData[0] == nullptr)
         numInputChannels = 0;
 
-    if (capture.recordFramesWritten == 0)
+    if (capture.recordFramesWritten.load (std::memory_order_relaxed) == 0)
         capture.recordStartFrame.store (position, std::memory_order_release);
 
     int inputIndex = 0;
@@ -82,19 +82,19 @@ void AudioEngine::captureInputBlock (const float* const* inputChannelData,
         const auto* right = numInputChannels > 1
                                 ? inputChannelData[(inputIndex + 1) % numInputChannels] : left;
 
-        // Threaded path: push straight into the writer FIFO (no copy here;
-        // the writer thread owns the disk). RAM path: preallocated buffer.
+        // Threaded path: push straight into the writer FIFO (no copy here; the
+        // writer thread owns the disk). The pointer is published per track, so
+        // start/stop never mutates a list the callback is walking.
+        auto* writer = capture.recordWriters[static_cast<size_t> (track)]
+                           .load (std::memory_order_acquire);
         bool pushedThreaded = false;
 
-        for (auto& take : capture.threadedTakes)
+        if (writer != nullptr)
         {
-            if (take.track != track || take.writer == nullptr)
-                continue;
-
             const auto silence = capture.recordSilence.data();
             const float* channels[2] { left != nullptr ? left : silence,
                                         right != nullptr ? right : silence };
-            if (! take.writer->write (channels, numSamples))
+            if (! writer->write (channels, numSamples))
                 capture.overflowCount.fetch_add (1, std::memory_order_relaxed);
             pushedThreaded = true;
         }
@@ -105,7 +105,7 @@ void AudioEngine::captureInputBlock (const float* const* inputChannelData,
         ++inputIndex;
     }
 
-    capture.recordFramesWritten += numSamples;
+    capture.recordFramesWritten.fetch_add (numSamples, std::memory_order_relaxed);
 }
 
 void AudioEngine::setRecordArmed (int track, bool armed)
@@ -187,6 +187,9 @@ nc::engine::ClipState AudioEngine::stopMidiRecording()
 
 int64_t AudioEngine::recordedFrames() const
 {
+    if (! capture.threadedTakes.empty())
+        return capture.recordFramesWritten.load (std::memory_order_relaxed);
+
     int64_t most = 0;
 
     for (int track = 0; track < trackCount; ++track)
@@ -198,7 +201,7 @@ int64_t AudioEngine::recordedFrames() const
 
 int AudioEngine::recordOverflows() const
 {
-    int count = 0;
+    int count = capture.overflowCount.load (std::memory_order_relaxed);
 
     for (int track = 0; track < trackCount; ++track)
         if (capture.recordBuffers[static_cast<size_t> (track)].overflowed)
@@ -207,7 +210,7 @@ int AudioEngine::recordOverflows() const
     return count;
 }
 
-bool AudioEngine::startRecording (juce::String& error)
+bool AudioEngine::beginRecording (juce::String& error, bool prepareRamBuffers)
 {
     if (capture.recording.load (std::memory_order_acquire))
     {
@@ -235,9 +238,9 @@ bool AudioEngine::startRecording (juce::String& error)
         return false;
     }
 
-    // Three minutes per armed track, allocated up front so the callback never
-    // allocates. A take that runs past the buffer reports an overflow instead of
-    // being silently truncated; streaming capture to disk is the next step.
+    // RAM takes get three minutes per armed track, allocated up front so the
+    // callback never allocates. Streaming takes leave the buffer empty: their
+    // audio goes through the per-track writer published below.
     const auto capacity = static_cast<int64_t> (rate * 60.0 * 3.0);
 
     for (int track = 0; track < trackCount; ++track)
@@ -247,18 +250,36 @@ bool AudioEngine::startRecording (juce::String& error)
 
         if (capture.recordArmed[static_cast<size_t> (track)].load (std::memory_order_relaxed))
         {
-            buffer.prepare (capacity);
+            if (prepareRamBuffers)
+                buffer.prepare (capacity);
+            else if (buffer.storage.getNumSamples() > 0)
+                buffer.storage.setSize (0, 0);
+
             // The native UI arms tracks but has no separate monitor switch yet.
             // Monitoring follows the armed tracks while recording so the player
             // hears the input through the same chain being captured.
             capture.trackMonitor[static_cast<size_t> (track)].store (true, std::memory_order_relaxed);
         }
         else if (buffer.storage.getNumSamples() > 0)
+        {
             buffer.storage.setSize (0, 0);
+        }
     }
 
-    capture.recordFramesWritten = 0;
+    for (auto& writer : capture.recordWriters)
+        writer.store (nullptr, std::memory_order_release);
+
+    capture.recordFramesWritten.store (0, std::memory_order_relaxed);
+    capture.overflowCount.store (0, std::memory_order_relaxed);
     capture.recordStartFrame.store (clock.positionSamples(), std::memory_order_release);
+    return true;
+}
+
+bool AudioEngine::startRecording (juce::String& error)
+{
+    if (! beginRecording (error, true))
+        return false;
+
     capture.recording.store (true, std::memory_order_release);
     error.clear();
     return true;
@@ -272,15 +293,30 @@ bool AudioEngine::startRecording (const juce::File& folder, juce::String& error)
         return false;
     }
 
-    if (! startRecording (error))
+    if (! beginRecording (error, false))
         return false;
 
-    // Replace the RAM buffers with threaded writers: the callback pushes
-    // blocks into a FIFO, the writer thread flushes WAV to disk.
+    // Replace the RAM buffers with threaded writers: the callback pushes blocks
+    // into a FIFO, the writer thread flushes WAV to disk. Writers are published
+    // per track before recording starts, so the callback never sees a list that
+    // is being mutated.
     capture.threadedTakes.clear();
     juce::WavAudioFormat wav;
     const auto rate = sampleRate.load();
     int takeNumber = 0;
+
+    const auto fail = [this, &error] (const juce::String& message)
+    {
+        for (const auto& take : capture.threadedTakes)
+            if (take.track >= 0 && take.track < nc::limits::maxTracks)
+                capture.recordWriters[static_cast<size_t> (take.track)]
+                    .store (nullptr, std::memory_order_release);
+
+        capture.threadedTakes.clear();
+        capture.recording.store (false, std::memory_order_release);
+        error = message;
+        return false;
+    };
 
     for (int track = 0; track < trackCount; ++track)
     {
@@ -293,23 +329,18 @@ bool AudioEngine::startRecording (const juce::File& folder, juce::String& error)
         std::unique_ptr<juce::FileOutputStream> stream (file.createOutputStream());
 
         if (stream == nullptr)
-        {
-            error = "Cannot write " + file.getFullPathName();
-            capture.threadedTakes.clear();
-            capture.recording.store (false, std::memory_order_release);
-            return false;
-        }
+            return fail ("Cannot write " + file.getFullPathName());
 
         std::unique_ptr<juce::AudioFormatWriter> writer (
             wav.createWriterFor (stream.get(), rate, 2, 24, {}, 0));
 
         if (writer == nullptr)
-        {
-            error = "Unsupported recording format";
-            capture.threadedTakes.clear();
-            capture.recording.store (false, std::memory_order_release);
-            return false;
-        }
+            return fail ("Unsupported recording format");
+
+        // createWriterFor takes ownership of the stream. Without releasing the
+        // unique_ptr here the stream is closed when this loop iteration ends,
+        // and the writer thread later flushes into a dead FileOutputStream.
+        stream.release();
 
         ThreadedTake take;
         take.writer = std::make_unique<juce::AudioFormatWriter::ThreadedWriter> (
@@ -317,9 +348,13 @@ bool AudioEngine::startRecording (const juce::File& folder, juce::String& error)
         take.file = file;
         take.track = track;
         take.startFrame = capture.recordStartFrame.load (std::memory_order_acquire);
+
+        capture.recordWriters[static_cast<size_t> (track)]
+            .store (take.writer.get(), std::memory_order_release);
         capture.threadedTakes.push_back (std::move (take));
     }
 
+    capture.recording.store (true, std::memory_order_release);
     error.clear();
     return true;
 }
@@ -340,11 +375,13 @@ std::vector<AudioEngine::RecordedTake> AudioEngine::stopRecording (const juce::F
         monitor.store (false, std::memory_order_relaxed);
 
     // A callback that was already inside captureInputBlock when the flag
-    // flipped is still using the writers it found in threadedTakes. Wait for
-    // two later blocks to start (callbacks are strictly serial) before
-    // touching the take list — the same retiredAtBlock + 2 rule the snapshot
-    // sweeps apply. Without this, stop could free a writer mid-write.
-    if (deviceOpen.load (std::memory_order_acquire))
+    // flipped is still using the writer it found for its track. Wait for two
+    // later blocks to start (callbacks are strictly serial) before retiring the
+    // writers — the same retiredAtBlock + 2 rule the snapshot sweeps apply. A
+    // harness driving processBlockForTesting counts too, because deviceOpen
+    // cannot see that thread.
+    if (deviceOpen.load (std::memory_order_acquire)
+        || testBlocksInFlight.load (std::memory_order_acquire) > 0)
     {
         const auto started = clock.blockCount();
         const auto deadline = juce::Time::getMillisecondCounterHiRes() + 500.0;
@@ -358,11 +395,18 @@ std::vector<AudioEngine::RecordedTake> AudioEngine::stopRecording (const juce::F
         }
     }
 
+    // Unpublish every writer first, then let the take list destroy them. No
+    // callback can still find a pointer after this point.
+    for (auto& writer : capture.recordWriters)
+        writer.store (nullptr, std::memory_order_release);
+
     // Streaming takes are already on disk; deleting the writers flushes.
     // Note: the latency trim that the RAM path applies is not applied to
     // streamed takes (they start at the punch-in transport frame).
     if (! capture.threadedTakes.empty())
     {
+        const auto captured = capture.recordFramesWritten.load (std::memory_order_relaxed);
+
         for (auto& take : capture.threadedTakes)
         {
             take.writer.reset();
@@ -370,7 +414,7 @@ std::vector<AudioEngine::RecordedTake> AudioEngine::stopRecording (const juce::F
             recorded.track = take.track;
             recorded.file = take.file;
             recorded.startFrame = take.startFrame;
-            recorded.frames = capture.recordFramesWritten;
+            recorded.frames = captured;
             takes.push_back (std::move (recorded));
         }
 
@@ -447,7 +491,7 @@ std::vector<AudioEngine::RecordedTake> AudioEngine::stopRecording (const juce::F
         if (buffer.storage.getNumSamples() > 0)
             buffer.storage.setSize (0, 0);
 
-    capture.recordFramesWritten = 0;
+    capture.recordFramesWritten.store (0, std::memory_order_relaxed);
     return takes;
 }
 } // namespace nc

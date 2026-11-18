@@ -764,6 +764,9 @@ bool MainComponent::hasUnsavedSessionWork() const
     if (arrange.undoDepth() > 0 || lastEditMillis > lastSaveMillis)
         return true;
 
+    if (engine.sessionFingerprint() != lastSeenSessionFingerprint)
+        return true;
+
     for (auto track = 0; track < AudioEngine::trackCount; ++track)
     {
         if (! engine.trackAutomation (track, AutomationParam::Volume).empty()
@@ -1009,6 +1012,7 @@ void MainComponent::discardToEmptySession()
     lastEditMillis = 0;
     lastAutosaveMillis = 0;
     lastSeenUndoDepth = 0;
+    lastSeenSessionFingerprint = engine.sessionFingerprint();
 
     mixer.syncFromEngine();
     arrange.refresh();
@@ -1108,14 +1112,16 @@ void MainComponent::timerCallback()
 
 void MainComponent::markDirty()
 {
-    // Dirty proxy: the undo depth only grows on real edits, so advancing
-    // depth means the session changed since the last journal. Redo moves
-    // depth the other way and is covered the next time it advances.
+    // Dirty proxy: clip edits advance the undo depth; everything the undo stack
+    // does not own (mix, inserts, plug-ins, tempo, markers, pitch, automation)
+    // moves the engine's session fingerprint. Either one is a real edit.
     const auto depth = arrange.undoDepth();
+    const auto fingerprint = engine.sessionFingerprint();
 
-    if (depth != lastSeenUndoDepth)
+    if (depth != lastSeenUndoDepth || fingerprint != lastSeenSessionFingerprint)
     {
         lastSeenUndoDepth = depth;
+        lastSeenSessionFingerprint = fingerprint;
         lastEditMillis = static_cast<int64_t> (juce::Time::getMillisecondCounterHiRes());
     }
 }
@@ -2570,6 +2576,7 @@ void MainComponent::writeProject (const juce::File& file)
     lastEditMillis = now;
     lastAutosaveMillis = 0;
     lastSeenUndoDepth = arrange.undoDepth();
+    lastSeenSessionFingerprint = engine.sessionFingerprint();
     setStatus ("SAVED " + file.getFileName() + " / "
                + juce::String (static_cast<int> (document.clips.size())) + " CLIPS");
 }
@@ -2718,6 +2725,7 @@ void MainComponent::readProject (const juce::File& file)
     lastEditMillis = now;
     lastAutosaveMillis = 0;
     lastSeenUndoDepth = arrange.undoDepth();
+    lastSeenSessionFingerprint = engine.sessionFingerprint();
     setView (View::arrange);
     auto note = juce::String();
 
@@ -2731,6 +2739,15 @@ void MainComponent::readProject (const juce::File& file)
     setStatus ("OPENED " + file.getFileName() + " / " + juce::String (restored) + " CLIPS"
                    + (missing > 0 ? " / " + juce::String (missing) + " MEDIA MISSING" : "") + note,
                missing > 0 || missingInserts > 0 || (! document->masterInsert.isEmpty() && ! insertRestored));
+}
+
+MainComponent::~MainComponent()
+{
+    // The Autopilot worker owns the engine for the duration of a pass. Wait for
+    // it before the engine and views are destroyed; a close during a render
+    // takes as long as the pass, but it can never use freed state.
+    if (autopilotThread.joinable())
+        autopilotThread.join();
 }
 
 } // namespace nc
