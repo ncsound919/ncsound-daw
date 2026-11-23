@@ -59,7 +59,7 @@ export function useRemoteHost() {
         title: "NC Sound Hub",
         transport: {
           playing: !!transport?.playing,
-          recording: false,
+          recording: !!transport?.recording,
           // Collab counts beats; the bridge reports bars (1-based, 4/4 default).
           beats: Number(transport?.positionBar ?? 0) * 4,
           bpm: Number(transport?.bpm ?? app?.bpm ?? 120),
@@ -178,9 +178,35 @@ export function useRemoteHost() {
     setState({ status: "idle", code: "", expiresAt: 0, guests: [], pending: [], notice: "" });
   }
 
-  // Local edits on the desktop must reach the guests: poll and publish deltas.
+  // Meter stream to guests at ~20 Hz. Peaks ride on getTransport(), the same
+  // numbers the desktop's own meters use, so phone meters cannot drift.
   useEffect(() => {
     const timer = window.setInterval(async () => {
+      const s = sessionRef.current;
+      if (!s) return;
+      try {
+        const t = await backend.getTransport();
+        const peaks = t?.trackPeaks ?? [];
+        if (peaks.length === 0) return;
+        const levels: Record<string, [number, number]> = {};
+        snapshot.current.tracks.forEach((track, i) => {
+          const mono = Math.min(1, Math.max(0, Number(peaks[i] ?? 0)));
+          const pan = track.pan;
+          levels[track.id] = [
+            pan > 0 ? mono * (1 - pan) : mono,
+            pan < 0 ? mono * (1 + pan) : mono,
+          ];
+        });
+        s.meters(levels);
+      } catch {
+        // Bridge unavailable: skip this frame.
+      }
+    }, 50);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  // Local edits on the desktop must reach the guests: poll and publish deltas.
+  useEffect(() => {    const timer = window.setInterval(async () => {
       const s = sessionRef.current;
       if (!s) return;
       const before = snapshot.current.tracks;
