@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { backend, type NativeAudioState } from "../lib/bridge";
+import { RemoteHostPanel, useRemoteHost } from "../remote/RemoteHostPanel";
 
 export interface UiSettings {
   accent: string;
@@ -227,6 +228,14 @@ export function accentHot(hex: string): string {
   return hex === "#ff8a00" ? "#ffc98a" : hex;
 }
 
+/** Remote-host card: shares this session with NCSound Remote guests. */
+function RemoteSection() {
+  const remote = useRemoteHost();
+  const host =
+    typeof window !== "undefined" && window.location.hostname ? window.location.hostname : "127.0.0.1";
+  return <RemoteHostPanel remote={remote} relayUrl={`ws://${host}:8787`} />;
+}
+
 export function SettingsPanel({
   settings,
   onChange,
@@ -289,6 +298,10 @@ export function SettingsPanel({
 
   return (
     <div className="ws-settings" aria-label="Settings">
+      <section className="ws-settings-card" aria-label="Mixer remote">
+        <h3>Mixer remote</h3>
+        <RemoteSection />
+      </section>
       <section className="ws-settings-card">
         <h3>Accent</h3>
         <div className="ws-settings-row">
